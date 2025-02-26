@@ -2,7 +2,8 @@
 !.idea/runConfigurations/
 
 
-
+# Project files
+0_scripts/logs/**/*
 
 .gradle
 build/
