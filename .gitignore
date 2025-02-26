@@ -5,6 +5,7 @@
 # Project files
 0_scripts/logs/**/*
 
+
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar

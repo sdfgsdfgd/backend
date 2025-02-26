@@ -20,6 +20,8 @@ val port = 80
 val scriptDir = Path("./0_scripts/").toAbsolutePath().normalize().toFile().canonicalFile
 val scriptPath = scriptDir.resolve("deploy.main.kts").canonicalPath
 val jarPath = scriptDir.resolve("../server/build/libs/server-all.jar").canonicalPath
+val binPath = scriptDir.resolve("../server/build/install/server/bin/server").canonicalPath
+         // /Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server
 
 val logsDir = scriptDir.resolve("logs").apply { mkdirs() }  // Ensure logs folder exists
 val logFile = logsDir.resolve("app.log").apply { if (!exists()) createNewFile() }
@@ -84,8 +86,9 @@ when (cmd) {
             println("🚀 Starting $appName...")
 
 
-            // =========================================  TODO:   Improve,  Daemonize    on Server       ======================================
-            "nohup java -jar $jarPath &".shell(logFile)
+            // =========================================  TODO:  this goes to systemd  /  Daemonize'd    on Server       ======================================
+//            "nohup java -jar $jarPath &".shell(logFile)  // xx ShadowJar version
+            "nohup bash $binPath &".shell(logFile) // xx OS binary version
 
 
             println("✅ Started.")
@@ -102,9 +105,9 @@ when (cmd) {
 
     "restart" -> runCatching {
         println("🔄 Restarting $appName...")
-        "${scriptPath} stop".shell()
+        "$scriptPath stop".shell()
         Thread.sleep(2_000)
-        "${scriptPath} start".shell()
+        "$scriptPath start".shell()
     }.onFailure {
         logException(it, logFile, "Failed to restart application")
     }.onSuccess { println("✅ Restarted.") }
@@ -116,13 +119,15 @@ when (cmd) {
     "deploy", "" -> runCatching {
         println("🚀 Deploying new version of $appName...")
 
+        val ret = findProcessId(port).orEmpty()
         printCondition(
-            "? $appName running ? (PID: ${findProcessId(port)}) ?",
+            "$appName ${if (ret.isNotEmpty()) "☘️" else "🔴"} (PID: ${ret})",
             findProcessId(port) != null
         )
 
-        // Single build command (logged to buildLog)
-        val buildOutput = "./gradlew shadowJar".shell(logBuild)
+        // xx Single build command (logged to buildLog)
+//        val buildOutput = "./gradlew shadowJar".shell(logBuild)
+        val buildOutput = "./gradlew installDist".shell(logBuild)
             .also { println("\n 🔨 Building new version... [ $it ]") }
 
         if (buildOutput.isEmpty()) error("Build failed! Check ${logBuild.absolutePath}.")
@@ -139,7 +144,8 @@ when (cmd) {
 
         // Start fresh
         println("🚀 Starting new instance...")
-        "nohup java -jar $jarPath &".shell(logFile)
+//        "nohup java -jar $jarPath &".shell(logFile)
+        "nohup bash $binPath &".shell(logFile)
     }.onFailure {
         logException(it, logBuild, "Deployment failed")
     }.onSuccess { println("✅ Deployment complete.") }

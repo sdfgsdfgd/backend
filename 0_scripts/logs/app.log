@@ -58,3 +58,49 @@ Exception in thread "main" java.net.BindException: Address already in use
 2025-02-26T13:41:09.351966 | ERROR | Failed to check if port 80 is in use: Address already in use
 
 2025-02-26T13:41:48.926163 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27 01:31:33.296 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-27T01:31:59.766107 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T01:31:59.799688 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T01:32:01.069911 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27 01:32:03.417 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-27T01:35:31.507713 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T01:35:31.541993 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T01:35:32.699661 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27 01:35:35.087 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-27T01:37:02.074426 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27 08:21:15.790 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-27T08:24:19.832607 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T08:24:19.868844 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T08:24:21.020055 | ERROR | Failed to check if port 80 is in use: Address already in use
+nohup: .//Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server: No such file or directory
+nohup: ./Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server: No such file or directory
+nohup: ./Users/x/Desktop/kotlin/backend/0_scripts/../server/build/install/server/bin/server: No such file or directory
+nohup: ./Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server: No such file or directory
+nohup: ./Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server: No such file or directory
+08:29:36,784 |-INFO in ch.qos.logback.classic.LoggerContext[default] - This is logback-classic version 1.5.11
+08:29:36,785 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - No custom configurators were discovered as a service.
+08:29:36,785 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - Trying to configure with ch.qos.logback.classic.joran.SerializedModelConfigurator
+08:29:36,785 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - Constructed configurator of type class ch.qos.logback.classic.joran.SerializedModelConfigurator
+08:29:36,789 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback-test.scmo]
+08:29:36,789 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback.scmo]
+08:29:36,796 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - ch.qos.logback.classic.joran.SerializedModelConfigurator.configure() call lasted 5 milliseconds. ExecutionStatus=INVOKE_NEXT_IF_ANY
+08:29:36,796 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - Trying to configure with ch.qos.logback.classic.util.DefaultJoranConfigurator
+08:29:36,796 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - Constructed configurator of type class ch.qos.logback.classic.util.DefaultJoranConfigurator
+08:29:36,796 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback-test.xml]
+08:29:36,798 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Found resource [logback.xml] at [jar:file:/Users/x/Desktop/kotlin/backend/server/build/install/server/lib/server-0.0.1.jar!/logback.xml]
+08:29:36,799 |-WARN in ch.qos.logback.classic.util.DefaultJoranConfigurator@69b2283a - Resource [logback.xml] occurs multiple times on the classpath.
+08:29:36,799 |-WARN in ch.qos.logback.classic.util.DefaultJoranConfigurator@69b2283a - Resource [logback.xml] occurs at [jar:file:/Users/x/Desktop/kotlin/backend/server/build/install/server/lib/server-0.0.1.jar!/logback.xml]
+08:29:36,799 |-WARN in ch.qos.logback.classic.util.DefaultJoranConfigurator@69b2283a - Resource [logback.xml] occurs at [jar:file:/Users/x/Desktop/kotlin/backend/server/build/install/server/lib/swagger-codegen-generators-1.0.55.jar!/logback.xml]
+08:29:36,802 |-INFO in ConfigurationWatchList(mainURL=jar:file:/Users/x/Desktop/kotlin/backend/server/build/install/server/lib/server-0.0.1.jar!/logback.xml, fileWatchList={}, urlWatchList=[}) - URL [jar:file:/Users/x/Desktop/kotlin/backend/server/build/install/server/lib/server-0.0.1.jar!/logback.xml] is not of type file
+08:29:36,887 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - Processing appender named [STDOUT]
+08:29:36,887 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - About to instantiate appender of type [ch.qos.logback.core.ConsoleAppender]
+08:29:36,891 |-INFO in ch.qos.logback.core.model.processor.ImplicitModelHandler - Assuming default type [ch.qos.logback.classic.encoder.PatternLayoutEncoder] for [encoder] property
+08:29:36,908 |-INFO in ch.qos.logback.classic.model.processor.RootLoggerModelHandler - Setting level of ROOT logger to INFO
+08:29:36,908 |-INFO in ch.qos.logback.core.model.processor.AppenderRefModelHandler - Attaching appender named [STDOUT] to Logger[ROOT]
+08:29:36,908 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [org.eclipse.jetty] to INFO
+08:29:36,908 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [io.netty] to INFO
+08:29:36,908 |-INFO in ch.qos.logback.core.model.processor.DefaultProcessor@1d119efb - End of configuration.
+08:29:36,909 |-INFO in ch.qos.logback.classic.joran.JoranConfigurator@659a969b - Registering current configuration as safe fallback point
+08:29:36,909 |-INFO in ch.qos.logback.classic.util.ContextInitializer@bef2d72 - ch.qos.logback.classic.util.DefaultJoranConfigurator.configure() call lasted 113 milliseconds. ExecutionStatus=DO_NOT_INVOKE_NEXT_IF_ANY
+2025-02-27T08:30:00.412248 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-27T08:31:25.764766 | ERROR | Failed to check if port 80 is in use: Address already in use
