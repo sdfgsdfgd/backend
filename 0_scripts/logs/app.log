@@ -1,0 +1,60 @@
+Error: Unable to access jarfile /Users/x/Desktop/kotlin/backend/0_scripts/server/build/libs/server-all.jar
+Error: Unable to access jarfile /Users/x/Desktop/kotlin/backend/0_scripts/server/build/libs/server-all.jar
+2025-02-26 13:36:55.595 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-26 13:37:10.785 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-26 13:37:11.114 [main]  INFO  i.m.c.i.push.PushMeterRegistry - publishing metrics for LoggingMeterRegistry every 1m
+2025-02-26 13:37:11.206 [main]  INFO  io.ktor.server.Application - Application started in 0.523 seconds.
+Exception in thread "main" java.net.BindException: Address already in use
+	at java.base/sun.nio.ch.Net.bind0(Native Method)
+	at java.base/sun.nio.ch.Net.bind(Net.java:555)
+	at java.base/sun.nio.ch.ServerSocketChannelImpl.netBind(ServerSocketChannelImpl.java:337)
+	at java.base/sun.nio.ch.ServerSocketChannelImpl.bind(ServerSocketChannelImpl.java:294)
+	at io.netty.channel.socket.nio.NioServerSocketChannel.doBind(NioServerSocketChannel.java:141)
+	at io.netty.channel.AbstractChannel$AbstractUnsafe.bind(AbstractChannel.java:561)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.bind(DefaultChannelPipeline.java:1281)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeBind(AbstractChannelHandlerContext.java:600)
+	at io.netty.channel.AbstractChannelHandlerContext.bind(AbstractChannelHandlerContext.java:579)
+	at io.netty.channel.DefaultChannelPipeline.bind(DefaultChannelPipeline.java:922)
+	at io.netty.channel.AbstractChannel.bind(AbstractChannel.java:259)
+	at io.netty.bootstrap.AbstractBootstrap$2.run(AbstractBootstrap.java:380)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:173)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:166)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:472)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:569)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+2025-02-26 13:37:21.329 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-26 13:37:21.680 [main]  INFO  i.m.c.i.push.PushMeterRegistry - publishing metrics for LoggingMeterRegistry every 1m
+2025-02-26 13:37:21.750 [main]  INFO  io.ktor.server.Application - Application started in 0.531 seconds.
+Exception in thread "main" java.net.BindException: Address already in use
+	at java.base/sun.nio.ch.Net.bind0(Native Method)
+	at java.base/sun.nio.ch.Net.bind(Net.java:555)
+	at java.base/sun.nio.ch.ServerSocketChannelImpl.netBind(ServerSocketChannelImpl.java:337)
+	at java.base/sun.nio.ch.ServerSocketChannelImpl.bind(ServerSocketChannelImpl.java:294)
+	at io.netty.channel.socket.nio.NioServerSocketChannel.doBind(NioServerSocketChannel.java:141)
+	at io.netty.channel.AbstractChannel$AbstractUnsafe.bind(AbstractChannel.java:561)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.bind(DefaultChannelPipeline.java:1281)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeBind(AbstractChannelHandlerContext.java:600)
+	at io.netty.channel.AbstractChannelHandlerContext.bind(AbstractChannelHandlerContext.java:579)
+	at io.netty.channel.DefaultChannelPipeline.bind(DefaultChannelPipeline.java:922)
+	at io.netty.channel.AbstractChannel.bind(AbstractChannel.java:259)
+	at io.netty.bootstrap.AbstractBootstrap$2.run(AbstractBootstrap.java:380)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:173)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:166)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:472)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:569)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+2025-02-26 13:39:33.166 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-26T13:40:56.931971 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-26T13:40:56.961661 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-26T13:40:58.034981 | ERROR | Failed to check if port 80 is in use: Address already in use
+2025-02-26 13:41:00.435 [main]  INFO  io.ktor.server.Application - Autoreload is disabled because the development mode is off.
+2025-02-26T13:41:09.351966 | ERROR | Failed to check if port 80 is in use: Address already in use
+
+2025-02-26T13:41:48.926163 | ERROR | Failed to check if port 80 is in use: Address already in use

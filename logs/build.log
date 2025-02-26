@@ -1,0 +1,70 @@
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:compileKotlinJvm UP-TO-DATE
+> Task :core:jvmProcessResources NO-SOURCE
+> Task :core:jvmMainClasses UP-TO-DATE
+> Task :core:jvmJar UP-TO-DATE
+> Task :server:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :server:compileKotlin UP-TO-DATE
+> Task :server:compileJava NO-SOURCE
+> Task :server:processResources UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:shadowJar UP-TO-DATE
+
+BUILD SUCCESSFUL in 463ms
+5 actionable tasks: 5 up-to-date
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:compileKotlinJvm UP-TO-DATE
+> Task :core:jvmProcessResources NO-SOURCE
+> Task :core:jvmMainClasses UP-TO-DATE
+> Task :core:jvmJar UP-TO-DATE
+> Task :server:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :server:compileKotlin UP-TO-DATE
+> Task :server:compileJava NO-SOURCE
+> Task :server:processResources UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:shadowJar UP-TO-DATE
+
+BUILD SUCCESSFUL in 446ms
+5 actionable tasks: 5 up-to-date
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:compileKotlinJvm UP-TO-DATE
+> Task :core:jvmProcessResources NO-SOURCE
+> Task :core:jvmMainClasses UP-TO-DATE
+> Task :core:jvmJar UP-TO-DATE
+> Task :server:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :server:compileKotlin UP-TO-DATE
+> Task :server:compileJava NO-SOURCE
+> Task :server:processResources UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:shadowJar UP-TO-DATE
+
+BUILD SUCCESSFUL in 580ms
+5 actionable tasks: 5 up-to-date
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:compileKotlinJvm UP-TO-DATE
+> Task :core:jvmProcessResources NO-SOURCE
+> Task :core:jvmMainClasses UP-TO-DATE
+> Task :core:jvmJar UP-TO-DATE
+> Task :server:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :server:compileKotlin UP-TO-DATE
+> Task :server:compileJava NO-SOURCE
+> Task :server:processResources UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:shadowJar UP-TO-DATE
+
+BUILD SUCCESSFUL in 610ms
+5 actionable tasks: 5 up-to-date
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:compileKotlinJvm UP-TO-DATE
+> Task :core:jvmProcessResources NO-SOURCE
+> Task :core:jvmMainClasses UP-TO-DATE
+> Task :core:jvmJar UP-TO-DATE
+> Task :server:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :server:compileKotlin UP-TO-DATE
+> Task :server:compileJava NO-SOURCE
+> Task :server:processResources UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:shadowJar UP-TO-DATE
+
+BUILD SUCCESSFUL in 644ms
+5 actionable tasks: 5 up-to-date
