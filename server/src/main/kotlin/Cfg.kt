@@ -2,13 +2,9 @@ package net.sdfgsdfg
 
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
-import io.ktor.server.sessions.Sessions
-import io.ktor.server.sessions.cookie
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
 import io.ktor.server.websocket.timeout
-import kotlinx.serialization.Serializable
-import kotlin.collections.set
 import kotlin.time.Duration.Companion.seconds
 
 // *** *** TODO:  Add  2 sequence within 15 secs    `port-knocking`    authentication
@@ -16,15 +12,15 @@ fun Application.cfg() {
     // ! TODO !
     // 1. READ cookie: val session: MySession? = call.sessions.get<MySession>()
     // 2. DEL cookie call.sessions.clear<MySession>()
-    install(Sessions) {
-        cookie<MySession>("SESSION") {
-            cookie.path = "/" // Ensure cookie is accessible throughout the site
-            cookie.httpOnly = true // Prevent client-side access via JavaScript
-            cookie.secure = false // xx THIS WAS: true         enforces  HTTPS !
-            cookie.maxAgeInSeconds = 60 * 60 * 24 * 7 // 1 week
-            cookie.extensions["SameSite"] = "lax"
-        }
-    }
+//    install(Sessions) {
+//        cookie<MySession>("SESSION") {
+//            cookie.path = "/" // Ensure cookie is accessible throughout the site
+//            cookie.httpOnly = true // Prevent client-side access via JavaScript
+//            cookie.secure = true // xx Enforces https
+//            cookie.maxAgeInSeconds = 60 * 60 * 24 * 7 // 1 week
+//            cookie.extensions["SameSite"] = "lax"
+//        }
+//    }
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 15.seconds
@@ -159,9 +155,9 @@ fun Application.cfg() {
 //        }
 //    }
 //}
+//
+//@Serializable
+//data class MySession(val count: Int = 0)
 
-@Serializable
-data class MySession(val count: Int = 0)
-
-class UserSession(accessToken: String)
+//class UserSession(accessToken: String)
 
