@@ -3,6 +3,7 @@ import io.ktor.client.request.headers
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
@@ -50,7 +51,13 @@ class SimpleReverseProxy(
             }
         }
 
-        call.respondBytesWriter(contentType = proxiedResponse.contentType()) {
+        // Preserve headers to ensure correct rendering
+        call.response.headers.append(HttpHeaders.ContentType, proxiedResponse.contentType()?.toString() ?: "text/html")
+        proxiedResponse.headers[HttpHeaders.ContentEncoding]?.let {
+            call.response.headers.append(HttpHeaders.ContentEncoding, it)
+        }
+
+        call.respondBytesWriter {
             proxiedResponse.bodyAsChannel().copyAndClose(this)
         }
     }
