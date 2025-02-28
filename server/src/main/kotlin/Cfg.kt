@@ -20,7 +20,7 @@ fun Application.cfg() {
         cookie<MySession>("SESSION") {
             cookie.path = "/" // Ensure cookie is accessible throughout the site
             cookie.httpOnly = true // Prevent client-side access via JavaScript
-            cookie.secure = true // Use HTTPS
+            cookie.secure = false // xx THIS WAS: true         enforces  HTTPS !
             cookie.maxAgeInSeconds = 60 * 60 * 24 * 7 // 1 week
             cookie.extensions["SameSite"] = "lax"
         }
