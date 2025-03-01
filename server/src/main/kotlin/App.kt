@@ -102,9 +102,46 @@ fun Route.githubWebhookRoute() {
 
         call.respondText("Deployment triggered!\n\n$deployOutput")
     }
+}
 
-
-//    // todo  GITHUB_SECRETS impl     (security yay)
+// region Disabled / Archive
+//
+// 1)
+//@Suppress("unused")
+//fun Application.modules_disabled() {
+//    configureMonitoring()       // xx Metrics
+//    configureSerialization()    // gson-ktor examples ?
+//    configureRouting() // low priority, static page stuff
+//    configureTemplating() // low priority, static page stuff
+//}
+//
+//
+// 2)
+///**
+// * Verifies X-Hub-Signature-256. Compare computed HMAC (sha256) of [body] with [signatureHeader].
+// */
+//private fun verifyGitHubSignature(signatureHeader: String?, secret: String, body: ByteArray): Boolean {
+//    if (signatureHeader.isNullOrBlank()) return false
+//    // Usually the header is in format: "sha256=..."
+//    val expectedPrefix = "sha256="
+//    if (!signatureHeader.startsWith(expectedPrefix)) return false
+//
+//    val signature = signatureHeader.removePrefix(expectedPrefix)
+//
+//    // Calculate HMAC-SHA256 on the body using 'secret'
+//    val hmacSha256 = Mac.getInstance("HmacSHA256").apply {
+//        init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
+//    }
+//    val computed = hmacSha256.doFinal(body).toHexString()
+//
+//    return MessageDigest.isEqual(signature.toByteArray(), computed.toByteArray())
+//}
+//
+///** Handy extension to convert ByteArray -> Hex String */
+//private fun ByteArray.toHexString(): String = joinToString("") { "%02x".format(it) }
+//
+//
+// 3) for github webhooks etc...  todo  GITHUB_SECRETS impl     (security yay)
 //    post("/webhook/github") {
 //        // 1) Read the raw body
 //        val bodyBytes = call.receiveStream().readBytes()
@@ -131,40 +168,4 @@ fun Route.githubWebhookRoute() {
 //        // 5) Respond with whatever you like
 //        call.respondText("Deployment triggered.\n\n$output")
 //    }
-}
-
-// region Disabled / Archive
-//@Suppress("unused")
-//fun Application.modules_disabled() {
-//    configureMonitoring()       // xx Metrics
-//    configureSerialization()    // gson-ktor examples ?
-//    configureRouting() // low priority, static page stuff
-//    configureTemplating() // low priority, static page stuff
-//}
-
-//
-//
-
-///**
-// * Verifies X-Hub-Signature-256. Compare computed HMAC (sha256) of [body] with [signatureHeader].
-// */
-//private fun verifyGitHubSignature(signatureHeader: String?, secret: String, body: ByteArray): Boolean {
-//    if (signatureHeader.isNullOrBlank()) return false
-//    // Usually the header is in format: "sha256=..."
-//    val expectedPrefix = "sha256="
-//    if (!signatureHeader.startsWith(expectedPrefix)) return false
-//
-//    val signature = signatureHeader.removePrefix(expectedPrefix)
-//
-//    // Calculate HMAC-SHA256 on the body using 'secret'
-//    val hmacSha256 = Mac.getInstance("HmacSHA256").apply {
-//        init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
-//    }
-//    val computed = hmacSha256.doFinal(body).toHexString()
-//
-//    return MessageDigest.isEqual(signature.toByteArray(), computed.toByteArray())
-//}
-//
-///** Handy extension to convert ByteArray -> Hex String */
-//private fun ByteArray.toHexString(): String = joinToString("") { "%02x".format(it) }
 // endregion
