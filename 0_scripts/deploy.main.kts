@@ -180,7 +180,7 @@ when (cmd) {
             // Stop old instance if running (unchanged)
             oldPid?.let { pid ->
                 println("🛑 Stopping old instance (PID: $pid)...")
-                "kill $pid".shell()
+                "kill -9 $pid".shell()
                 Thread.sleep(2000)
                 println("✅ Stopped old instance.")
             }
