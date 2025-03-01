@@ -78,11 +78,7 @@ fun logException(e: Throwable, logFile: File, message: String) {
     println("❌ Logged Error: $message (Check ${logFile.absolutePath})")
 }
 
-/**
- * Attempts to start the server in the background (nohup + &),
- * waits a few seconds to see if it fails immediately.
- * Throws an exception if the process fails to start or port is not in use.
- */
+// Start server
 fun startServer() {
     println("🚀 Starting $appName...")
 

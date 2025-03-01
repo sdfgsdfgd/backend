@@ -47,6 +47,14 @@ fun Application.module() {
 
     // 4) Routes
     routing {
+        println("TEST ")
+        println("TEST ")
+        println("TEST ")
+        println("TEST ")
+        println("TEST ")
+
+
+
         get("/test") {
             call.respondText(" 🥰  [ OK ]")
         }
