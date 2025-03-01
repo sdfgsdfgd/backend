@@ -1,6 +1,7 @@
 #!/usr/bin/env kotlin
 
 import java.io.File
+import java.net.BindException
 import java.net.ServerSocket
 import java.time.LocalDateTime
 import kotlin.io.path.Path
@@ -33,12 +34,18 @@ val logBuild = logsDir.resolve("build.log").apply { if (!exists()) createNewFile
 // region UTILITIES
 // =====================
 // =====================
-fun findProcessId(port: Int): String? = runCatching {
+fun findProcessId(port: Int): String? = try {
+    // If we can bind, the port is free => return null
     ServerSocket(port).use { null }
-}.getOrElse {
-    logException(it, logFile, "Failed to check if port $port is in use")
+} catch (e: BindException) {
+    // Normal case: port is in use => let's get the PID via lsof
     "lsof -ti tcp:$port".shell().trim().takeIf { it.isNotEmpty() }
+} catch (e: Throwable) {
+    // Unexpected error => log it
+    logException(e, logFile, "Error checking if port $port is in use")
+    null
 }
+
 
 //  todo:       .inheritIO().also { println("Running: $this") }  instead ?
 fun String.shell(outputFile: File? = null): String = runCatching {
@@ -70,7 +77,61 @@ fun logException(e: Throwable, logFile: File, message: String) {
     logFile.appendText(logMessage)
     println("❌ Logged Error: $message (Check ${logFile.absolutePath})")
 }
+
+/**
+ * Attempts to start the server in the background (nohup + &),
+ * waits a few seconds to see if it fails immediately.
+ * Throws an exception if the process fails to start or port is not in use.
+ */
+fun startServer() {
+    println("🚀 Starting $appName with nohup in the background...")
+    "nohup bash $binPath &".shell(logFile)
+
+    // Wait for a bit to see if it fails quickly
+    Thread.sleep(4000)
+
+    // If findProcessId still returns null, we consider that a failure
+    if (findProcessId(port) == null) {
+        throw RuntimeException("Server failed to start on port $port (no process found). Check logs.")
+    }
+    println("✅ $appName started successfully (PID: ${findProcessId(port)})")
+}
+
+
 // endregion
+
+
+
+
+
+
+
+
+
+
+
+
+// =========================================  TODO:  this goes to systemd  /  Daemonize'd    on Server       ======================================
+//            "nohup java -jar $jarPath &".shell(logFile)  // xx ShadowJar version
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //         ==============     //
 //      ====================    //
@@ -80,75 +141,97 @@ fun logException(e: Throwable, logFile: File, message: String) {
 //  ============================  //
 //   ==========================  //
 val cmd = args.firstOrNull() ?: "deploy"
+
 when (cmd) {
-    "start" -> findProcessId(port)?.let { println("⚠️ $appName already running (PID: $it). Use './deploy.main.kts restart'.") }
-        ?: runCatching {
-            println("🚀 Starting $appName...")
-
-
-            // =========================================  TODO:  this goes to systemd  /  Daemonize'd    on Server       ======================================
-//            "nohup java -jar $jarPath &".shell(logFile)  // xx ShadowJar version
-            "nohup bash $binPath &".shell(logFile) // xx OS binary version
-
-
-            println("✅ Started.")
-        }.onFailure { logException(it, logFile, "Failed to start application") }
-
-    "stop" -> findProcessId(port)?.let { pid ->
-        runCatching {
-            println("🛑 Stopping $appName (PID: $pid)...")
-            "kill -9 $pid".shell()
+    "start" -> {
+        // If already running, warn
+        findProcessId(port)?.let {
+            println("⚠️ $appName already running (PID: $it). Use './deploy.main.kts restart'.")
+        } ?: runCatching {
+            startServer()
         }.onFailure {
-            logException(it, logFile, "Failed to stop application OR there was no process to stoppu")
-        }.onSuccess { println("✅ Stopped process.") }
-    } ?: println("⚠️ $appName is not running.")
-
-    "restart" -> runCatching {
-        println("🔄 Restarting $appName...")
-        "$scriptPath stop".shell()
-        Thread.sleep(2_000)
-        "$scriptPath start".shell()
-    }.onFailure {
-        logException(it, logFile, "Failed to restart application")
-    }.onSuccess { println("✅ Restarted.") }
-
-    "status" -> findProcessId(port)
-        ?.let { println("✅ $appName is running (PID: $it)") }
-        ?: println("⚠️ $appName is NOT running.")
-
-    "deploy", "" -> runCatching {
-        println("🚀 Deploying new version of $appName...")
-
-        val ret = findProcessId(port).orEmpty()
-        printCondition(
-            "$appName ${if (ret.isNotEmpty()) "☘️" else "🔴"} (PID: ${ret})",
-            findProcessId(port) != null
-        )
-
-        // xx Single build command (logged to buildLog)
-//        val buildOutput = "./gradlew shadowJar".shell(logBuild)
-        val buildOutput = "./gradlew installDist".shell(logBuild)
-            .also { println("\n 🔨 Building new version... [ $it ]") }
-
-        if (buildOutput.isEmpty()) error("Build failed! Check ${logBuild.absolutePath}.")
-
-        println("✅ Build successful!")
-
-        // Stop old instance if running
-        findProcessId(port)?.let { pid ->
-            println("🛑 Stopping old instance (PID: $pid)...")
-            "kill $pid".shell()
-            Thread.sleep(2_000)
-            println("✅ Stopped.")
+            logException(it, logFile, "Failed to start application")
+            exitProcess(1)  // Return non-zero exit code on failure
+        }.onSuccess {
+            println("✅ Start command complete.")
         }
+    }
 
-        // Start fresh
-        println("🚀 Starting new instance...")
-//        "nohup java -jar $jarPath &".shell(logFile)
-        "nohup bash $binPath &".shell(logFile)
-    }.onFailure {
-        logException(it, logBuild, "Deployment failed")
-    }.onSuccess { println("✅ Deployment complete.") }
+    "stop" -> {
+        // If running, kill it
+        findProcessId(port)?.let { pid ->
+            runCatching {
+                println("🛑 Stopping $appName (PID: $pid)...")
+                "kill -9 $pid".shell()
+            }.onFailure {
+                logException(it, logFile, "Failed to stop application")
+                exitProcess(1)
+            }.onSuccess {
+                println("✅ Stopped process.")
+            }
+        } ?: println("⚠️ $appName is not running.")
+    }
+
+    "restart" -> {
+        runCatching {
+            println("🔄 Restarting $appName...")
+            "$scriptPath stop".shell()  // calls this same script's 'stop' command
+            Thread.sleep(2000)
+            "$scriptPath start".shell() // calls this same script's 'start' command
+        }.onFailure {
+            logException(it, logFile, "Failed to restart application")
+            exitProcess(1)
+        }.onSuccess {
+            println("✅ Restarted.")
+        }
+    }
+
+    "status" -> {
+        findProcessId(port)
+            ?.let { println("✅ $appName is running (PID: $it)") }
+            ?: println("⚠️ $appName is NOT running.")
+    }
+
+    "deploy", "" -> {
+        runCatching {
+            println("🚀 Deploying new version of $appName...")
+
+            // Show if something is already running (unchanged)
+            val oldPid = findProcessId(port)
+            if (oldPid != null) {
+                println("   $appName currently running (PID=$oldPid)")
+            }
+
+            // --- NEW LINES BEGIN ---
+            println("🔨 Pulling latest changes from Git...")
+            "git pull".shell(logBuild)
+            println("✅ Git pull complete!")
+
+            println("🔨 Rebuilding project (clean + build + installDist)...")
+            "./gradlew clean build installDist".shell(logBuild)
+            println("✅ Rebuild & installDist successful!")
+            // --- NEW LINES END ---
+
+            // Stop old instance if running (unchanged)
+            oldPid?.let { pid ->
+                println("🛑 Stopping old instance (PID: $pid)...")
+                "kill $pid".shell()
+                Thread.sleep(2000)
+                println("✅ Stopped old instance.")
+            }
+
+            // Start new instance (unchanged)
+            startServer()
+
+        }.onFailure {
+            logException(it, logBuild, "Deployment failed")
+            println("❌ Deployment failed: ${it.message}")
+            exitProcess(1)
+        }.onSuccess {
+            println("✅ Deployment complete.")
+        }
+    }
+
 
     else -> {
         println("❌ Unknown command: $cmd")
