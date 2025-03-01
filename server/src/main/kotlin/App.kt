@@ -1,3 +1,5 @@
+@file:OptIn(DelicateCoroutinesApi::class)
+
 package net.sdfgsdfg
 
 import SimpleReverseProxy
@@ -19,8 +21,9 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 // TODO:    distZip / installDist  within  .run  that triggers a webhook/ endpoint on our server to redeploy itself
 //          via sh  ,   taking care of also    netw/file/ logs / IPC / process-kill, confirm existing server killed,   mgmt
@@ -90,17 +93,17 @@ fun Application.module() {
 fun Route.githubWebhookRoute() {
     // Minimal GitHub webhook route
     post("/webhook/github") {
-        // (Optional) read raw body if you want the payload
         val payload = call.receiveText()
-
         println("GitHub payload: $payload")
 
-        // Kick off deployment in background
-        val deployOutput = withContext(Dispatchers.IO) {
-            "./0_scripts/deploy.main.kts deploy".shell()  // Adjust path as needed
-        }
+        // 1) Respond right away, so GitHub doesn't time out
+        call.respondText("Deployment triggered! We'll do it asynchronously.")
 
-        call.respondText("Deployment triggered!\n\n$deployOutput")
+        // 2) In the background, do the deploy
+        GlobalScope.launch {
+            // Or GlobalScope.launch if you prefer
+            "./0_scripts/deploy.main.kts deploy".shell()
+        }
     }
 }
 
