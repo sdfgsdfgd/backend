@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
 
 // On the why of  `*.main.kts` :
 //  The .main.kts extension triggers IntelliJ's built-in script definition for top-level execution scripts, improving IDE support.
-//  A plain *.kts file is recognized as a generic Kotlin script
+//  A plain *.kts file is recognized as a generic Kotlin script, no syntax highlighting, (also no execution or?)
 
 // =====================
 // =====================
@@ -46,8 +46,7 @@ fun findProcessId(port: Int): String? = try {
     null
 }
 
-
-//  todo:       .inheritIO().also { println("Running: $this") }  instead ?
+// Redirect (vs inheritIO) allows to pipe ALSO to file
 fun String.shell(outputFile: File? = null): String = runCatching {
     val process = ProcessBuilder("bash", "-c", this).apply {
         redirectErrorStream(true)
@@ -84,16 +83,16 @@ fun startServer() {
 
     binPath.shell(logFile)
 
-    // Wait for a bit to see if it fails quickly
-    Thread.sleep(4000)
+    val isThisEnoughTimeSir = 4000L
+    Thread.sleep(isThisEnoughTimeSir)
 
     // If findProcessId still returns null, we consider that a failure
-    if (findProcessId(port) == null) {
-        throw RuntimeException("Server failed to start on port $port (no process found). Check logs.")
+    findProcessId(port)?.let {
+        println("✅ $appName started successfully (PID: ${it})")
+    } ?: run {
+        throw RuntimeException("Server failed to start after ${isThisEnoughTimeSir / 1000L} seconds on port $port (no process found). Check logs.")
     }
-    println("✅ $appName started successfully (PID: ${findProcessId(port)})")
 }
-
 // endregion
 
 //              xx ShadowJar version
@@ -106,97 +105,73 @@ fun startServer() {
 //  ============================  //
 //   ==========================  //
 val cmd = args.firstOrNull() ?: "deploy"
+val process = findProcessId(port)
 
 when (cmd) {
-    "start" -> {
-        // If already running, warn
-        findProcessId(port)?.let {
-            println("⚠️ $appName already running (PID: $it). Use './deploy.main.kts restart'.")
-        } ?: runCatching {
-            startServer()
-        }.onFailure {
-            logException(it, logFile, "Failed to start application")
-            exitProcess(1)  // Return non-zero exit code on failure
-        }.onSuccess {
-            println("✅ Start command complete.")
-        }
+    "start" -> process?.let {
+        println("⚠️ $appName already running (PID: $it). Use './deploy.main.kts restart'.")
+    } ?: runCatching {
+        startServer()
+    }.onFailure {
+        logException(it, logFile, "Failed to start application")
+        exitProcess(1)  // Return non-zero exit code on failure
+    }.onSuccess {
+        println("✅ Start command complete.")
     }
 
-    "stop" -> {
-        // If running, kill it
-        findProcessId(port)?.let { pid ->
-            runCatching {
-                println("🛑 Stopping $appName (PID: $pid)...")
-                "kill -9 $pid".shell()
-            }.onFailure {
-                logException(it, logFile, "Failed to stop application")
-                exitProcess(1)
-            }.onSuccess {
-                println("✅ Stopped process.")
-            }
-        } ?: println("⚠️ $appName is not running.")
-    }
-
-    "restart" -> {
+    "stop" -> process?.let { pid ->
         runCatching {
-            println("🔄 Restarting $appName...")
-            "$scriptPath stop".shell()  // calls this same script's 'stop' command
+            println("🛑 Stopping $appName (PID: $pid)...")
+            "kill -9 $pid".shell()
+        }.onFailure {
+            logException(it, logFile, "Failed to stop application")
+            exitProcess(1)
+        }.onSuccess {
+            println("✅ Stopped process.")
+        }
+    } ?: println("⚠️ $appName is not running.")
+
+    "restart" -> runCatching {
+        println("🔄 Restarting $appName...")
+        "$scriptPath stop".shell()
+        Thread.sleep(2000)
+        "$scriptPath start".shell()
+    }.onFailure {
+        logException(it, logFile, "Failed to restart application")
+        exitProcess(1)
+    }.onSuccess {
+        println("✅ Restarted.")
+    }
+
+    "status" -> process
+        ?.let { println("✅ $appName is running (PID: $it)") }
+        ?: println("⚠️ $appName is NOT running.")
+
+    "deploy", "" -> runCatching {
+        println("🚀 Deploying new version of $appName...")
+
+        println("🔨 Pulling latest changes from Git...")
+        "git pull".shell(logBuild)
+        println("✅ Git pull complete!")
+        println("🔨 Rebuilding project (clean + build + installDist)...")
+        "./gradlew clean build installDist".shell(logBuild)
+        println("✅ Rebuild & installDist successful!")
+
+        process?.let { pid ->
+            println("   $appName currently running (PID=$pid)")
+            println("🛑 Stopping old instance (PID: $pid)...")
+            "kill -9 $pid".shell()
             Thread.sleep(2000)
-            "$scriptPath start".shell() // calls this same script's 'start' command
-        }.onFailure {
-            logException(it, logFile, "Failed to restart application")
-            exitProcess(1)
-        }.onSuccess {
-            println("✅ Restarted.")
+            println("✅ Stopped old instance.")
         }
-    }
 
-    "status" -> {
-        findProcessId(port)
-            ?.let { println("✅ $appName is running (PID: $it)") }
-            ?: println("⚠️ $appName is NOT running.")
-    }
+        startServer()
 
-    "deploy", "" -> {
-        runCatching {
-            println("🚀 Deploying new version of $appName...")
-
-            // Show if something is already running (unchanged)
-            val oldPid = findProcessId(port)
-            if (oldPid != null) {
-                println("   $appName currently running (PID=$oldPid)")
-            }
-
-            // --- NEW LINES BEGIN ---
-            println("🔨 Pulling latest changes from Git...")
-            "git pull".shell(logBuild)
-            println("✅ Git pull complete!")
-
-            println("🔨 Rebuilding project (clean + build + installDist)...")
-            "./gradlew clean build installDist".shell(logBuild)
-            println("✅ Rebuild & installDist successful!")
-            // --- NEW LINES END ---
-
-            // Stop old instance if running (unchanged)
-            oldPid?.let { pid ->
-                println("🛑 Stopping old instance (PID: $pid)...")
-                "kill -9 $pid".shell()
-                Thread.sleep(2000)
-                println("✅ Stopped old instance.")
-            }
-
-            // Start new instance (unchanged)
-            startServer()
-
-        }.onFailure {
-            logException(it, logBuild, "Deployment failed")
-            println("❌ Deployment failed: ${it.message}")
-            exitProcess(1)
-        }.onSuccess {
-            println("✅ Deployment complete.")
-        }
-    }
-
+    }.onFailure {
+        logException(it, logBuild, "Deployment failed")
+        println("❌ Deployment failed: ${it.message}")
+        exitProcess(1)
+    }.onSuccess { println("✅ Deployment complete.") }
 
     else -> {
         println("❌ Unknown command: $cmd")
