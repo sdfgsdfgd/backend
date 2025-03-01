@@ -84,8 +84,9 @@ fun logException(e: Throwable, logFile: File, message: String) {
  * Throws an exception if the process fails to start or port is not in use.
  */
 fun startServer() {
-    println("🚀 Starting $appName with nohup in the background...")
-    "nohup $binPath &".shell(logFile)
+    println("🚀 Starting $appName...")
+
+    binPath.shell(logFile)
 
     // Wait for a bit to see if it fails quickly
     Thread.sleep(4000)
