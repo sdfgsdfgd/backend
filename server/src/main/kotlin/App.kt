@@ -5,6 +5,7 @@ package net.sdfgsdfg
 import SimpleReverseProxy
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
 import io.ktor.server.application.Application
 import io.ktor.server.engine.embeddedServer
@@ -97,7 +98,8 @@ fun Route.githubWebhookRoute() {
         println("GitHub payload: $payload")
 
         // 1) Respond right away, so GitHub doesn't time out
-        call.respondText("Deployment triggered! We'll do it asynchronously.")
+        call.respondText(text = "Deployment triggered! We'll do it asynchronously.", status = HttpStatusCode(202, "Accepted"))
+
 
         // 2) In the background, do the deploy
         GlobalScope.launch {
