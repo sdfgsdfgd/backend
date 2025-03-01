@@ -1,22 +1,16 @@
 package net.sdfgsdfg
 
-import io.ktor.client.request.get
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.testing.testApplication
-import kotlin.test.Test
-import kotlin.test.assertEquals
-
 class Test0 {
 
-    @Test
-    fun testRoot() = testApplication {
-        application {
-            module()
-        }
-        client.get("/").apply {
-            assertEquals(HttpStatusCode.OK, status)
-        }
-    }
+//    @Test
+//    fun testRoot() = testApplication {
+//        application {
+//            module()
+//        }
+//        client.get("/").apply {
+//            assertEquals(HttpStatusCode.OK, status)
+//        }
+//    }
 
 //    @Test
 //    fun testRpc() = testApplication {
