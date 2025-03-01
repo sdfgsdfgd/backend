@@ -22,7 +22,7 @@ val scriptDir = Path("./0_scripts/").toAbsolutePath().normalize().toFile().canon
 val scriptPath = scriptDir.resolve("deploy.main.kts").canonicalPath
 val jarPath = scriptDir.resolve("../server/build/libs/server-all.jar").canonicalPath
 val binPath = scriptDir.resolve("../server/build/install/server/bin/server").canonicalPath
-         // /Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server
+// /Users/x/Desktop/kotlin/backend/server/build/install/server/bin/server
 
 val logsDir = scriptDir.resolve("logs").apply { mkdirs() }  // Ensure logs folder exists
 val logFile = logsDir.resolve("app.log").apply { if (!exists()) createNewFile() }
@@ -97,42 +97,10 @@ fun startServer() {
     println("✅ $appName started successfully (PID: ${findProcessId(port)})")
 }
 
-
 // endregion
 
-
-
-
-
-
-
-
-
-
-
-
-// =========================================  TODO:  this goes to systemd  /  Daemonize'd    on Server       ======================================
-//            "nohup java -jar $jarPath &".shell(logFile)  // xx ShadowJar version
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//              xx ShadowJar version
+//               "nohup java -jar $jarPath &".shell(logFile)
 //         ==============     //
 //      ====================    //
 //   ==========================  //
