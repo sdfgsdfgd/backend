@@ -85,7 +85,7 @@ fun logException(e: Throwable, logFile: File, message: String) {
  */
 fun startServer() {
     println("🚀 Starting $appName with nohup in the background...")
-    "nohup bash $binPath &".shell(logFile)
+    "nohup $binPath &".shell(logFile)
 
     // Wait for a bit to see if it fails quickly
     Thread.sleep(4000)
