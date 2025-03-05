@@ -1,12 +1,14 @@
 package net.sdfgsdfg
 
 import io.ktor.serialization.gson.gson
+import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import kotlinx.serialization.json.Json
 
 fun Application.configureSerialization() {
     // xx This installs Ktor’s ContentNegotiation plugin,
@@ -14,8 +16,16 @@ fun Application.configureSerialization() {
     //  🤯 🤯 🤯
     install(ContentNegotiation) {
         gson {
-//            setPrettyPrinting()  // xx keep minified instead
+//                setPrettyPrinting()
+            disableHtmlEscaping()
+            serializeNulls()
         }
+
+        json(Json {
+            prettyPrint = false
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        })
     }
     routing {
         get("/example") {
