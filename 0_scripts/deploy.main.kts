@@ -46,23 +46,46 @@ fun findProcessId(port: Int): String? = try {
     null
 }
 
+// xx === Shell === xx
 // Redirect (vs inheritIO) allows to pipe ALSO to file
 fun String.shell(outputFile: File? = null): String = runCatching {
     val process = ProcessBuilder("bash", "-c", this).apply {
         redirectErrorStream(true)
     }.start()
 
-    val output = process.inputStream.bufferedReader().readText().trim()
+
+
+
+
+    val reader = process.inputStream.bufferedReader()
+    val outputBuffer = StringBuilder()
+
+    reader.useLines { lines ->
+        lines.forEach { line ->
+            println(line)  // Print to terminal
+            outputBuffer.appendLine(line)
+            outputFile?.appendText("🔸 $line\n")  // Append to log file
+        }
+    }
+
     val exitCode = process.waitFor()
+
+
+
+
+
+
+//    val output = process.inputStream.bufferedReader().readText().trim()
+//    val exitCode = process.waitFor()
 
     // Print raw process exit code
     println("🔎 Shell command: $this | Exit code: $exitCode")
 
     // Append output to file if needed
-    outputFile?.appendText("$output\n")
+//    outputFile?.appendText("$output\n")
 
     // Log and return output
-    return output.also { println("🔸 Output: ${it.ifEmpty { "!!!output empty!!" }}") }
+    return outputBuffer.toString() // .also { println("🔸 Output: ${it.ifEmpty { "!!!output empty!!" }}") }
 }.getOrElse {
     logException(it, outputFile ?: logFile, "Shell command failed: $this")
     return ""
