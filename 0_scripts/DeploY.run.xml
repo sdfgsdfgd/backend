@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="DeploY" type="KotlinStandaloneScriptRunConfigurationType">
+    <module name="backend" />
+    <option name="PROGRAM_PARAMETERS" value="deploy" />
+    <shortenClasspath name="NONE" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="filePath" value="$PROJECT_DIR$/0_scripts/deploy.main.kts" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+      <option name="Gradle.BeforeRunTask" enabled="true" tasks="shadowJar" externalProjectPath="$PROJECT_DIR$/server" vmOptions="" scriptParameters="" />
+    </method>
+  </configuration>
+</component>
