@@ -1,4 +1,5 @@
-# *.net & *.ai domains Backend, API, Middlewares etc...  
+# *.net & *.ai domains Backend, API, gRPC & WebSockets, Middlewares, Remote clipboard across devices, priv cloud, ...
+
 
 
 ## Features
