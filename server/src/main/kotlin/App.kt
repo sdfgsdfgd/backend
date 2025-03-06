@@ -132,7 +132,8 @@ fun Application.module() {
                             }
 
                             is WsMessage.Bye -> {
-                                close(CloseReason(CloseReason.Codes.NORMAL, "Client says Bye"))
+                                application.log.info("[WS-${connection.id}] Client Bye")
+                                close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye"))
                             }
 
                             is WsMessage.Unknown -> {
