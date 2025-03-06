@@ -1,11 +1,9 @@
-# *.net & *.ai domains Backend, API, Middlewares etc...  
+# *.net & *.ai domains Backend, API, gRPC & WebSockets, Middlewares, Remote clipboard across devices, priv cloud, ...
 
---> generated via  [Ktor Project Generator](https://start.ktor.io)
+
 
 ## Features
-
-Here's a list of features included in this project:
-
+List of features:
 | Name                                                                   | Description                                                                        |
 | ------------------------------------------------------------------------|------------------------------------------------------------------------------------ |
 | [Routing](https://start.ktor.io/p/routing)                             | Provides a structured routing DSL                                                  |
@@ -81,11 +79,8 @@ If the server starts successfully, you'll see the following output:
 ```
 
 
-
-
-
-
 See also;
+- Share with your friends and family. Generate a Ktor project --> [Ktor Project Generator](https://start.ktor.io)
 - [Ktor Documentation](https://ktor.io/docs/home.html)
 - [Ktor GitHub page](https://github.com/ktorio/ktor)
 - The [Ktor Slack chat](https://app.slack.com/client/T09229ZC6/C0A974TJ9). You'll need to [request an invite](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up) to join.
