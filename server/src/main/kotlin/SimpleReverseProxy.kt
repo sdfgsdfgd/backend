@@ -60,6 +60,10 @@ class SimpleReverseProxy(
                 // accept(ContentType.Text.Html)
                 // accept(ContentType.Application.Json)
                 // accept(ContentType.Any)
+                
+                append("X-Forwarded-Host", call.request.host())
+                append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
+                append("X-Forwarded-For", call.request.origin.remoteHost)
             }
         }
 
