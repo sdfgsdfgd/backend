@@ -5,12 +5,15 @@ package net.sdfgsdfg
 import SimpleReverseProxy
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
 import io.ktor.server.application.Application
+import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
@@ -49,6 +52,18 @@ fun Application.module() {
     // 1) Configs
     cfg()                       // xx Auth Routes
     configureSerialization()
+
+    // Add CORS configuration to handle authentication requests
+    install(CORS) {
+        anyHost()
+        allowCredentials = true
+        allowNonSimpleContentTypes = true
+        allowHeaders { true }
+        allowNonSimpleContentTypes = true
+        allowSameOrigin = true
+        allowMethod(HttpMethod.Get)
+        allowMethod(HttpMethod.Post)
+    }
 
     // 2)   Netty  |   CIO   |  OkHttp
     val httpClient = HttpClient {
@@ -139,7 +154,7 @@ fun Application.module() {
                             is WsMessage.Unknown -> {
                                 application.log.warn(
                                     "[WS-${connection.id}] Received unknown message. " +
-                                    "Raw: $incomingText   Decoded: ${msg}"
+                                            "Raw: $incomingText   Decoded: ${msg}"
                                 )
                             }
                         }
@@ -257,9 +272,6 @@ sealed class WsMessage {
         val content: String
     ) : WsMessage()
 
-    // Because Bye/Unknown have no extra data, we can store type
-    // in the constructor or do a small "object" with a custom serializer.
-    // For simplicity, let's do them as data classes with default props:
     @Serializable
     data class Bye(
         override val type: String = "bye"
@@ -273,7 +285,6 @@ sealed class WsMessage {
 
 /**
  * Converts a WsMessage into a JSON string.
- * Now includes "type" automatically.
  */
 fun WsMessage.toJson(): String = when (this) {
     is WsMessage.Ping -> json.encodeToString(WsMessage.Ping.serializer(), this)
@@ -362,7 +373,7 @@ fun parseWsMessage(raw: String): WsMessage {
 //        // 3) Optionally parse the JSON to see which branch was pushed, etc.
 //        //    e.g. val payload = Json.decodeFromString<PushPayload>(bodyBytes.decodeToString())
 //
-//        // 4) Run your `deploy.main.kts` script in the background so it doesn’t block Ktor
+//        // 4) Run your `deploy.main.kts` script in the background so it doesn't block Ktor
 //        val output = withContext(Dispatchers.IO) {
 //            // This example calls your script in the same directory or adjust path as needed:
 //            runCommand("./0_scripts/deploy.main.kts deploy")

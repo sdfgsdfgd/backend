@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.ktor.client.apache)
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.netty)
+    implementation(libs.ktor.server.cors)
     implementation(libs.logback.classic)
 
     // added by Kaanself
