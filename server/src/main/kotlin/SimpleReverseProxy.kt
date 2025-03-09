@@ -9,6 +9,8 @@ import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.encodedPath
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.origin
+import io.ktor.server.request.host
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.uri
 import io.ktor.server.response.header
@@ -60,7 +62,7 @@ class SimpleReverseProxy(
                 // accept(ContentType.Text.Html)
                 // accept(ContentType.Application.Json)
                 // accept(ContentType.Any)
-                
+
                 append("X-Forwarded-Host", call.request.host())
                 append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
                 append("X-Forwarded-For", call.request.origin.remoteHost)
