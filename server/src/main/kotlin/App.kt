@@ -29,7 +29,6 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -191,10 +190,16 @@ fun Route.githubWebhookRoute() {
 
 
         // 2) In the background, do the deploy
-        GlobalScope.launch {
-//         "./0_scripts/deploy.main.kts deploy".shell()
-            "systemctl restart backend.service".shell()
-            "systemctl restart frontend.service".shell()
+        listOf("systemctl restart backend.service", "systemctl restart frontend.service").forEach { command ->
+            runCatching {
+                command.shell()
+            }.onSuccess { output ->
+                println("✅ SUCCESS: '$command' executed successfully.")
+                println("🔹 Output:\n$output")
+            }.onFailure { error ->
+                println("❌ FAILURE: '$command' failed.")
+                println("⚠️ Error: ${error.localizedMessage}")
+            }
         }
     }
 }
