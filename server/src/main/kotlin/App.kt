@@ -38,6 +38,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import net.sdfgsdfg.z.archive.logToFile
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 fun main() {
@@ -180,25 +182,32 @@ fun Application.module() {
 }
 
 fun Route.githubWebhookRoute() {
-    // Minimal GitHub webhook route
     post("/webhook/github") {
         val payload = call.receiveText()
         println("GitHub payload: $payload")
 
-        // 1) Respond right away, so GitHub doesn't time out
-        call.respondText(text = "Deployment triggered! We'll do it asynchronously.", status = HttpStatusCode(202, "Accepted"))
+        // Respond immediately to GitHub
+        call.respondText("🙇 Deployment triggered !", status = HttpStatusCode.Accepted)
 
+        // Log file in /tmp, since /tmp persists across process restarts
+        val logFile = File("/tmp/deploy.log").apply { if (!exists()) createNewFile() }
 
-        // 2) In the background, do the deploy
-        listOf("systemctl restart backend.service", "systemctl restart frontend.service").forEach { command ->
+        // Log the webhook payload
+        logToFile(logFile, "Received GitHub webhook payload:\n$payload")
+
+        val commands = listOf(
+            "systemctl restart frontend.service",
+            "systemctl restart backend.service",
+        )
+
+        commands.forEach { command ->
             runCatching {
-                command.shell()
-            }.onSuccess { output ->
-                println("✅ SUCCESS: '$command' executed successfully.")
-                println("🔹 Output:\n$output")
-            }.onFailure { error ->
-                println("❌ FAILURE: '$command' failed.")
-                println("⚠️ Error: ${error.localizedMessage}")
+                logToFile(logFile, "Running command: '$command'")
+                command.shell(logFile)
+            }.onSuccess {
+                logToFile(logFile, "✅ SUCCESS: '$command' executed.")
+            }.onFailure {
+                logToFile(logFile, "❌ FAILURE: '$command' failed.\n⚠️ Error: ${it.localizedMessage}")
             }
         }
     }

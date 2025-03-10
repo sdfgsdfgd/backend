@@ -173,7 +173,7 @@ when (cmd) {
     "deploy", "" -> runCatching {
         println("🚀 Deploying new version of $appName...")
 
-        println("🔨 Pulling latest changes from Git...")
+        println("\n\n\n\n\n 🔨 Pulling latest changes from Git...")
         "sudo -u x git pull".shell(logBuild)
         println("✅ Git pull complete!")
         println("🔨 Rebuilding project (clean + build + installDist)...")
