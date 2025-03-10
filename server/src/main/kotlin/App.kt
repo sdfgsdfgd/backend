@@ -194,6 +194,7 @@ fun Route.githubWebhookRoute() {
         GlobalScope.launch {
 //         "./0_scripts/deploy.main.kts deploy".shell()
             "systemctl restart backend.service".shell()
+            "systemctl restart frontend.service".shell()
         }
     }
 }
