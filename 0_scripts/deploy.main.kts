@@ -174,7 +174,7 @@ when (cmd) {
         println("🚀 Deploying new version of $appName...")
 
         println("🔨 Pulling latest changes from Git...")
-        "git pull".shell(logBuild)
+        "sudo -u x git pull".shell(logBuild)
         println("✅ Git pull complete!")
         println("🔨 Rebuilding project (clean + build + installDist)...")
         "./gradlew clean build installDist".shell(logBuild)
