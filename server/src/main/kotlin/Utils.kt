@@ -1,6 +1,7 @@
 package net.sdfgsdfg
 
 import java.io.File
+import java.time.LocalDateTime
 
 fun String.shell(outputFile: File? = null): String = runCatching {
     val process = ProcessBuilder("bash", "-c", this).apply {
@@ -24,3 +25,6 @@ fun String.shell(outputFile: File? = null): String = runCatching {
 }
 
 
+fun logToFile(logFile: File, message: String) {
+    logFile.appendText("${LocalDateTime.now()} | $message\n")
+}

@@ -1,3 +1,5 @@
+package proxy
+
 import io.ktor.client.HttpClient
 import io.ktor.client.request.headers
 import io.ktor.client.request.request
@@ -22,7 +24,7 @@ class SimpleReverseProxy(
     private val httpClient: HttpClient,
     private val targetBaseUrl: Url
 ) {
-    private val logger = LoggerFactory.getLogger("SimpleReverseProxy")
+    private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
 
     /**
      * Hop-by-hop headers (per RFC 2616 section 13.5.1)
