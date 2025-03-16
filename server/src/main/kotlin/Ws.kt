@@ -1,12 +1,10 @@
 package net.sdfgsdfg
 
 import com.google.gson.Gson
-import io.ktor.server.application.Application
-import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.routing.Route
-import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.application
+import io.ktor.server.websocket.sendSerialized
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -16,10 +14,7 @@ import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.receiveAsFlow
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Define the WebSocket endpoint, handling concurrency limit, ping/pong, etc.
- */
-fun Route.webSocketRoutes() {
+fun Route.ws() {
     val gson = Gson()
 
     webSocket("/ws") {
@@ -30,73 +25,45 @@ fun Route.webSocketRoutes() {
             return@webSocket
         }
 
-        // Generate an ID for logging
-        val clientId = "client-${System.currentTimeMillis()}"
+        val clientId = "client-${System.currentTimeMillis()}" // Generate an ID for logging
         application.log.info("[WS-$clientId] Connected. Active: ${ConnectionCounter.count()}")
 
-        try {
-            // Collect incoming frames until disconnected
+        runCatching {
+            // xx When our API is stable, we migrate to minimalist use of   receiveDeserialized<WsMessage>() , for now this is powerful, best for prototyping
             incoming.receiveAsFlow().collect { frame ->
-                if (frame is Frame.Text) {
-                    val rawText = frame.readText().trim()
-                    application.log.info("[WS-$clientId] Received: $rawText")
-
-                    // Parse as WsMessage (fallback to "unknown" if it fails)
-                    val message = runCatching {
+                (frame as? Frame.Text)
+                    ?.readText()
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.also { application.log.info("[WS-$clientId] Received: $it") }
+                    // Parse
+                    ?.let { rawText ->
                         gson.fromJson(rawText, WsMessage::class.java)
-                    }.getOrElse { WsMessage(type = "unknown") }
-
-                    when (message.type?.lowercase()) {
-                        "ping" -> {
-                            // Send back a pong
-                            val pong = WsMessage(
-                                type = "pong",
-                                clientTimestamp = message.clientTimestamp,
-                                serverTimestamp = System.currentTimeMillis()
-                            )
-                            send(Frame.Text(gson.toJson(pong)))
-                        }
-
-                        "pong" -> {
-                            // Usually we don't get these from clients
-                            application.log.info("[WS-$clientId] Unexpected PONG.")
-                        }
-
-                        "echo" -> {
-                            // Echo the entire message back
-                            send(Frame.Text(gson.toJson(message)))
-                        }
-
-                        "bye" -> {
-                            // Close gracefully
-                            application.log.info("[WS-$clientId] Client sent Bye.")
-                            close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye"))
-                        }
-
-                        else -> {
-                            // Unknown message type
-                            application.log.warn("[WS-$clientId] Unknown message: $rawText")
+                            .runCatching { this }
+                            .getOrElse { WsMessage(type = "unknown") }
+                    }?.let { message ->
+                        when (message.type?.lowercase()) {
+                            "ping" -> sendSerialized(WsMessage("pong", message.clientTimestamp, System.currentTimeMillis()))
+                            "echo" -> sendSerialized(message)
+                            "bye" -> close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye")).also { application.log.info("[WS-$clientId] Client sent Bye") }
+                            else -> application.log.warn("[WS-$clientId] Unknown message: $message")
                         }
                     }
-                }
             }
-        } catch (e: ClosedReceiveChannelException) {
-            application.log.info("[WS-$clientId] Disconnected by client.")
-        } catch (t: Throwable) {
-            application.log.error("[WS-$clientId] Error: ${t.message}", t)
-        } finally {
-            // Decrement the connection count and log
-            ConnectionCounter.release()
+        }.onFailure { e ->
+            when (e) {
+                is ClosedReceiveChannelException -> application.log.info("[WS-$clientId] Client closed connection.")
+                else -> application.log.error("[WS-$clientId] Error: ${e.message}", e)
+            }
+        }.also {
+            ConnectionCounter.release() // Decrement the connection count and log
             application.log.info("[WS-$clientId] Disconnected. Active: ${ConnectionCounter.count()}")
         }
     }
 }
 
 // region Helpars
-/**
- * WS Client Connection Pool tracking
- */
-object ConnectionCounter {
+object ConnectionCounter { // WS Client Connection Pool tracking
     private val current = AtomicInteger(0)
     private const val MAX_CONNECTIONS = 2
 
@@ -114,9 +81,6 @@ object ConnectionCounter {
     fun count(): Int = current.get()
 }
 
-/**
- * Our simple data class for incoming/outgoing messages via Gson.
- */
 data class WsMessage(
     val type: String? = null,
     val clientTimestamp: Long? = null,
@@ -124,13 +88,4 @@ data class WsMessage(
     val content: String? = null
 )
 
-/**
- * Install WebSockets with sensible ping/timeout settings.
- */
-fun Application.configureWebSockets() {
-    install(WebSockets) {
-        pingPeriodMillis = 15_000
-        timeoutMillis = 30_000
-    }
-}
 // endregion

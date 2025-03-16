@@ -3,6 +3,7 @@ package net.sdfgsdfg
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.http.HttpMethod
+import io.ktor.serialization.gson.GsonWebsocketContentConverter
 import io.ktor.serialization.gson.gson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -12,6 +13,7 @@ import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 
 val httpClient = HttpClient {
@@ -26,8 +28,7 @@ fun Application.cfg() {
     // [ Configure ]
 
     // 1. Configure: Serialization
-    // xx This installs Ktor’s ContentNegotiation plugin,
-    //  allowing you to automatically convert Kotlin objects to JSON and vice versa using Gson.
+    // xx if ContentNegotiation plugin allows you to automatically convert Kotlin objects to JSON and vice versa using Gson, what the fk is Gson good for ?
     //  🤯 🤯 🤯
 
 
@@ -45,6 +46,8 @@ fun Application.cfg() {
         })
     }
 
+    // todo: Remove, unnecessary ( test w/ auth after removal, we temporarily added this to resolve OAUTH2.0 callback issues,
+    //  but we would only need this if OAUTH logic lived completely on Ktor rather than via proxy )
     install(CORS) {
         anyHost()
         allowCredentials = true
@@ -53,6 +56,12 @@ fun Application.cfg() {
         allowSameOrigin = true
         allowMethod(HttpMethod.Get)
         allowMethod(HttpMethod.Post)
+    }
+
+    install(WebSockets) {
+        contentConverter = GsonWebsocketContentConverter()
+        pingPeriodMillis = 15_000
+        timeoutMillis = 30_000
     }
 
     routing {

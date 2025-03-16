@@ -27,7 +27,6 @@ fun main() {
 
 fun Application.module() {
     cfg()
-    configureWebSockets()
 
     // 1. Routes
     routing {
@@ -40,7 +39,7 @@ fun Application.module() {
         githubWebhookRoute()
 
         // [ WS ]
-        webSocketRoutes()
+        ws()
 
         // [ Reverse Proxy ] -->  Next.js @ :3000
         route("/{...}") {
