@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 fun Route.ws() {
     val gson = Gson()
+    val repoManager = RepositoryManager()
 
     webSocket("/ws") {
         // Reject if at capacity
@@ -38,15 +39,27 @@ fun Route.ws() {
                     ?.also { application.log.info("[WS-$clientId] Received: $it") }
                     // Parse
                     ?.let { rawText ->
-                        gson.fromJson(rawText, WsMessage::class.java)
-                            .runCatching { this }
-                            .getOrElse { WsMessage(type = "unknown") }
-                    }?.let { message ->
-                        when (message.type?.lowercase()) {
-                            "ping" -> sendSerialized(WsMessage("pong", message.clientTimestamp, System.currentTimeMillis()))
-                            "echo" -> sendSerialized(message)
-                            "bye" -> close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye")).also { application.log.info("[WS-$clientId] Client sent Bye") }
-                            else -> application.log.warn("[WS-$clientId] Unknown message: $message")
+                        runCatching {
+                            gson.fromJson(rawText, WsMessage::class.java)
+                        }.onSuccess { baseMessage ->
+                            when (baseMessage.type?.lowercase()) {
+                                "ping" -> sendSerialized(WsMessage("pong", baseMessage.clientTimestamp, System.currentTimeMillis()))
+                                "echo" -> sendSerialized(baseMessage)
+                                "bye" -> close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye")).also {
+                                    application.log.info("[WS-$clientId] Client sent Bye")
+                                }
+
+                                // xx  [ Content Sync ]
+                                "workspace_select_github" -> {
+                                    val gitMessage = gson.fromJson(rawText, GitHubRepoSelectMessage::class.java)
+                                    handleGitHubRepoSelect(gitMessage, clientId, repoManager)
+                                }
+
+                                else -> application.log.warn("[WS-$clientId] Unknown message: $baseMessage")
+                            }
+                        }.getOrElse { error ->
+                            application.log.error("[WS-$clientId] Failed to parse message: ${error.message}")
+                            sendSerialized(WsMessage("error", null, System.currentTimeMillis(), "Invalid message format"))
                         }
                     }
             }
@@ -56,14 +69,27 @@ fun Route.ws() {
                 else -> application.log.error("[WS-$clientId] Error: ${e.message}", e)
             }
         }.also {
+            // Cleanup any active operations for this client
+            activeGitOperations.entries.removeIf { (_, job) ->
+                job.cancel()
+                true
+            }
             ConnectionCounter.release() // Decrement the connection count and log
             application.log.info("[WS-$clientId] Disconnected. Active: ${ConnectionCounter.count()}")
         }
     }
 }
 
-// region Helpars
-object ConnectionCounter { // WS Client Connection Pool tracking
+// Basic WebSocket message class
+data class WsMessage(
+    val type: String? = null,
+    val clientTimestamp: Long? = null,
+    val serverTimestamp: Long? = null,
+    val content: String? = null
+)
+
+// Connection pool management
+object ConnectionCounter {
     private val current = AtomicInteger(0)
     private const val MAX_CONNECTIONS = 2
 
@@ -80,12 +106,3 @@ object ConnectionCounter { // WS Client Connection Pool tracking
 
     fun count(): Int = current.get()
 }
-
-data class WsMessage(
-    val type: String? = null,
-    val clientTimestamp: Long? = null,
-    val serverTimestamp: Long? = null,
-    val content: String? = null
-)
-
-// endregion

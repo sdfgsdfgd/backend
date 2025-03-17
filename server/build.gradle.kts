@@ -56,9 +56,9 @@ dependencies {
     implementation(libs.ktor.server.cors)
     implementation(libs.logback.classic)
 
-    // added by Kaanself
+    // Added by Kaanself
     implementation(libs.coroutines)
-
+    implementation(libs.kotlinx.atomicfu)
 
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
