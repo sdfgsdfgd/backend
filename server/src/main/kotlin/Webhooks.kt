@@ -13,22 +13,20 @@ fun Route.githubWebhookRoute() {
         println("GitHub payload: $payload")
 
         call.respondText("🙇 Deployment triggered !", status = HttpStatusCode.Accepted)
-
         val logFile = File("/tmp/deploy.log").apply { if (!exists()) createNewFile() }
-
-        logToFile(logFile, "Received GitHub webhook payload:\n$payload")
+        log("Received GitHub webhook payload:\n$payload", File(resolveLogDir(), "webhook.log"))
 
         listOf(
             "systemctl restart frontend.service",
             "systemctl restart backend.service",
         ).forEach { command ->
             runCatching {
-                logToFile(logFile, "Running command: '$command'")
-                command.shell(logFile)
+                log("Running command: '$command'", File(resolveLogDir(), "webhook.log"))
+                command.shell(logFile = logFile)
             }.onSuccess {
-                logToFile(logFile, "✅ SUCCESS: '$command' executed.")
+                log("✅ SUCCESS: '$command' executed.", File(resolveLogDir(), "webhook.log"))
             }.onFailure {
-                logToFile(logFile, "❌ FAILURE: '$command' failed.\n⚠️ Error: ${it.localizedMessage}")
+                log("❌ FAILURE: '$command' failed.\n⚠️ Error: ${it.localizedMessage}", File(resolveLogDir(), "webhook.log"))
             }
         }
     }

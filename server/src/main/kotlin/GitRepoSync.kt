@@ -1,15 +1,28 @@
 package net.sdfgsdfg
 
-import io.ktor.server.application.*
-import io.ktor.server.websocket.*
+import io.ktor.server.application.log
+import io.ktor.server.websocket.WebSocketServerSession
+import io.ktor.server.websocket.application
+import io.ktor.server.websocket.sendSerialized
 import kotlinx.atomicfu.AtomicBoolean
 import kotlinx.atomicfu.AtomicInt
 import kotlinx.atomicfu.atomic
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -55,7 +68,7 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
 
     // If no repo data is passed, respond and bail out
     if (repoData == null) {
-        sendResponse(messageId, "error", "Repository data is missing")
+        sendRepoResponse(messageId, "error", "Repository data is missing")
         return
     }
 
@@ -66,15 +79,15 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
 
         // Already cloned? => attempt pulling
         if (repoManager.repositoryExists(repoData.owner, repoData.name)) {
-            sendResponse(messageId, "cloning", "Repository already exists, syncing latest changes...", workspaceId, 50)
+            sendRepoResponse(messageId, "cloning", "Repository already exists, syncing latest changes...", workspaceId, 50)
             try {
                 repoManager.pullRepository(repoData.owner, repoData.name, repoData.branch)
-                sendResponse(messageId, "success", "Repository synchronized successfully", workspaceId, 100)
+                sendRepoResponse(messageId, "success", "Repository synchronized successfully", workspaceId, 100)
             } catch (e: CancellationException) {
                 // Just ignore cancellations
             } catch (e: Throwable) {
                 application.log.error("[WS-$clientId] Pull failed: ${e.message}", e)
-                sendResponse(messageId = messageId, status = "error", message = errorMessageFor(e))
+                sendRepoResponse(messageId = messageId, status = "error", message = errorMessageFor(e))
             }
             return@launch
         }
@@ -83,8 +96,8 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
         val progress = atomic(0)
         val progressJob = launch {
             while (isActive) {
-                sendResponse(messageId, "cloning", "Cloning repository...", workspaceId, progress.value)
-                delay((100..450).random().milliseconds)
+                sendRepoResponse(messageId, "cloning", "Cloning repository...", workspaceId, progress.value)
+                delay((100..450).random().milliseconds) // ai says human mind loves a bit of a 300-450 ms delay
                 if (progress.value >= 100) break
             }
         }
@@ -100,21 +113,21 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
             )
             progress.value = 100
             progressJob.join()
-            sendResponse(messageId, "success", "Repository cloned successfully", workspaceId, 100)
+            sendRepoResponse(messageId, "success", "Repository cloned successfully", workspaceId, 100)
         } catch (e: CancellationException) {
             // Ignore cancellations
         } catch (e: Throwable) {
             application.log.error("[WS-$clientId] Clone failed: ${e.message}", e)
             progress.value = 0
             progressJob.cancelAndJoin()
-            sendResponse(messageId, "error", errorMessageFor(e))
+            sendRepoResponse(messageId, "error", errorMessageFor(e))
         }
     }.apply {
         invokeOnCompletion { activeGitOperations.remove(clientId) }
     }
 }
 
-private suspend fun WebSocketServerSession.sendResponse(
+private suspend fun WebSocketServerSession.sendRepoResponse(
     messageId: String,
     status: String,
     message: String,
@@ -151,7 +164,7 @@ class RepositoryManager {
     private val recentRepos = mutableListOf<String>()
     private val repoMutex = Mutex()  // For concurrency around rotating + removing repos
 
-    fun getRepoPath(owner: String, name: String): File = File(baseDir, "${owner}_$name")
+    private fun getRepoPath(owner: String, name: String): File = File(baseDir, "${owner}_$name")
 
     fun repositoryExists(owner: String, name: String): Boolean =
         getRepoPath(owner, name).let { it.exists() && File(it, ".git").exists() }
@@ -170,6 +183,9 @@ class RepositoryManager {
         }
 
         val repoDir = getRepoPath(owner, name)
+        // xx debugging
+        println("🚀 sdfgsdfg access token was $accessToken ------ url was $url ------------")
+        // xx debugging
         val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
             ?.let { url.replace("https://", "https://$it@") }
             ?: url
@@ -189,8 +205,8 @@ class RepositoryManager {
         }
 
         try {
-            withTimeout(30.seconds) {
-                gitCloneCommand(repoDir, cloneUrl, branchArg, owner, name, progressTracker, sizeLimitExceeded)
+            withTimeout(300.seconds) {
+                gitCloneCommand(repoDir, cloneUrl, branchArg, progressTracker, sizeLimitExceeded)
             }
         } finally {
             monitorJob.cancel()
@@ -215,7 +231,7 @@ class RepositoryManager {
         }
     }
 
-    fun getRepoSizeGB(owner: String, name: String): Double = getRepoPath(owner, name).let { repoDir ->
+    private suspend fun getRepoSizeGB(owner: String, name: String): Double = getRepoPath(owner, name).let { repoDir ->
         if (!repoDir.exists()) return 0.0
         val command = if (isOSX()) {
             // macOS returns kilobytes, so multiply by 1024 => bytes
@@ -244,61 +260,63 @@ class RepositoryManager {
         }
     }
 
-    fun deleteRepository(owner: String, name: String) {
+    private fun deleteRepository(owner: String, name: String) {
         getRepoPath(owner, name).takeIf { it.exists() }?.deleteRecursively()
         recentRepos.remove("${owner}_$name")
     }
 }
 
 // Simple Git clone helper that parses progress
-private fun gitCloneCommand(
+private suspend fun gitCloneCommand(
     repoDir: File,
     cloneUrl: String,
     branchArg: String,
-    owner: String,
-    name: String,
     progressTracker: AtomicInt?,
-    sizeLimitExceeded: AtomicBoolean
+    sizeLimitExceeded: AtomicBoolean // TODO: if > 10GB  no bueno
 ) {
     val patterns = listOf(
         "Receiving objects:\\s+(\\d+)%".toRegex(),
         "Receiving objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
-        "remote: Counting objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
-        "remote: Compressing objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
+//        "remote: Counting objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
+//        "remote: Compressing objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
         "Resolving deltas:\\s+(\\d+)%".toRegex(),
         "Resolving deltas:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex()
     )
 
-    ProcessBuilder(
-        "bash", "-c", "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath} 2>&1"
-    ).redirectErrorStream(true)
-        .start()
-        .apply {
-            inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    // Update progress if matches
-                    patterns
-                        .asSequence()
-                        .mapNotNull { it.find(line)?.groupValues?.getOrNull(1)?.toIntOrNull() }
-                        .firstOrNull()
-                        ?.let { percent -> progressTracker?.value = percent }
+    // 1) Pipe them all
+    val stdoutFlow = MutableStateFlow("")
+    val stderrFlow = MutableStateFlow("")
 
-                    // Stop the process if size limit is exceeded
-                    if (sizeLimitExceeded.value) destroy()
+    // 2) A coroutine to collect the lines as they're appended. We parse them for progress or kill the process if needed.
+    val monitorJob = CoroutineScope(Dispatchers.IO).launch {
+        stdoutFlow.collect { currentText ->
+            val lastLine = currentText.split('\n').lastOrNull() ?: return@collect
+            // If matches "Receiving objects: 50%" => update progress
+            patterns.forEach { regex ->
+                regex.find(lastLine)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { pct ->
+                    progressTracker?.value = pct
                 }
             }
-            val exitCode = waitFor()
-            if (exitCode != 0) throw Exception("Git clone failed with exit code $exitCode")
+            // to forcibly kill the process for size reasons, we'd need a callback or something to call process.destroy()
+            // (But with raw .shell() approach, handle that externally.)
         }
+    }
+
+    val cmd = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}"
+    val finalOutput = cmd.shell(
+        stdoutState = stdoutFlow,
+        stderrState = stderrFlow
+    )
+
+    val exitLine = finalOutput.lineSequence().lastOrNull { it.contains("Exit:") }
+    val exitCode = exitLine?.substringAfter("Exit: ")?.toIntOrNull() ?: 0
+
+    monitorJob.cancel()
+    if (exitCode != 0) {
+        throw Exception("Git clone failed with exit code $exitCode")
+    }
 }
 
 fun isOSX(): Boolean = System.getProperty("os.name").lowercase().run {
     contains("mac") || contains("darwin")
-}
-
-// Inline shell helper
-fun String.shell(): String = ProcessBuilder("bash", "-c", this).start().run {
-    val output = inputStream.bufferedReader().readText()
-    if (waitFor() != 0) throw Exception("Command failed: $this\nOutput: $output")
-    output
 }
