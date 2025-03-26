@@ -1,7 +1,7 @@
-# Backend  ( *.net  &  *.ai domains )
+# Backend   ( *.net  &  *.ai domains )
 
-### API, gRPC & WebSockets, Middlewares, Remote clipboard across devices, priv cloud, ...
-### ...incl Codebase Comprehension across websockets via Containers, audio/text bidirectional stream for STT/TTS, Clustering, Visualization w/ Vasturiano force-directed graph  ( via frontend-next )...
+### API, gRPC & WebSockets, Middlewares, Remote clipboard across devices, priv cloud
+### ...incl Codebase Comprehension across websockets via Containers, audio/text bidirectional stream for STT/TTS, Clustering, Visualization w/ Vasturiano force-directed graph (WIP)  ( via frontend-next )...
 
 ![0](https://github.com/user-attachments/assets/714a40ab-a78b-475c-b690-15363f83d68a)
 
