@@ -53,10 +53,6 @@ fun String.shell(outputFile: File? = null): String = runCatching {
         redirectErrorStream(true)
     }.start()
 
-
-
-
-
     val reader = process.inputStream.bufferedReader()
     val outputBuffer = StringBuilder()
 
@@ -69,11 +65,6 @@ fun String.shell(outputFile: File? = null): String = runCatching {
     }
 
     val exitCode = process.waitFor()
-
-
-
-
-
 
 //    val output = process.inputStream.bufferedReader().readText().trim()
 //    val exitCode = process.waitFor()

@@ -1,0 +1,27 @@
+# TODO:   ... this will be used to LOAD-BALANCE across multiple Data-centers  if our local servers can't serve a threshold value of simultaneous users.
+# version: '3.8'
+
+# services:
+#   ktor-server:
+#     build: 
+#       context: ./server
+#     ports:
+#       - "80:80"
+#     volumes:
+#       - ./server:/app
+#       - ~/Desktop/data:/app/data
+#       - /var/run/docker.sock:/var/run/docker.sock
+#     environment:
+#       - DOCKER_HOST=unix:///var/run/docker.sock
+#     depends_on:
+#       - next-frontend
+
+#   next-frontend:
+#     build:
+#       context: ./web
+#     ports:
+#       - "3000:3000"
+#     volumes:
+#       - ./web:/app
+#     environment:
+#       - NODE_ENV=development

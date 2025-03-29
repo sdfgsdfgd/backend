@@ -19,8 +19,7 @@ fun Route.ws() {
     val repoManager = RepositoryManager()
 
     webSocket("/ws") {
-        // Reject if at capacity
-        if (!ConnectionCounter.tryAcquire()) {
+        if (!ConnectionCounter.tryAcquire()) { // Reject if at capacity
             application.log.warn("Rejecting WebSocket connection: at capacity.")
             close(CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "Server at capacity."))
             return@webSocket
@@ -30,38 +29,37 @@ fun Route.ws() {
         application.log.info("[WS-$clientId] Connected. Active: ${ConnectionCounter.count()}")
 
         runCatching {
-            // xx When our API is stable, we migrate to minimalist use of   receiveDeserialized<WsMessage>() , for now this is powerful, best for prototyping
+            // todo: STREAMLINE under a new Banner sealed Class, and --> receiveDeserialized<WsMessage>()
             incoming.receiveAsFlow().collect { frame ->
-                (frame as? Frame.Text)
-                    ?.readText()
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?.also { application.log.info("[WS-$clientId] Received: $it") }
-                    // Parse
-                    ?.let { rawText ->
-                        runCatching {
-                            gson.fromJson(rawText, WsMessage::class.java)
-                        }.onSuccess { baseMessage ->
-                            when (baseMessage.type?.lowercase()) {
-                                "ping" -> sendSerialized(WsMessage("pong", baseMessage.clientTimestamp, System.currentTimeMillis()))
-                                "echo" -> sendSerialized(baseMessage)
-                                "bye" -> close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye")).also {
-                                    application.log.info("[WS-$clientId] Client sent Bye")
-                                }
+                (frame as? Frame.Text)?.readText()?.trim()?.takeIf { it.isNotBlank() }?.let { rawText ->
+                    application.log.info("[WS-$clientId] Received: $rawText")
+                    runCatching {
+                        gson.fromJson(rawText, WsMessage::class.java)
+                    }.onSuccess { baseMessage ->
+                        when (baseMessage.type?.lowercase()) {
+                            "ping" -> sendSerialized(WsMessage("pong", baseMessage.clientTimestamp, System.currentTimeMillis()))
+                            "echo" -> sendSerialized(baseMessage)
+                            "bye" -> close(CloseReason(CloseReason.Codes.NORMAL, "Client Bye"))
 
-                                // xx  [ Content Sync ]
-                                "workspace_select_github" -> {
-                                    val gitMessage = gson.fromJson(rawText, GitHubRepoSelectMessage::class.java)
-                                    handleGitHubRepoSelect(gitMessage, clientId, repoManager)
-                                }
-
-                                else -> application.log.warn("[WS-$clientId] Unknown message: $baseMessage")
+                            // xx  [ Content Sync ]
+                            "workspace_select_github" -> {
+                                val gitMessage = gson.fromJson(rawText, GitHubRepoSelectMessage::class.java)
+                                handleGitHubRepoSelect(gitMessage, clientId, repoManager)
                             }
-                        }.getOrElse { error ->
-                            application.log.error("[WS-$clientId] Failed to parse message: ${error.message}")
-                            sendSerialized(WsMessage("error", null, System.currentTimeMillis(), "Invalid message format"))
+
+                            // xx [ Container Management ]
+                            "arcana_start", "container_start", "container_input", "container_stop" -> {
+                                val containerMessage = gson.fromJson(rawText, ContainerMessage::class.java)
+                                handleContainerRequest(containerMessage, clientId)
+                            }
+
+                            else -> application.log.warn("[WS-$clientId] Unknown message: $baseMessage")
                         }
+                    }.onFailure { err ->
+                        application.log.error("[WS-$clientId] Parse error: ${err.message}", err)
+                        sendSerialized(WsMessage("error", null, System.currentTimeMillis(), "Invalid message"))
                     }
+                }
             }
         }.onFailure { e ->
             when (e) {
@@ -69,23 +67,21 @@ fun Route.ws() {
                 else -> application.log.error("[WS-$clientId] Error: ${e.message}", e)
             }
         }.also {
-            // Cleanup any active operations for this client
-            activeGitOperations.entries.removeIf { (_, job) ->
-                job.cancel()
-                true
-            }
-            ConnectionCounter.release() // Decrement the connection count and log
+            // Cleanup
+            activeGitOperations[clientId]?.cancel()
+            stopContainerInternal(clientId)
+            WorkspaceTracker.removeClient(clientId)
+            ConnectionCounter.release()
             application.log.info("[WS-$clientId] Disconnected. Active: ${ConnectionCounter.count()}")
         }
     }
 }
 
-// Basic WebSocket message class
 data class WsMessage(
-    val type: String? = null,
-    val clientTimestamp: Long? = null,
-    val serverTimestamp: Long? = null,
-    val content: String? = null
+    val type: String?,
+    val clientTimestamp: Long?,
+    val serverTimestamp: Long?,
+    val payload: String? = null
 )
 
 // Connection pool management
@@ -95,8 +91,7 @@ object ConnectionCounter {
 
     fun tryAcquire(): Boolean {
         val existing = current.get()
-        // Reject immediately if we already hit the limit
-        return if (existing >= MAX_CONNECTIONS) false
+        return if (existing >= MAX_CONNECTIONS) false // Reject immediately if we already hit the limit
         else current.compareAndSet(existing, existing + 1)
     }
 

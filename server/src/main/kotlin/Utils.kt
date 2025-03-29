@@ -4,8 +4,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.supervisorScope
@@ -15,6 +17,9 @@ import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
+// xx What is the ultimate, ideal Data Structure for collecting and propagating stdout/stderr pipelines — beaming containerized streams across thousands of websockets/gRPC —
+//  in the most performant, memory-safe, and idiomatic way?
+//
 //                   //.//
 //                     =   //
 //                    ===    //
@@ -22,43 +27,51 @@ import java.time.format.DateTimeFormatter
 //                ===========    //
 //              ===============    //
 //      [   The Ultimate "Shell" Extension Function   ]
-// 1. Extensive, dedicated, separate supervisorCoroutines for  stdout & stderr
-// 2. Log to console + file + in-memory string builder
-// 3. (Optionally) stream lines to separate StateFlows if provided.
-// 3. Log / timestamps, to file, console, and output collector
-// 4. Bulletproof Error Handling — Transparent & Fail-Safe
+// 1. stdout & stderr :  SharedFlows with buffers, Hot Flows are best for logging even outside collection. Extensive, dedicated, separate supervisorCoroutines.
+// 2. stdin --> Channel :  Best "Cold" structure for piping stdin on demand, independently of other streams
+// 3. Log to console + file + in-memory string builder
+// 4. (Optionally) stream lines to separate StateFlows if provided.
+// 5. Log / timestamps, to file, console, and output collector
+// 6. Bulletproof Error Handling — Transparent & Fail-Safe
 // =============
 // =============
 suspend fun String.shell(
     logFile: File? = File(resolveLogDir(), "shell.log"),
-    stdoutState: MutableStateFlow<String>? = null,
-    stderrState: MutableStateFlow<String>? = null
-): String = withContext(Dispatchers.IO + SupervisorJob()) {
+    stdoutState: MutableSharedFlow<String>? = null,  // xx ideally MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1024, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    stderrState: MutableSharedFlow<String>? = null,
+    stdinChannel: Channel<String>? = null,
+    onLine: (suspend (line: String, isError: Boolean) -> Unit)? = null
+) = withContext(Dispatchers.IO + SupervisorJob()) {
     logFile?.appendText("[${timestamp()}] \$ ${this@shell}\n")
 
     val process = ProcessBuilder("bash", "-c", this@shell)
         .redirectOutput(ProcessBuilder.Redirect.PIPE)
         .redirectError(ProcessBuilder.Redirect.PIPE)
+        .redirectInput(ProcessBuilder.Redirect.PIPE)
         .start()
 
-    val output = StringBuilder()
+    val stdinWriter = process.outputStream.bufferedWriter()
 
-    supervisorScope {
+    supervisorScope { // supervisors don't crash other threads if crashed
         listOf(
             async {
                 process.inputStream.bufferedReader().lineFlow().collect { line ->
-                    log(line, logFile, output) // 1. Log to console + file + in-memory string builder
-                    stdoutState?.let { flow -> // 2. Also update the optional StateFlow for stdout
-                        flow.value = "${flow.value}\n $line"
-                    }
+                    onLine?.invoke(line, false)
+                    log(line, logFile) // 1. Log to console + file
+                    stdoutState?.emit(line)
                 }
             },
             async {
                 process.errorStream.bufferedReader().lineFlow().collect { line ->
-                    log("[ERROR] $line", logFile, output)
-                    stderrState?.let { flow ->
-                        flow.value = "${flow.value}\n [ERROR] $line"
-                    }
+                    onLine?.invoke(line, true)
+                    log("[ERROR] $line", logFile)
+                    stderrState?.emit("[ERROR] $line")
+                }
+            },
+            async {
+                stdinChannel?.consumeEach { input ->
+                    stdinWriter.write(input)
+                    stdinWriter.flush()
                 }
             }
         ).awaitAll()
@@ -66,9 +79,9 @@ suspend fun String.shell(
 
     val exitCode = process.waitFor()
     val exitMessage = "[${timestamp()}] ${if (exitCode == 0) "✓" else "✗"} Exit: $exitCode"
-    log(exitMessage, logFile, output) // Log exit status
+    log(exitMessage, logFile)
 
-    output.toString().trim() // Return full combined stdout + stderr
+    return@withContext exitCode
 }
 
 // =============
@@ -89,17 +102,16 @@ fun resolveLogDir() = File(System.getProperty("user.dir"), "0_scripts/logs").tak
 /**
  * Streams lines from a BufferedReader as a Flow.
  */
-private fun BufferedReader.lineFlow(): Flow<String> = flow {
+fun BufferedReader.lineFlow(): Flow<String> = flow {
     for (line in this@lineFlow.lineSequence()) emit(line)
 }.flowOn(Dispatchers.IO)
 
 /**
  * Logs a message to console, file, and output collector.
  */
-fun log(message: String, logFile: File?, output: StringBuilder? = null) {
+fun log(message: String, logFile: File? = null) {
     println(message)
     logFile?.appendText("[${timestamp()}] $message\n")
-    output?.append(message)?.append("\n")
 }
 
 /**

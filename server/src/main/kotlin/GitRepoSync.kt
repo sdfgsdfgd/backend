@@ -4,7 +4,6 @@ import io.ktor.server.application.log
 import io.ktor.server.websocket.WebSocketServerSession
 import io.ktor.server.websocket.application
 import io.ktor.server.websocket.sendSerialized
-import kotlinx.atomicfu.AtomicBoolean
 import kotlinx.atomicfu.AtomicInt
 import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CancellationException
@@ -14,7 +13,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -66,8 +64,7 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
     val messageId = message.messageId ?: UUID.randomUUID().toString()
     val repoData = message.repoData
 
-    // If no repo data is passed, respond and bail out
-    if (repoData == null) {
+    if (repoData == null) { // If no repo data is passed, respond and bail out
         sendRepoResponse(messageId, "error", "Repository data is missing")
         return
     }
@@ -77,50 +74,58 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
     activeGitOperations[clientId] = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
         val workspaceId = "${repoData.owner}_${repoData.name}_${UUID.randomUUID().toString().take(8)}"
 
-        // Already cloned? => attempt pulling
-        if (repoManager.repositoryExists(repoData.owner, repoData.name)) {
-            sendRepoResponse(messageId, "cloning", "Repository already exists, syncing latest changes...", workspaceId, 50)
-            try {
-                repoManager.pullRepository(repoData.owner, repoData.name, repoData.branch)
-                sendRepoResponse(messageId, "success", "Repository synchronized successfully", workspaceId, 100)
-            } catch (e: CancellationException) {
-                // Just ignore cancellations
-            } catch (e: Throwable) {
-                application.log.error("[WS-$clientId] Pull failed: ${e.message}", e)
-                sendRepoResponse(messageId = messageId, status = "error", message = errorMessageFor(e))
+        // Check repository state with our enhanced function
+        when (repoManager.checkRepoState(repoData.owner, repoData.name)) {
+            // Valid repository exists → Pull latest changes
+            RepositoryManager.RepoState.Valid -> {
+                sendRepoResponse(messageId, "cloning", "Repository already exists, syncing latest changes...", workspaceId, 50)
+                try {
+                    repoManager.pullRepository(repoData.owner, repoData.name, repoData.branch)
+                    WorkspaceTracker.trackWorkspace(clientId, repoData.owner, repoData.name, workspaceId)
+                    sendRepoResponse(messageId, "success", "Repository synchronized successfully", workspaceId, 100)
+                } catch (e: CancellationException) {
+                    // Just ignore cancellations
+                } catch (e: Throwable) {
+                    application.log.error("[WS-$clientId] Pull failed: ${e.message}", e)
+                    sendRepoResponse(messageId = messageId, status = "error", message = errorMessageFor(e))
+                }
+                return@launch
             }
-            return@launch
-        }
 
-        // New repository => clone with progress
-        val progress = atomic(0)
-        val progressJob = launch {
-            while (isActive) {
-                sendRepoResponse(messageId, "cloning", "Cloning repository...", workspaceId, progress.value)
-                delay((100..450).random().milliseconds) // ai says human mind loves a bit of a 300-450 ms delay
-                if (progress.value >= 100) break
+            // Invalid or missing repository → Clone fresh
+            else -> {
+                // New repository => clone with progress
+                val progress = atomic(0)
+                val progressJob = launch {
+                    while (isActive) {
+                        sendRepoResponse(messageId, "cloning", "Cloning repository...", workspaceId, progress.value)
+                        delay((100..450).random().milliseconds)
+                        if (progress.value >= 100) break
+                    }
+                }
+
+                try {
+                    repoManager.cloneRepository(
+                        owner = repoData.owner,
+                        name = repoData.name,
+                        url = repoData.url,
+                        branch = repoData.branch,
+                        accessToken = message.accessToken,
+                        progressTracker = progress
+                    )
+                    progress.value = 100
+                    progressJob.join()
+                    WorkspaceTracker.trackWorkspace(clientId, repoData.owner, repoData.name, workspaceId)
+                    sendRepoResponse(messageId, "success", "Repository cloned successfully", workspaceId, 100)
+                } catch (e: CancellationException) {
+                    // Ignore cancellations
+                } catch (e: Throwable) {
+                    application.log.error("[WS-$clientId] Clone failed: ${e.message}", e)
+                    progress.value = 0
+                    progressJob.cancelAndJoin()
+                    sendRepoResponse(messageId, "error", errorMessageFor(e))
+                }
             }
-        }
-
-        try {
-            repoManager.cloneRepository(
-                owner = repoData.owner,
-                name = repoData.name,
-                url = repoData.url,
-                branch = repoData.branch,
-                accessToken = message.accessToken,
-                progressTracker = progress
-            )
-            progress.value = 100
-            progressJob.join()
-            sendRepoResponse(messageId, "success", "Repository cloned successfully", workspaceId, 100)
-        } catch (e: CancellationException) {
-            // Ignore cancellations
-        } catch (e: Throwable) {
-            application.log.error("[WS-$clientId] Clone failed: ${e.message}", e)
-            progress.value = 0
-            progressJob.cancelAndJoin()
-            sendRepoResponse(messageId, "error", errorMessageFor(e))
         }
     }.apply {
         invokeOnCompletion { activeGitOperations.remove(clientId) }
@@ -154,11 +159,17 @@ fun errorMessageFor(e: Throwable) = when {
     e.message?.contains("size limit", ignoreCase = true) == true ->
         e.message ?: "Repository exceeds size limit."
 
+    e.message?.contains("destination path", ignoreCase = true) == true &&
+            e.message?.contains("already exists", ignoreCase = true) == true ->
+        "Repository directory issue. We'll automatically clean up and retry."
+
     else -> "Operation failed: ${e.message ?: "Unknown error"}"
 }
 
-// ---
 
+// -------------------------------------
+// 2) Repository Manager + clone/pull
+// -------------------------------------
 class RepositoryManager {
     private val baseDir = File(REPO_BASE_DIR.replace("~", System.getProperty("user.home"))).apply { mkdirs() }
     private val recentRepos = mutableListOf<String>()
@@ -166,8 +177,39 @@ class RepositoryManager {
 
     private fun getRepoPath(owner: String, name: String): File = File(baseDir, "${owner}_$name")
 
+    // Enhanced repository state check with Kotlin's sealed class for type safety
+    sealed class RepoState {
+        data object Valid : RepoState()
+        data object Invalid : RepoState()
+        data object Missing : RepoState()
+    }
+
+    fun checkRepoState(owner: String, name: String): RepoState {
+        val repoDir = getRepoPath(owner, name)
+        return when {
+            repoDir.exists() && File(repoDir, ".git").exists() -> RepoState.Valid
+            repoDir.exists() -> RepoState.Invalid
+            else -> RepoState.Missing
+        }
+    }
+
+    // TODO: unused, check usecase & remove
     fun repositoryExists(owner: String, name: String): Boolean =
-        getRepoPath(owner, name).let { it.exists() && File(it, ".git").exists() }
+        checkRepoState(owner, name) == RepoState.Valid
+
+    // Clean invalid repository directory for fresh clone
+    private suspend fun prepareRepoDirectory(owner: String, name: String): Boolean = withContext(Dispatchers.IO) {
+        val repoDir = getRepoPath(owner, name)
+        when (checkRepoState(owner, name)) {
+            RepoState.Invalid -> {
+                println("🧹 Cleaning invalid repository directory: ${repoDir.absolutePath}")
+                repoDir.deleteRecursively() && repoDir.mkdirs()
+            }
+
+            RepoState.Missing -> repoDir.mkdirs()
+            else -> true
+        }
+    }
 
     suspend fun cloneRepository(
         owner: String,
@@ -183,9 +225,11 @@ class RepositoryManager {
         }
 
         val repoDir = getRepoPath(owner, name)
-        // xx debugging
-        println("🚀 sdfgsdfg access token was $accessToken ------ url was $url ------------")
-        // xx debugging
+        // Prepare directory - safely handle any existing invalid repository state
+        if (!prepareRepoDirectory(owner, name)) {
+            throw Exception("Failed to prepare repository directory")
+        }
+
         val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
             ?.let { url.replace("https://", "https://$it@") }
             ?: url
@@ -193,20 +237,39 @@ class RepositoryManager {
         val branchArg = branch?.let { "-b $it" } ?: ""
         val sizeLimitExceeded = atomic(false)
 
-        // Start monitoring size asynchronously
+        // Monitor size from background
         val monitorJob = launch {
             while (isActive) {
                 if (repoDir.exists() && getRepoSizeGB(owner, name) > MAX_REPO_SIZE_GB) {
                     sizeLimitExceeded.value = true
                     break
                 }
-                delay(200.milliseconds)
+                delay(787.milliseconds)
             }
         }
 
         try {
             withTimeout(300.seconds) {
-                gitCloneCommand(repoDir, cloneUrl, branchArg, progressTracker, sizeLimitExceeded)
+                val cmd = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}"
+                println("🚀 Running: $cmd")
+
+                // Actually run the command, reading lines as they arrive:
+                val exitCode = cmd.shell(
+                    onLine = { line, isError ->
+                        // Log it if you want
+                        if (isError) println("[CLONE-ERR] $line")
+                        else println("[CLONE-OUT] $line")
+
+                        // Git often sends progress lines to stderr, e.g. "Receiving objects: 14% ..."
+                        parseLineForProgress(line, progressTracker)
+
+                        // TODO: If the size-limit check tripped, forcibly kill the process
+//                        if (sizeLimitExceeded.value) { }
+                    }
+                )
+                if (exitCode != 0) {
+                    throw Exception("Git clone failed with exit code $exitCode")
+                }
             }
         } finally {
             monitorJob.cancel()
@@ -231,26 +294,13 @@ class RepositoryManager {
         }
     }
 
-    private suspend fun getRepoSizeGB(owner: String, name: String): Double = getRepoPath(owner, name).let { repoDir ->
-        if (!repoDir.exists()) return 0.0
-        val command = if (isOSX()) {
-            // macOS returns kilobytes, so multiply by 1024 => bytes
-            "du -sk ${repoDir.absolutePath} | cut -f1"
-        } else {
-            // Linux returns bytes directly
-            "du -sb ${repoDir.absolutePath} | cut -f1"
-        }
-        val sizeBytes = command.shell().trim().toLongOrNull()?.let {
-            if (isOSX()) it * 1024L else it
-        } ?: 0L
-        sizeBytes / (1024.0 * 1024.0 * 1024.0)
-    }
-
     private suspend fun rotateOldestRepository() = repoMutex.withLock {
         if (recentRepos.isNotEmpty()) {
-            recentRepos.removeAt(0).split("_").takeIf { it.size >= 2 }?.let {
-                deleteRepository(it[0], it[1])
-            }
+            val oldest = recentRepos.removeAt(0)
+            val parts = oldest.split("_")
+            if (parts.size >= 2)
+                deleteRepository(parts[0], parts[1])
+            null
         } else {
             // If no history, delete oldest by modification time
             baseDir.listFiles()
@@ -264,56 +314,78 @@ class RepositoryManager {
         getRepoPath(owner, name).takeIf { it.exists() }?.deleteRecursively()
         recentRepos.remove("${owner}_$name")
     }
+
+    private suspend fun getRepoSizeGB(owner: String, name: String): Double {
+        val repoDir = getRepoPath(owner, name)
+        if (!repoDir.exists()) return 0.0
+
+        val command = if (isOSX()) {
+            "du -sk ${repoDir.absolutePath} | cut -f1"
+        } else {
+            "du -sb ${repoDir.absolutePath} | cut -f1"
+        }
+        val sizeBytes = command.shell().toString().trim().toLongOrNull()?.let {
+            if (isOSX()) it * 1024L else it
+        } ?: 0L
+        return sizeBytes / (1024.0 * 1024.0 * 1024.0)
+    }
 }
 
-// Simple Git clone helper that parses progress
-private suspend fun gitCloneCommand(
-    repoDir: File,
-    cloneUrl: String,
-    branchArg: String,
-    progressTracker: AtomicInt?,
-    sizeLimitExceeded: AtomicBoolean // TODO: if > 10GB  no bueno
-) {
+// Parse lines for progress
+private fun parseLineForProgress(line: String, progressTracker: AtomicInt?) {
+    if (progressTracker == null) return
+
+    // Examples:
+    // "Receiving objects:  12% (1902/15846), 14.70 MiB | 9.80 MiB/s"
+    // "Resolving deltas:   50% (1234/2468)"
     val patterns = listOf(
-        "Receiving objects:\\s+(\\d+)%".toRegex(),
-        "Receiving objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
-//        "remote: Counting objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
-//        "remote: Compressing objects:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex(),
-        "Resolving deltas:\\s+(\\d+)%".toRegex(),
-        "Resolving deltas:\\s+(\\d+)% \\(\\d+/\\d+\\)".toRegex()
+        ".*Receiving objects:\\s*(\\d+)% .*".toRegex(),
+        ".*Resolving deltas:\\s*(\\d+)% .*".toRegex()
     )
 
-    // 1) Pipe them all
-    val stdoutFlow = MutableStateFlow("")
-    val stderrFlow = MutableStateFlow("")
-
-    // 2) A coroutine to collect the lines as they're appended. We parse them for progress or kill the process if needed.
-    val monitorJob = CoroutineScope(Dispatchers.IO).launch {
-        stdoutFlow.collect { currentText ->
-            val lastLine = currentText.split('\n').lastOrNull() ?: return@collect
-            // If matches "Receiving objects: 50%" => update progress
-            patterns.forEach { regex ->
-                regex.find(lastLine)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { pct ->
-                    progressTracker?.value = pct
-                }
-            }
-            // to forcibly kill the process for size reasons, we'd need a callback or something to call process.destroy()
-            // (But with raw .shell() approach, handle that externally.)
+    for (regex in patterns) {
+        regex.find(line)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { pct ->
+            progressTracker.value = pct
+            return
         }
     }
+}
 
-    val cmd = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}"
-    val finalOutput = cmd.shell(
-        stdoutState = stdoutFlow,
-        stderrState = stderrFlow
-    )
+/**
+ * Simple tracker for client workspaces.
+ * Keeps track of which repository is currently selected for each client.
+ */
+object WorkspaceTracker {
+    // Map of clientId -> workspace info
+    private val clientWorkspaces = ConcurrentHashMap<String, WorkspaceInfo>()
 
-    val exitLine = finalOutput.lineSequence().lastOrNull { it.contains("Exit:") }
-    val exitCode = exitLine?.substringAfter("Exit: ")?.toIntOrNull() ?: 0
+    data class WorkspaceInfo(
+        val owner: String,
+        val name: String,
+        val workspaceId: String
+    ) {
+        fun getPath(): String = System.getProperty("user.home") + "/Desktop/server_repos/${owner}_${name}"
+    }
 
-    monitorJob.cancel()
-    if (exitCode != 0) {
-        throw Exception("Git clone failed with exit code $exitCode")
+    /**
+     * Track a repository selection for a client
+     */
+    fun trackWorkspace(clientId: String, owner: String, name: String, workspaceId: String) {
+        clientWorkspaces[clientId] = WorkspaceInfo(owner, name, workspaceId)
+    }
+
+    /**
+     * Get current workspace for a client, if any
+     */
+    fun getCurrentWorkspace(clientId: String): WorkspaceInfo? {
+        return clientWorkspaces[clientId]
+    }
+
+    /**
+     * Remove workspace tracking when client disconnects
+     */
+    fun removeClient(clientId: String) {
+        clientWorkspaces.remove(clientId)
     }
 }
 
