@@ -10,18 +10,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -32,7 +28,6 @@ import kotlin.time.Duration.Companion.seconds
 // ----------------------------------------------------------
 val activeContainers = ConcurrentHashMap<String, ContainerSession>()
 
-/** Session holding container ID, the script path being run, a job reference, and an input Flow. */
 data class ContainerSession(
     val containerId: String,
     val scriptPath: String,
@@ -40,7 +35,6 @@ data class ContainerSession(
     val inputFlow: MutableSharedFlow<String>
 )
 
-/** Message format from client about container control. */
 data class ContainerMessage(
     val type: String,
     val messageId: String? = UUID.randomUUID().toString(),
@@ -50,7 +44,6 @@ data class ContainerMessage(
     val openaiApiKey: String? = null,
 )
 
-/** Outbound JSON structure to inform the client of container status or output. */
 data class ContainerResponse(
     val type: String = "container_response",
     val messageId: String,
@@ -63,7 +56,7 @@ data class ContainerResponse(
 // 3-SECOND-DEBOUNCED OUTPUT BUFFER
 // ----------------------------------------------------------
 /**
- * Collects Docker/container lines, debounces them, and sends them to the client via WebSocket
+ *  Collects Docker/container lines, debounces them, and sends them to the client via WebSocket
  *
  * - "input_needed" lines are flushed immediately (no debounce)
  * - Other lines ("running", "error", etc.) are grouped and sent after 3 seconds of inactivity
@@ -76,84 +69,108 @@ class DebounceBuffer(
     private val messageId: String,
     private val bufferTimeoutMs: Long = 3000
 ) {
+    private data class LineItem(val seq: Long, val text: String, val status: String)
 
-    private data class LineItem(val text: String, val status: String)
+    private val nextSeq = java.util.concurrent.atomic.AtomicLong(0) // line unique sequence numbers for logging
+    private val lineFlow = MutableSharedFlow<LineItem>(
+        replay = 0,
+        extraBufferCapacity = 1024,
+        onBufferOverflow = BufferOverflow.SUSPEND
+    )
 
-    private val lineFlow = MutableSharedFlow<LineItem>(replay = 0, extraBufferCapacity = 100, onBufferOverflow = BufferOverflow.SUSPEND)
+    // independent .. supervisor scope for da boys:  collector + flusher
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val buffer = mutableListOf<LineItem>()
+
+    @Volatile // Track last arrival time for idle detection
+    private var lastItemTime = System.currentTimeMillis()
 
     init {
-        scope.launch { collectDebounced() }
-    }
+        // 1)  [ lineFlow ]
+        scope.launch {
+            // println("[DebounceBuffer] Collector coroutine started.")
+            lineFlow.collect { item ->
+                // println("[DebounceBuffer][COLLECT] seq=${item.seq}, status=${item.status},  len=${item.text.length}, text='${item.text}'")
 
-    // Add line with "status"  ( purpose is to ideally associate stdin/stdout/stderr -> "running"/"error" or other new things, like voice_stream )
-    suspend fun addLine(line: String, status: String) {
-        lineFlow.emit(LineItem(line, status))
-    }
-
-    suspend fun close() {
-        lineFlow.emit(LineItem("", "close")) // Emit a sentinel item: if "status=close", we flush everything & stop.
-        delay(200) // time4flush
-        scope.cancel()
-    }
-
-    // TODO:  Time OR Capacity UPGRADE:  Add size-based buffer flush on top of existing Time-based logic
-    //  3s    AND/OR  buffer reaches a MAX size (e.g., 300 lines or 1 MB of text)
-    //      ( Maybe req of the secondary streaming of audio in real-time
-    /**
-     * Debounce logic: gather "running"/"error" lines up to 3 seconds of inactivity,
-     * then flush them in one batch. If line is "input_needed", flush immediately.
-     * If line has "status=close", flush leftover lines and exit.
-     */
-    private suspend fun collectDebounced() = coroutineScope {
-        val buffer = mutableListOf<LineItem>()
-
-        while (isActive) {
-            // Wait up to bufferTimeoutMs for the next line
-            val item = withTimeoutOrNull(bufferTimeoutMs) {
-                lineFlow.first()
-            }
-
-            when {
-                item == null -> {
-                    if (buffer.isNotEmpty()) {
-                        flushBuffer(buffer)
-                        buffer.clear()
+                when (item.status) {
+                    "close" -> { // Final flush and exit
+                        if (buffer.isNotEmpty()) {
+                            // println("[DebounceBuffer][COLLECT] 'close' -> flushing buffer of size=${buffer.size}")
+                            flushBuffer(buffer)
+                        }
+                        // println("[DebounceBuffer][COLLECT] Exiting collector on 'close' sentinel.")
+                        return@collect
                     }
-                }
 
-                item.status == "close" -> {
-                    if (buffer.isNotEmpty()) flushBuffer(buffer)
-                    return@coroutineScope
-                }
+                    "input_needed" -> {
+                        if (buffer.isNotEmpty()) {
+                            // println("[DebounceBuffer][COLLECT] 'input_needed' -> flush buffer size=${buffer.size}")
+                            flushBuffer(buffer)
+                        }
+                        flushBuffer(mutableListOf(item))
+                    }
 
-                item.status == "input_needed" -> {
-                    if (buffer.isNotEmpty()) flushBuffer(buffer)
-                    flushBuffer(listOf(item))
-                    buffer.clear()
+                    else -> buffer += item
                 }
-
-                else -> {
-                    buffer += item
-                }
+                lastItemTime = System.currentTimeMillis()
             }
         }
 
-        // Final exit flush
-        if (buffer.isNotEmpty()) flushBuffer(buffer)
+        // 2) Idle-based flusher. Every 3s, check if no new lines arrived
+        scope.launch {
+            // println("[DebounceBuffer] Flusher coroutine started.")
+            while (isActive) {
+                delay(bufferTimeoutMs)
+                val now = System.currentTimeMillis()
+                val delta = now - lastItemTime
+                if (buffer.isNotEmpty() && delta >= bufferTimeoutMs) {
+                    println("[DebounceBuffer][FLUSH_TIMER] Idle $delta ms -> flush buffer size=${buffer.size}")
+                    flushBuffer(buffer)
+                }
+            }
+        }
+    }
+
+    suspend fun addLine(line: String, status: String) {
+        val seqNumber = nextSeq.incrementAndGet()
+        // println("[DebounceBuffer][ADD] seq=$seqNumber, status=$status, len=${line.length}, text='$line'")
+        lineFlow.emit(LineItem(seqNumber, line, status))
     }
 
     /**
-     * Send lines to the client as one batch - prioritize "error" status if any line has an error
+     * Close the buffer: emit a sentinel and wait for the collector to exit.
      */
-    private suspend fun flushBuffer(lines: List<LineItem>) {
+    suspend fun close() {
+        println("[DebounceBuffer][CLOSE] Emitting 'close' sentinel.")
+        val seqNumber = nextSeq.incrementAndGet()
+        lineFlow.emit(LineItem(seqNumber, "", "close"))
+        // Then cancel the scope, or let the collector return naturally.
+        // But if you want to be sure everything is flushed, wait for collect to exit:
+        scope.coroutineContext.job.cancelAndJoin()
+        println("[DebounceBuffer][CLOSE] All coroutines joined.")
+    }
+
+    private suspend fun flushBuffer(lines: MutableList<LineItem>) {
         if (lines.isEmpty()) return
-        val primaryStatus = if (lines.any { it.status == "error" }) "error" else lines.first().status
-        val combinedText = lines.joinToString("\n") { it.text }
-        session.sendContainerResponse(messageId, primaryStatus, combinedText)
-        println("[ kaan ] : calling sendContainerResponse('$messageId', '[ $primaryStatus ]', '--> $combinedText')")
+        val copy = lines.toList()
+        lines.clear()
+
+        // Status for dat batch
+        val primaryStatus = if (copy.any { it.status == "error" }) "error" else copy.first().status
+        val combinedText = copy.joinToString("\n") { it.text }
+
+        val seqRange = "${copy.first().seq}->${copy.last().seq}"
+        println("[DebounceBuffer][FLUSH] Flushing ${copy.size} items, seqRange=$seqRange, status=$primaryStatus, totalChars=${combinedText.length}")
+
+        runCatching {
+            session.sendContainerResponse(messageId, primaryStatus, combinedText)
+            println("[DebounceBuffer][FLUSH] -> SUCCESS. Sent $seqRange")
+        }.onFailure { e ->
+            println("[DebounceBuffer][FLUSH] -> ERROR while sending: ${e.message}")
+        }
     }
 }
+
 
 // ----------------------------------------------------------
 // EXTENSION: Send container response
@@ -261,6 +278,7 @@ private suspend fun WebSocketServerSession.startContainer(
 
             val logFile = File(resolveLogDir(), "arcana-$containerId.log")
             val exitCode = dockerCmd.shell(logFile = logFile) { line, isErr ->
+                println("[ON_LINE_RECEIVED][${System.currentTimeMillis()}] isErr=$isErr, line_len=${line.length}")
                 when {
                     isErr -> outputBuffer.addLine(line.trim(), "error") // .also { println("[ startContainer - isErr ] - adding to buffer") }
                     line.contains("`````INPUT") -> outputBuffer.addLine(line, "input_needed")
@@ -270,7 +288,7 @@ private suspend fun WebSocketServerSession.startContainer(
                 }
             }
             inputJob.cancelAndJoin()
-            outputBuffer.close() // Close the output buffer with proper awaiting
+            outputBuffer.close() // graceful close, with more aloha
             // xx ==========================================================================================
 
             sendContainerResponse(messageId, "exited", "Analysis exited with code $exitCode")
@@ -299,7 +317,6 @@ suspend fun stopContainerInternal(clientId: String): Boolean =
         true
     } ?: false
 
-/** Collect input from client and push it onto the container's Flow. */
 private suspend fun WebSocketServerSession.sendContainerInput(
     clientId: String,
     messageId: String,
