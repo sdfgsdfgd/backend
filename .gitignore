@@ -4,6 +4,7 @@
 
 # Project files
 0_scripts/logs/**/*
+*.log
 
 
 .gradle
