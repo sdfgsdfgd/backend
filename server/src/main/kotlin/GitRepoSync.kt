@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -30,6 +31,7 @@ private const val MAX_REPOS = 10
 private const val MAX_REPO_SIZE_GB = 10
 val activeGitOperations = ConcurrentHashMap<String, Job>()
 
+@Serializable
 data class GitHubRepoData(
     val repoId: Long? = null,
     val name: String = "",
@@ -38,6 +40,7 @@ data class GitHubRepoData(
     val branch: String? = null
 )
 
+@Serializable
 data class GitHubRepoSelectMessage(
     val type: String? = null,
     val messageId: String? = null,
@@ -46,6 +49,7 @@ data class GitHubRepoSelectMessage(
     val clientTimestamp: Long? = null
 )
 
+@Serializable
 data class GitHubRepoSelectResponse(
     val type: String = "workspace_select_github_response",
     val messageId: String,

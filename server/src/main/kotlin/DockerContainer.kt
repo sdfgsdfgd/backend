@@ -18,6 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -35,6 +36,7 @@ data class ContainerSession(
     val inputFlow: MutableSharedFlow<String>
 )
 
+@Serializable
 data class ContainerMessage(
     val type: String,
     val messageId: String? = UUID.randomUUID().toString(),
@@ -44,6 +46,7 @@ data class ContainerMessage(
     val openaiApiKey: String? = null,
 )
 
+@Serializable
 data class ContainerResponse(
     val type: String = "container_response",
     val messageId: String,

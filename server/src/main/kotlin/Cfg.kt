@@ -3,8 +3,7 @@ package net.sdfgsdfg
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.http.HttpMethod
-import io.ktor.serialization.gson.GsonWebsocketContentConverter
-import io.ktor.serialization.gson.gson
+import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -33,12 +32,6 @@ fun Application.cfg() {
 
 
     install(ContentNegotiation) {
-        gson {
-//                setPrettyPrinting()
-            disableHtmlEscaping()
-            serializeNulls()
-        }
-
         json(Json {
             prettyPrint = false
             ignoreUnknownKeys = true
@@ -59,7 +52,12 @@ fun Application.cfg() {
     }
 
     install(WebSockets) {
-        contentConverter = GsonWebsocketContentConverter()
+        contentConverter = KotlinxWebsocketSerializationConverter(
+            Json {
+                ignoreUnknownKeys = true
+                encodeDefaults   = true
+            }
+        )
         pingPeriodMillis = 15_000
         timeoutMillis = 30_000
     }

@@ -1,6 +1,5 @@
 package net.sdfgsdfg
 
-import com.google.gson.Gson
 import io.ktor.server.application.log
 import io.ktor.server.routing.Route
 import io.ktor.server.websocket.application
@@ -12,10 +11,12 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicInteger
 
 fun Route.ws() {
-    val gson = Gson()
+    val json = Json { ignoreUnknownKeys = true }
     val repoManager = RepositoryManager()
 
     webSocket("/ws") {
@@ -33,8 +34,9 @@ fun Route.ws() {
             incoming.receiveAsFlow().collect { frame ->
                 (frame as? Frame.Text)?.readText()?.trim()?.takeIf { it.isNotBlank() }?.let { rawText ->
                     application.log.info("[WS-$clientId] Received: $rawText")
+
                     runCatching {
-                        gson.fromJson(rawText, WsMessage::class.java)
+                        json.decodeFromString<WsMessage>(rawText)
                     }.onSuccess { baseMessage ->
                         when (baseMessage.type?.lowercase()) {
                             "ping" -> sendSerialized(WsMessage("pong", baseMessage.clientTimestamp, System.currentTimeMillis()))
@@ -43,15 +45,17 @@ fun Route.ws() {
 
                             // xx  [ Content Sync ]
                             "workspace_select_github" -> {
-                                val gitMessage = gson.fromJson(rawText, GitHubRepoSelectMessage::class.java)
+                                val gitMessage = json.decodeFromString<GitHubRepoSelectMessage>(rawText)
                                 handleGitHubRepoSelect(gitMessage, clientId, repoManager)
                             }
 
                             // xx [ Container Management ]
                             "arcana_start", "container_start", "container_input", "container_stop" -> {
-                                val containerMessage = gson.fromJson(rawText, ContainerMessage::class.java)
-                                handleContainerRequest(containerMessage, clientId)
+                                handleContainerRequest(json.decodeFromString<ContainerMessage>(rawText), clientId)
                             }
+
+                            // xx [ gRPC ] First PoC demo ! ?
+                            "scrape_gpt", "scrape_browse" -> {}
 
                             else -> application.log.warn("[WS-$clientId] Unknown message: $baseMessage")
                         }
@@ -77,6 +81,7 @@ fun Route.ws() {
     }
 }
 
+@Serializable
 data class WsMessage(
     val type: String?,
     val clientTimestamp: Long?,
