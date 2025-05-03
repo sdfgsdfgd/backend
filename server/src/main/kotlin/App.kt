@@ -21,8 +21,11 @@ import kotlin.time.Duration.Companion.seconds
 
 fun main() {
     // TODO: DB ( Exposed - best for Ktor - NextJS duo )
-    embeddedServer(Netty, port = 80, module = Application::module)  // , host = "0.0.0.0"
-        .start(wait = true)
+    embeddedServer(
+        Netty,
+        port = 80,
+        module = Application::module
+    ).start(wait = true)
 }
 
 fun Application.module() {
@@ -40,6 +43,9 @@ fun Application.module() {
 
         // [ WS ]
         ws()
+
+        // [ gRPC ]
+        grpc()
 
         // [ Reverse Proxy ] -->  Next.js @ :3000
         route("/{...}") {

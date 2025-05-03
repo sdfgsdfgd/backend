@@ -1,0 +1,79 @@
+// python -m grpc_tools.protoc -I. --python_out=proto_gen --grpc_python_out=proto_gen bot.proto
+
+//syntax = "proto3";
+//package bot;
+//
+//service Bot {
+//  // Scrape/GPTAPI - Query, with optional model (like: "gpt-3.5-turbo")
+//  rpc Ask (AskRequest) returns (AskReply);
+//
+//  // Scrape - Search results for a "query"
+//  rpc Scrape (ScrapeRequest) returns (ScrapeReply);
+//
+//  // --------------
+//  // TODO - stream audios, SFU central streaming server
+//  // Bi‑di – client streams Opus frames, bot streams back JSON chunks
+//  // --------------
+//  rpc AudioChat (stream AudioFrame) returns (stream AudioReply);
+//}
+//
+//message AskRequest   { string model = 1; string prompt = 2; }
+//message AskReply     { string text   = 1; }
+//
+//message ScrapeRequest{ string url    = 1; }
+//message ScrapeReply  { string html   = 1; }
+//
+//message AudioFrame   { bytes  opus   = 1; int64 seq = 2; }
+//message AudioReply   { oneof payload { string transcript = 1; string tts_mp3 = 2; } }
+
+
+syntax = "proto3";
+
+package rpc;
+
+service Bot {
+    // 1) Single-response ChatGPT call
+    rpc Ask (AskRequest) returns (AskReply);
+
+    // 2) Streaming ChatGPT call (partial/delta text)
+    rpc AskStream (AskRequest) returns (stream AskReply);
+
+    // 3) Scrape a web page
+    rpc Scrape (ScrapeRequest) returns (ScrapeReply);
+
+    // 4) Bi‑di audio streaming - (not implemented yet)
+    rpc AudioChat (stream AudioFrame) returns (stream AudioReply);
+}
+
+message AskRequest {
+    string model = 1;
+    string prompt = 2;
+    bool want_tts = 3;
+    bool new_chat = 4;
+}
+
+message AskReply {
+    string text = 1;
+    bytes tts_mp3 = 2;
+}
+
+message ScrapeRequest {
+    string url = 1;
+}
+
+message ScrapeReply {
+    string html = 1;
+}
+
+message AudioFrame {
+    bytes opus = 1;
+    int64 seq = 2;
+}
+
+message AudioReply {
+    oneof payload {
+        string transcript = 1;
+        string tts_mp3 = 2;
+    }
+}
+

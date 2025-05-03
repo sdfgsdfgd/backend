@@ -1,9 +1,10 @@
+import com.google.protobuf.gradle.id
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.ktor)
     alias(libs.plugins.kotlin.plugin.serialization)
-//    alias(libs.plugins.kotlinx.rpc.plugin)
+    alias(libs.plugins.protobuf)
 }
 
 application {
@@ -27,7 +28,6 @@ dependencies {
     implementation(libs.ktor.server.html.builder)
     implementation(libs.kotlinx.html)
     implementation(libs.kotlin.css)
-    implementation(libs.ktor.serialization.gson)
     implementation(libs.ktor.server.metrics.micrometer)
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.ktor.server.metrics)
@@ -55,11 +55,32 @@ dependencies {
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.cors)
     implementation(libs.logback.classic)
+    implementation(libs.kotlinx.atomicfu) // atomic operations
 
-    // Added by Kaanself
-    implementation(libs.coroutines)
-    implementation(libs.kotlinx.atomicfu)
+    // [ gRPC ]
+    implementation(libs.kotlinx.rpc.krpc.ktor.server)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.stub)
+    implementation(libs.grpc.kotlin.stub) // suspending stubs
+    implementation(libs.grpc.netty.shaded)   // HTTP/2 transport
+    implementation(libs.protobuf.kotlin)    // proto runtime
 
+    //
+    // [ Tests ]
+    //
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
+}
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:3.25.3" }
+
+    plugins {
+        id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.63.0" }
+        id("grpckt") { artifact = "io.grpc:protoc-gen-grpc-kotlin:1.4.1:jdk8@jar" }
+    }
+
+    generateProtoTasks {
+        all().forEach { it.plugins { id("grpc");id("grpckt");id("kotlin") } }
+    }
 }
