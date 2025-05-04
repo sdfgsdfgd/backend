@@ -1,6 +1,12 @@
 package net.sdfgsdfg
 
+import data.AskReplyDto
+import data.AskRequestDto
+import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
+import io.grpc.netty.shaded.io.netty.channel.epoll.EpollDomainSocketChannel
+import io.grpc.netty.shaded.io.netty.channel.unix.DomainSocketAddress
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.log
@@ -11,22 +17,34 @@ import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.util.reflect.TypeInfo
-import kotlinx.serialization.Serializable
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 
-/* ---------- DTOs exposed on the public REST surface ---------- */
-@Serializable
-data class AskRequestDto(val prompt: String, val model: String? = null)
-
-@Serializable
-data class AskReplyDto(val text: String)
+val isLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
 
 /* ---------- single gRPC channel reused by all requests ---------- */
-private val channel = ManagedChannelBuilder
+// todo: _________________________________________________
+// todo: remove, if below channel works on both platforms
+private val channel_old = ManagedChannelBuilder
     .forAddress("localhost", 1453)
     .usePlaintext()
     .build()
+// todo: _________________________________________________
+
+val channel: ManagedChannel = if (isLinux) {
+    NettyChannelBuilder
+        .forAddress(DomainSocketAddress("/tmp/server_py/server_py.sock"))
+        .channelType(EpollDomainSocketChannel::class.java) // Linux native
+        .usePlaintext()
+        .build()
+} else { // We're on OSX
+    NettyChannelBuilder
+        .forAddress("127.0.0.1", 1453)
+        .usePlaintext()
+        .build()
+}
+
+
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 
 /*

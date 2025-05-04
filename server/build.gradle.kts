@@ -62,7 +62,7 @@ dependencies {
     implementation(libs.grpc.protobuf)
     implementation(libs.grpc.stub)
     implementation(libs.grpc.kotlin.stub) // suspending stubs
-    implementation(libs.grpc.netty.shaded)   // HTTP/2 transport
+    implementation(libs.grpc.netty.shaded)   // HTTP/2 transport + UDS (Unix Domain Sockets - for the FASTEST IPC possible on earth, better than UDP&TPC, no network layer )
     implementation(libs.protobuf.kotlin)    // proto runtime
 
     implementation("io.ktor:ktor-server-netty-jvm:2.3.9")
