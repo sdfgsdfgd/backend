@@ -25,12 +25,6 @@ val httpClient = HttpClient {
 // *** *** TODO:  Add  2 sequence within 15 secs    `port-knocking`    authentication
 fun Application.cfg() {
     // [ Configure ]
-
-    // 1. Configure: Serialization
-    // xx if ContentNegotiation plugin allows you to automatically convert Kotlin objects to JSON and vice versa using Gson, what the fk is Gson good for ?
-    //  🤯 🤯 🤯
-
-
     install(ContentNegotiation) {
         json(Json {
             prettyPrint = false
@@ -55,7 +49,7 @@ fun Application.cfg() {
         contentConverter = KotlinxWebsocketSerializationConverter(
             Json {
                 ignoreUnknownKeys = true
-                encodeDefaults   = true
+                encodeDefaults = true
             }
         )
         pingPeriodMillis = 15_000

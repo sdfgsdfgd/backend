@@ -22,7 +22,8 @@ fun Route.githubWebhookRoute() {
         ).forEach { command ->
             runCatching {
                 log("Running command: '$command'", File(resolveLogDir(), "webhook.log"))
-                command.shell(logFile = logFile)
+//                command.shell(logFile = logFile)
+                command.shell(logFile = File(resolveLogDir(), "webhook.log"))
             }.onSuccess {
                 log("✅ SUCCESS: '$command' executed.", File(resolveLogDir(), "webhook.log"))
             }.onFailure {
