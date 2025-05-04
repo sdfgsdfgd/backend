@@ -85,7 +85,7 @@ fun Route.ws() {
 data class WsMessage(
     val type: String?,
     val clientTimestamp: Long?,
-    val serverTimestamp: Long?,
+    val serverTimestamp: Long? = null,
     val payload: String? = null
 )
 
