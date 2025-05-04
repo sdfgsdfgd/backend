@@ -9,16 +9,23 @@ import java.io.File
 
 fun Route.githubWebhookRoute() {
     post("/webhook/github") {
-        val payload = call.receiveText()
-        println("GitHub payload: $payload")
+        runCatching {
+            val payload = call.receiveText()
+            println("GitHub payload: $payload")
 
-        call.respondText("🙇 Deployment triggered !", status = HttpStatusCode.Accepted)
-        val logFile = File("/tmp/deploy.log").apply { if (!exists()) createNewFile() }
-        log("Received GitHub webhook payload:\n$payload", File(resolveLogDir(), "webhook.log"))
+            call.respondText("🙇 Deployment triggered !", status = HttpStatusCode.Accepted)
+            val logFile = File("/tmp/deploy.log").apply { if (!exists()) createNewFile() }
+            log("Received GitHub webhook payload:\n$payload", File(resolveLogDir(), "webhook.log"))
+        }.onFailure {
+            log("❌ Error processing GitHub webhook: ${it.localizedMessage}", File(resolveLogDir(), "webhook.log"))
+            call.respondText("❌ Error processing GitHub webhook: ${it.localizedMessage}", status = HttpStatusCode.InternalServerError)
+        }
+
+        
 
         listOf(
-            "systemctl restart frontend.service",
-            "systemctl restart backend.service",
+            "systemctl --user restart frontend.service",
+            "systemctl --user restart backend.service",
         ).forEach { command ->
             runCatching {
                 log("Running command: '$command'", File(resolveLogDir(), "webhook.log"))
