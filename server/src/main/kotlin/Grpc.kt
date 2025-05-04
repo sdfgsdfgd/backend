@@ -6,6 +6,7 @@ import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 import io.grpc.netty.shaded.io.netty.channel.epoll.EpollDomainSocketChannel
+import io.grpc.netty.shaded.io.netty.channel.epoll.EpollEventLoopGroup
 import io.grpc.netty.shaded.io.netty.channel.unix.DomainSocketAddress
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -31,10 +32,13 @@ private val channel_old = ManagedChannelBuilder
     .build()
 // todo: _________________________________________________
 
+private val linuxGroup by lazy { EpollEventLoopGroup() }   // reuse one pool
+
 val channel: ManagedChannel = if (isLinux) {
     NettyChannelBuilder
         .forAddress(DomainSocketAddress("/tmp/server_py/server_py.sock"))
-        .channelType(EpollDomainSocketChannel::class.java) // Linux native
+        .eventLoopGroup(linuxGroup)
+        .channelType(EpollDomainSocketChannel::class.java)
         .usePlaintext()
         .build()
 } else { // We're on OSX
