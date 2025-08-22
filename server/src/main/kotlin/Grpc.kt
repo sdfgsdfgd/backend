@@ -48,7 +48,6 @@ val channel: ManagedChannel = if (isLinux) {
         .build()
 }
 
-
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 
 /*

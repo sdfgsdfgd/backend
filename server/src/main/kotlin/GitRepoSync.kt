@@ -7,7 +7,6 @@ import io.ktor.server.websocket.sendSerialized
 import kotlinx.atomicfu.AtomicInt
 import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -75,7 +74,7 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
 
     // Cancel any existing Git operation for this client, then launch a new one
     activeGitOperations[clientId]?.cancelAndJoin()
-    activeGitOperations[clientId] = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+    activeGitOperations[clientId] = launch(Dispatchers.IO) {
         val workspaceId = "${repoData.owner}_${repoData.name}_${UUID.randomUUID().toString().take(8)}"
 
         // Check repository state with our enhanced function
@@ -221,7 +220,7 @@ class RepositoryManager {
         url: String,
         branch: String?,
         accessToken: String?,
-        progressTracker: AtomicInt? = null
+        progressTracker: AtomicInt
     ) = withContext(Dispatchers.IO) {
         repoMutex.withLock {
             // If we already have too many, rotate
@@ -254,22 +253,15 @@ class RepositoryManager {
 
         try {
             withTimeout(300.seconds) {
-                val cmd = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}"
-                println("🚀 Running: $cmd")
-
-                // Actually run the command, reading lines as they arrive:
-                val exitCode = cmd.shell(
-                    onLine = { line, isError ->
-                        // Log it if you want
-                        if (isError) println("[CLONE-ERR] $line")
-                        else println("[CLONE-OUT] $line")
-
-                        // Git often sends progress lines to stderr, e.g. "Receiving objects: 14% ..."
+                val exitCode = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}".shell(
+                    onLine = { line, _ ->
                         parseLineForProgress(line, progressTracker)
 
-                        // TODO: If the size-limit check tripped, forcibly kill the process
-//                        if (sizeLimitExceeded.value) { }
-                    }
+                        // Monitor size in real-time
+                        if (sizeLimitExceeded.value) {
+                            throw Exception("Repository size limit exceeded. Operation aborted.")
+                        }
+                    },
                 )
                 if (exitCode != 0) {
                     throw Exception("Git clone failed with exit code $exitCode")
@@ -335,14 +327,11 @@ class RepositoryManager {
     }
 }
 
-// Parse lines for progress
-private fun parseLineForProgress(line: String, progressTracker: AtomicInt?) {
-    if (progressTracker == null) return
-
-    // Examples:
-    // "Receiving objects:  12% (1902/15846), 14.70 MiB | 9.80 MiB/s"
-    // "Resolving deltas:   50% (1234/2468)"
+private fun parseLineForProgress(line: String, progressTracker: AtomicInt) {
     val patterns = listOf(
+        ".*Enumerating objects:\\s*(\\d+)% .*".toRegex(),
+        ".*Counting objects:\\s*(\\d+)% .*".toRegex(),
+        ".*Compressing objects:\\s*(\\d+)% .*".toRegex(),
         ".*Receiving objects:\\s*(\\d+)% .*".toRegex(),
         ".*Resolving deltas:\\s*(\\d+)% .*".toRegex()
     )

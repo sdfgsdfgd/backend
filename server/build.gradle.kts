@@ -27,7 +27,6 @@ dependencies {
     implementation(libs.koin.logger.slf4j)
     implementation(libs.ktor.server.html.builder)
     implementation(libs.kotlinx.html)
-    implementation(libs.kotlin.css)
     implementation(libs.ktor.server.metrics.micrometer)
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.ktor.server.metrics)
@@ -75,6 +74,17 @@ dependencies {
     //
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
+
+    //
+    //
+    //
+    //
+    // [ Archived ]
+    //
+    //    implementation(libs.kotlin.css)
+    //
+    //
+    //
 }
 
 protobuf {

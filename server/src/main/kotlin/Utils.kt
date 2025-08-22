@@ -6,10 +6,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -40,10 +42,10 @@ suspend fun String.shell(
     stdoutState: MutableSharedFlow<String>? = null,  // xx ideally MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1024, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     stderrState: MutableSharedFlow<String>? = null,
     stdinChannel: Channel<String>? = null,
-    onLine: (suspend (line: String, isError: Boolean) -> Unit)? = null
+    printNlog: Boolean = true,
+    onLine: (suspend (line: String, isError: Boolean) -> Unit)? = null,
 ) = withContext(Dispatchers.IO + SupervisorJob()) {
-    logFile?.appendText("[${timestamp()}] \$ ${this@shell}\n")
-
+    println("🚀 Running   -->     ${this@shell}")
     val process = ProcessBuilder("bash", "-c", this@shell)
         .redirectOutput(ProcessBuilder.Redirect.PIPE)
         .redirectError(ProcessBuilder.Redirect.PIPE)
@@ -57,14 +59,14 @@ suspend fun String.shell(
             async {
                 process.inputStream.bufferedReader().lineFlow().collect { line ->
                     onLine?.invoke(line, false)
-                    log(line, logFile) // 1. Log to console + file
+                    if(printNlog) log(line, logFile) // 1. Print to console  2. File
                     stdoutState?.emit(line)
                 }
             },
             async {
                 process.errorStream.bufferedReader().lineFlow().collect { line ->
                     onLine?.invoke(line, true)
-                    log("[ERROR] $line", logFile)
+                    if(printNlog) log("[ERROR] $line", logFile)
                     stderrState?.emit("[ERROR] $line")
                 }
             },
