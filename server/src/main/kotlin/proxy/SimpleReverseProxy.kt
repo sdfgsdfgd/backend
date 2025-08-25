@@ -19,11 +19,13 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.utils.io.copyAndClose
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicInteger
 
 class SimpleReverseProxy(
     private val httpClient: HttpClient,
     private val targetBaseUrl: Url
 ) {
+    private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
 
     /**
@@ -41,17 +43,12 @@ class SimpleReverseProxy(
             encodedPath += originalUri
         }.build()
 
-        logger.info("=== Proxying request ===")
-        logger.info("Incoming request URI: ${call.request.uri}")
-        logger.info("Proxy target URL: $proxiedUrl")
-
-        // Log incoming request headers:
+        logger.info("--> [ ${i.getAndIncrement()} ] === Proxying === req URI --> ${call.request.uri} to target URI --> $proxiedUrl")
         call.request.headers.forEach { key, values ->
             logger.debug("Incoming header: {} -> {}", key, values)
         }
 
-        // Forward request to the target (Next.js)
-        val proxiedResponse: HttpResponse = httpClient.request(proxiedUrl) {
+        val proxiedResponse: HttpResponse = httpClient.request(proxiedUrl) { // Forward request to the target (Next.js)
             method = call.request.httpMethod
             // Copy all client headers except hop-by-hop
             headers {
@@ -60,7 +57,7 @@ class SimpleReverseProxy(
                         appendAll(key, values)
                     }
                 }
-                // (Optionally) If you want to explicitly add Accept:
+                // (Optionally) to explicitly add Accept:
                 // accept(ContentType.Text.Html)
                 // accept(ContentType.Application.Json)
                 // accept(ContentType.Any)
@@ -101,12 +98,9 @@ class SimpleReverseProxy(
         val finalContentType = contentTypeFromServer?.toString() ?: "application/octet-stream"
         call.response.header(HttpHeaders.ContentType, finalContentType)
 
-        // Write the response body
-        // This will let Ktor handle chunking or content-length automatically.
+        // Write the response body - Ktor handles chunking or content-length automatically
         call.respondBytesWriter(status = proxiedResponse.status) {
             proxiedResponse.bodyAsChannel().copyAndClose(this)
         }
-
-        logger.info("=== End proxying request ===")
     }
 }

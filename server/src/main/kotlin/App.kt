@@ -40,6 +40,8 @@ fun main() {
 fun Application.module() {
     cfg()
 
+    val reverseProxy = SimpleReverseProxy(httpClient, Url("http://localhost:3000"))
+
     // 1. Routes
     routing {
         // for quick up-checks
@@ -59,7 +61,7 @@ fun Application.module() {
         // [ Reverse Proxy ] -->  Next.js @ :3000
         route("/{...}") {
             handle {
-                SimpleReverseProxy(httpClient, Url("http://localhost:3000")).proxy(call)
+                reverseProxy.proxy(call)
             }
         }
     }

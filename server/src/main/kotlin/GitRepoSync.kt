@@ -9,17 +9,19 @@ import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
@@ -102,7 +104,7 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
                 val progressJob = launch {
                     while (isActive) {
                         sendRepoResponse(messageId, "cloning", "Cloning repository...", workspaceId, progress.value)
-                        delay((100..450).random().milliseconds)
+                        delay((44..250).random().milliseconds)
                         if (progress.value >= 100) break
                     }
                 }
@@ -121,7 +123,9 @@ suspend fun WebSocketServerSession.handleGitHubRepoSelect(
                     WorkspaceTracker.trackWorkspace(clientId, repoData.owner, repoData.name, workspaceId)
                     sendRepoResponse(messageId, "success", "Repository cloned successfully", workspaceId, 100)
                 } catch (e: CancellationException) {
-                    // Ignore cancellations
+                    progress.value = 0
+                    progressJob.cancelAndJoin()
+                    sendRepoResponse(messageId, "error", "Git operation cancelled")
                 } catch (e: Throwable) {
                     application.log.error("[WS-$clientId] Clone failed: ${e.message}", e)
                     progress.value = 0
@@ -176,11 +180,15 @@ fun errorMessageFor(e: Throwable) = when {
 class RepositoryManager {
     private val baseDir = File(REPO_BASE_DIR.replace("~", System.getProperty("user.home"))).apply { mkdirs() }
     private val recentRepos = mutableListOf<String>()
-    private val repoMutex = Mutex()  // For concurrency around rotating + removing repos
+
+    // single state mutex (never re-enter)
+    private val repoMutex = Mutex()
+
+    // global op queue: at most MAX_REPOS git ops in-flight; others wait
+    private val opSemaphore = Semaphore(MAX_REPOS)
 
     private fun getRepoPath(owner: String, name: String): File = File(baseDir, "${owner}_$name")
 
-    // Enhanced repository state check with Kotlin's sealed class for type safety
     sealed class RepoState {
         data object Valid : RepoState()
         data object Invalid : RepoState()
@@ -196,9 +204,14 @@ class RepositoryManager {
         }
     }
 
-    // TODO: unused, check usecase & remove
-    fun repositoryExists(owner: String, name: String): Boolean =
-        checkRepoState(owner, name) == RepoState.Valid
+    private suspend inline fun <T> withOpPermit(crossinline block: suspend () -> T): T {
+        opSemaphore.acquire()
+        return try {
+            block()
+        } finally {
+            opSemaphore.release()
+        }
+    }
 
     // Clean invalid repository directory for fresh clone
     private suspend fun prepareRepoDirectory(owner: String, name: String): Boolean = withContext(Dispatchers.IO) {
@@ -222,93 +235,92 @@ class RepositoryManager {
         accessToken: String?,
         progressTracker: AtomicInt
     ) = withContext(Dispatchers.IO) {
-        repoMutex.withLock {
-            // If we already have too many, rotate
-            if ((baseDir.listFiles()?.count { it.isDirectory } ?: 0) >= MAX_REPOS) rotateOldestRepository()
-        }
-
-        val repoDir = getRepoPath(owner, name)
-        // Prepare directory - safely handle any existing invalid repository state
-        if (!prepareRepoDirectory(owner, name)) {
-            throw Exception("Failed to prepare repository directory")
-        }
-
-        val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
-            ?.let { url.replace("https://", "https://$it@") }
-            ?: url
-
-        val branchArg = branch?.let { "-b $it" } ?: ""
-        val sizeLimitExceeded = atomic(false)
-
-        // Monitor size from background
-        val monitorJob = launch {
-            while (isActive) {
-                if (repoDir.exists() && getRepoSizeGB(owner, name) > MAX_REPO_SIZE_GB) {
-                    sizeLimitExceeded.value = true
-                    break
-                }
-                delay(787.milliseconds)
+        withOpPermit {
+            // rotate under a single lock; rotation itself NEVER locks again
+            repoMutex.withLock {
+                val count = baseDir.listFiles()?.count { it.isDirectory } ?: 0
+                if (count >= MAX_REPOS) rotateOldestRepository()
             }
-        }
 
-        try {
-            withTimeout(300.seconds) {
+            val repoDir = getRepoPath(owner, name)
+            if (!prepareRepoDirectory(owner, name)) throw Exception("Failed to prepare repository directory")
+
+            val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
+                ?.let { url.replace("https://", "https://$it@") }
+                ?: url
+
+            val branchArg = branch?.let { "-b $it" } ?: ""
+            val sizeLimitExceeded = atomic(false)
+
+            // Monitor size from background
+            val monitorJob = launch {
+                while (isActive) {
+                    if (repoDir.exists() && getRepoSizeGB(owner, name) > MAX_REPO_SIZE_GB) {
+                        sizeLimitExceeded.value = true
+                        break
+                    }
+                    delay(787.milliseconds)
+                }
+            }
+
+            try {
+                withTimeout(300.seconds) {
                 val exitCode = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}".shell(
-                    onLine = { line, _ ->
-                        parseLineForProgress(line, progressTracker)
+//                    val exitCode = """GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge=false -c filter.lfs.required=false clone --progress --no-checkout $branchArg $cloneUrl ${repoDir.absolutePath}""".shell(
+                            onLine = { line, _ ->
+                                parseLineForProgress(line, progressTracker)
 
-                        // Monitor size in real-time
-                        if (sizeLimitExceeded.value) {
-                            throw Exception("Repository size limit exceeded. Operation aborted.")
-                        }
-                    },
-                )
-                if (exitCode != 0) {
-                    throw Exception("Git clone failed with exit code $exitCode")
+                                // Monitor size in real-time
+                                if (sizeLimitExceeded.value) throw Exception("Repository size limit exceeded. Operation aborted.")
+                            },
+                        )
+                    if (exitCode != 0) throw Exception("Git clone failed with exit code $exitCode")
                 }
+            } finally {
+                monitorJob.cancel()
             }
-        } finally {
-            monitorJob.cancel()
-        }
 
-        // If successful, add to recents
-        repoMutex.withLock {
-            recentRepos.remove("${owner}_$name")
-            recentRepos.add("${owner}_$name")
+            // If successful, add to recents
+            repoMutex.withLock {
+                recentRepos.remove("${owner}_$name")
+                recentRepos.add("${owner}_$name")
+            }
         }
     }
 
-    suspend fun pullRepository(owner: String, name: String, branch: String?) = withContext(Dispatchers.IO + SupervisorJob()) {
-        val repoDir = getRepoPath(owner, name)
-        withTimeout(30.seconds) {
-            branch?.let { "cd ${repoDir.absolutePath} && git checkout $it".shell() }
-            "cd ${repoDir.absolutePath} && git pull".shell()
-        }
-        repoMutex.withLock {
-            recentRepos.remove("${owner}_$name")
-            recentRepos.add("${owner}_$name")
-        }
-    }
-
-    private suspend fun rotateOldestRepository() = repoMutex.withLock {
-        if (recentRepos.isNotEmpty()) {
-            val oldest = recentRepos.removeAt(0)
-            val parts = oldest.split("_")
-            if (parts.size >= 2)
-                deleteRepository(parts[0], parts[1])
-            null
-        } else {
-            // If no history, delete oldest by modification time
-            baseDir.listFiles()
-                ?.filter { it.isDirectory }
-                ?.minByOrNull { it.lastModified() }
-                ?.deleteRecursively()
+    suspend fun pullRepository(owner: String, name: String, branch: String?) = withContext(Dispatchers.IO) {
+        withOpPermit {
+            val repoDir = getRepoPath(owner, name)
+            withTimeout(30.seconds) {
+                branch?.let { "cd ${repoDir.absolutePath} && git checkout $it".shell() }
+                "cd ${repoDir.absolutePath} && git pull".shell()
+            }
+            repoMutex.withLock {
+                recentRepos.remove("${owner}_$name")
+                recentRepos.add("${owner}_$name")
+            }
         }
     }
 
-    private fun deleteRepository(owner: String, name: String) {
-        getRepoPath(owner, name).takeIf { it.exists() }?.deleteRecursively()
-        recentRepos.remove("${owner}_$name")
+    private fun repoDirs(): List<File> = baseDir.listFiles()?.filter(File::isDirectory) ?: emptyList()
+    private fun birthMillis(p: File): Long? = runCatching {
+        Files.readAttributes(p.toPath(), BasicFileAttributes::class.java)
+            .creationTime().toMillis()
+    }.getOrNull()?.takeIf { it > 0L }
+
+    private fun addedAtMillis(dir: File): Long {
+        val git = File(dir, ".git")
+        // Prefer real birth time; fall back to .git birth; then .git mtime; then dir mtime.
+        return birthMillis(dir)
+            ?: birthMillis(git)
+            ?: (if (git.exists()) git.lastModified() else dir.lastModified())
+    }
+
+    private fun rotateOldestRepository() {
+        val victim = repoDirs().minByOrNull { addedAtMillis(it) } ?: return
+        recentRepos.remove(victim.name)  // keep in‑mem index coherent if you still show it anywhere
+        if(!victim.deleteRecursively())
+            log("Failed to delete repository directory: ${victim.absolutePath}", resolveLogDir())
     }
 
     private suspend fun getRepoSizeGB(owner: String, name: String): Double {
@@ -370,18 +382,14 @@ object WorkspaceTracker {
     /**
      * Get current workspace for a client, if any
      */
-    fun getCurrentWorkspace(clientId: String): WorkspaceInfo? {
-        return clientWorkspaces[clientId]
-    }
+    fun getCurrentWorkspace(clientId: String): WorkspaceInfo? = clientWorkspaces[clientId]
 
-    /**
-     * Remove workspace tracking when client disconnects
-     */
     fun removeClient(clientId: String) {
         clientWorkspaces.remove(clientId)
     }
 }
 
-fun isOSX(): Boolean = System.getProperty("os.name").lowercase().run {
-    contains("mac") || contains("darwin")
-}
+/**
+ * Remove workspace tracking when client disconnects
+ */
+fun isOSX(): Boolean = System.getProperty("os.name").lowercase().run { contains("mac") || contains("darwin") }
