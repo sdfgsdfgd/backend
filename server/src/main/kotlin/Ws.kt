@@ -81,6 +81,7 @@ fun Route.ws() {
     }
 }
 
+// TODO: WTF why is WsPingDTO merged onto WsBaseDTO, seperate these and create a seperate DTO for ping/pong
 @Serializable
 data class WsMessage(
     val type: String?,

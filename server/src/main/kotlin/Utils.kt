@@ -111,9 +111,13 @@ fun BufferedReader.lineFlow(): Flow<String> = flow {
 /**
  * Logs a message to console, file, and output collector.
  */
+private const val DEFAULT_LOG_FILE = "server.log"
+
+private fun File.asLogFile(): File = if (isDirectory) File(this, DEFAULT_LOG_FILE) else this
+
 fun log(message: String, logFile: File? = null) {
     println(message)
-    logFile?.appendText("[${timestamp()}] $message\n")
+    logFile?.asLogFile()?.appendText("[${timestamp()}] $message\n")
 }
 
 /**
