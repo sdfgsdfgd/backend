@@ -30,7 +30,7 @@ fun Route.githubWebhookRoute() {
                 // Leave frontend as-is until we decide; may fail and be logged correctly
                 "systemctl --user restart frontend.service",
                 // Backend is managed by a system unit with ExecReload mapped to deploy
-                "systemctl reload backend.service",
+                "sudo -n /usr/bin/systemctl reload backend.service",
             )
 
             val log = File(resolveLogDir(), "webhook.log")
