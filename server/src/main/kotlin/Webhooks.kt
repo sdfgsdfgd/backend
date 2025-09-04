@@ -5,7 +5,11 @@ import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
+
+private val webhookDeployMutex = Mutex()
 
 fun Route.githubWebhookRoute() {
     post("/webhook/github") {
@@ -21,20 +25,23 @@ fun Route.githubWebhookRoute() {
             call.respondText("❌ Error processing GitHub webhook: ${it.localizedMessage}", status = HttpStatusCode.InternalServerError)
         }
 
-        
+        webhookDeployMutex.withLock {
+            val commands = listOf(
+                // Leave frontend as-is until we decide; may fail and be logged correctly
+                "systemctl --user restart frontend.service",
+                // Backend is managed by a system unit with ExecReload mapped to deploy
+                "systemctl reload backend.service",
+            )
 
-        listOf(
-            "systemctl --user restart frontend.service",
-            "systemctl --user restart backend.service",
-        ).forEach { command ->
-            runCatching {
-                log("Running command: '$command'", File(resolveLogDir(), "webhook.log"))
-//                command.shell(logFile = logFile)
-                command.shell(logFile = File(resolveLogDir(), "webhook.log"))
-            }.onSuccess {
-                log("✅ SUCCESS: '$command' executed.", File(resolveLogDir(), "webhook.log"))
-            }.onFailure {
-                log("❌ FAILURE: '$command' failed.\n⚠️ Error: ${it.localizedMessage}", File(resolveLogDir(), "webhook.log"))
+            val log = File(resolveLogDir(), "webhook.log")
+            for (command in commands) {
+                log("Running command: '$command'", log)
+                val exit = command.shell(logFile = log)
+                if (exit == 0) {
+                    log("✅ SUCCESS: '$command' executed (exit=$exit).", log)
+                } else {
+                    log("❌ FAILURE: '$command' failed (exit=$exit).", log)
+                }
             }
         }
     }
