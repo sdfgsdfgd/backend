@@ -32,6 +32,7 @@ private const val MAX_REPOS = 10
 private const val MAX_REPO_SIZE_GB = 10
 val activeGitOperations = ConcurrentHashMap<String, Job>()
 
+// TODO: Move below to /model/
 @Serializable
 data class GitHubRepoData(
     val repoId: Long? = null,
@@ -236,14 +237,14 @@ class RepositoryManager {
         progressTracker: AtomicInt
     ) = withContext(Dispatchers.IO) {
         withOpPermit {
-            // rotate under a single lock; rotation itself NEVER locks again
+            val repoDir = getRepoPath(owner, name)
+
+            // Ensure capacity AND reserve the target directory under a single lock
             repoMutex.withLock {
                 val count = baseDir.listFiles()?.count { it.isDirectory } ?: 0
                 if (count >= MAX_REPOS) rotateOldestRepository()
+                if (!prepareRepoDirectory(owner, name)) throw Exception("Failed to prepare repository directory")
             }
-
-            val repoDir = getRepoPath(owner, name)
-            if (!prepareRepoDirectory(owner, name)) throw Exception("Failed to prepare repository directory")
 
             val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
                 ?.let { url.replace("https://", "https://$it@") }
@@ -265,17 +266,21 @@ class RepositoryManager {
 
             try {
                 withTimeout(300.seconds) {
-                val exitCode = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}".shell(
+                    val exitCode = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}".shell(
 //                    val exitCode = """GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge=false -c filter.lfs.required=false clone --progress --no-checkout $branchArg $cloneUrl ${repoDir.absolutePath}""".shell(
-                            onLine = { line, _ ->
-                                parseLineForProgress(line, progressTracker)
+                        onLine = { line, _ ->
+                            parseLineForProgress(line, progressTracker)
 
-                                // Monitor size in real-time
-                                if (sizeLimitExceeded.value) throw Exception("Repository size limit exceeded. Operation aborted.")
-                            },
-                        )
+                            // Monitor size in real-time
+                            if (sizeLimitExceeded.value) throw Exception("Repository size limit exceeded. Operation aborted.")
+                        },
+                    )
                     if (exitCode != 0) throw Exception("Git clone failed with exit code $exitCode")
                 }
+            } catch (e: Throwable) {
+                // Cleanup reserved directory on clone failure to avoid leaking a slot
+                runCatching { repoDir.deleteRecursively() }
+                throw e
             } finally {
                 monitorJob.cancel()
             }
@@ -319,8 +324,11 @@ class RepositoryManager {
     private fun rotateOldestRepository() {
         val victim = repoDirs().minByOrNull { addedAtMillis(it) } ?: return
         recentRepos.remove(victim.name)  // keep in‑mem index coherent if you still show it anywhere
-        if(!victim.deleteRecursively())
+        val deleted = victim.deleteRecursively()
+
+        if (!deleted) {
             log("Failed to delete repository directory: ${victim.absolutePath}", resolveLogDir())
+        }
     }
 
     private suspend fun getRepoSizeGB(owner: String, name: String): Double {

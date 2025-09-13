@@ -1,7 +1,7 @@
 package net.sdfgsdfg
 
-import data.AskReplyDto
-import data.AskRequestDto
+import net.sdfgsdfg.data.model.AskReplyDto
+import net.sdfgsdfg.data.model.AskRequestDto
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder

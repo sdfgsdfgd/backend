@@ -1,4 +1,4 @@
-package data
+package net.sdfgsdfg.data.model
 
 import kotlinx.serialization.Serializable
 
