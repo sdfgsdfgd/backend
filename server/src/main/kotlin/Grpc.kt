@@ -17,6 +17,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.util.encodeBase64
 import io.ktor.util.reflect.TypeInfo
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
@@ -59,9 +60,16 @@ fun Route.grpc() {
         val req = AskRequest.newBuilder()
             .setPrompt(body.prompt)
             .setModel(body.model ?: "")
+            .setWantTts(body.wantTts)
             .build()
         val reply = botStub.ask(req)
-        call.respond(AskReplyDto(reply.text), TypeInfo(AskReplyDto::class))
+        call.respond(
+            message = AskReplyDto(
+                text = reply.text,
+                ttsMp3 = if (body.wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
+            ),
+            typeInfo = TypeInfo(AskReplyDto::class)
+        )
     }
 
     get("/api/ask/stream") {
