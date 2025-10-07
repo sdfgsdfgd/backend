@@ -45,7 +45,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
     "server-py" to DeploymentProfile(
         repoFullName = "sdfgsdfgd/server_py",
         commands = listOf(
-            "systemctl --user restart server-py.service --no-ask-password",
+            "systemctl restart server_py.service --no-block --no-ask-password",
         ),
     ),
 )
