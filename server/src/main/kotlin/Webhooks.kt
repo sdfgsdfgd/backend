@@ -45,7 +45,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
     "server-py" to DeploymentProfile(
         repoFullName = "sdfgsdfgd/server_py",
         commands = listOf(
-            "sudo -u x XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart server_py.service",
+            "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart server_py.service",
         ),
     ),
 )
