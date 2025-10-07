@@ -39,7 +39,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
     "frontend-next" to DeploymentProfile(
         repoFullName = "sdfgsdfgd/frontend-next",
         commands = listOf(
-            "systemctl --user restart frontend.service",
+            "sudo systemctl restart frontend.service --no-ask-password --no-block",
         ),
     ),
     "server-py" to DeploymentProfile(
