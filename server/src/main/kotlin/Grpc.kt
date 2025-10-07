@@ -22,17 +22,18 @@ import io.ktor.util.reflect.TypeInfo
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 
-val isLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
 
 /* ---------- single gRPC channel reused by all requests ---------- */
-// todo: _________________________________________________
-// todo: remove, if below channel works on both platforms
+
+// ---
+// todo: remove, if below channel works on both platforms TODO: Test on OSX for debugging [ WIP ] & Linux for prod [ Done ]
 private val channel_old = ManagedChannelBuilder
     .forAddress("localhost", 1453)
     .usePlaintext()
     .build()
-// todo: _________________________________________________
+// ---
 
+val isLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
 private val linuxGroup by lazy { EpollEventLoopGroup() }   // reuse one pool
 
 val channel: ManagedChannel = if (isLinux) {
@@ -60,6 +61,7 @@ fun Route.grpc() {
         val req = AskRequest.newBuilder()
             .setPrompt(body.prompt)
             .setModel(body.model ?: "")
+            .setNewChat(body.newChat)
             .setWantTts(body.wantTts)
             .build()
         val reply = botStub.ask(req)
