@@ -19,8 +19,14 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.util.encodeBase64
 import io.ktor.util.reflect.TypeInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
+import kotlin.time.Duration.Companion.seconds
 
 
 /* ---------- single gRPC channel reused by all requests ---------- */
@@ -50,6 +56,12 @@ val channel: ManagedChannel = if (isLinux) {
         .build()
 }
 
+// Reuse the same JSON shape the ContentNegotiation plugin uses
+private val heartbeatJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 
 /*
@@ -60,19 +72,34 @@ fun Route.grpc() {
         val body = call.receive<AskRequestDto>()
         val req = AskRequest.newBuilder()
             .setPrompt(body.prompt)
-            .setModel(body.model ?: "")
+            .setModel(body.model.orEmpty())
             .setNewChat(body.newChat)
             .setWantTts(body.wantTts)
             .build()
-        val reply = botStub.ask(req)
-        call.respond(
-            message = AskReplyDto(
-                text = reply.text,
-                ttsMp3 = if (body.wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
-            ),
-            typeInfo = TypeInfo(AskReplyDto::class)
-        )
+
+        call.respondTextWriter(contentType = ContentType.Application.Json) {
+            coroutineScope {
+                val replyDeferred = async { botStub.ask(req) }
+
+                while (replyDeferred.isActive) {
+                    write(" \n")        // legal JSON whitespace keeps Cloudflare happy
+                    flush()
+                    delay(20.seconds)  // anything <<100s works
+                }
+
+                val reply = replyDeferred.await()
+                val payload = heartbeatJson.encodeToString(
+                    AskReplyDto(
+                        text = reply.text,
+                        ttsMp3 = if (body.wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
+                    )
+                )
+                write(payload)
+                flush()
+            }
+        }
     }
+
 
     get("/api/ask/stream") {
         application.log.info("[gRPC] [init] streaming request")
