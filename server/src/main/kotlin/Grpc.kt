@@ -1,9 +1,6 @@
 package net.sdfgsdfg
 
-import net.sdfgsdfg.data.model.AskReplyDto
-import net.sdfgsdfg.data.model.AskRequestDto
 import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 import io.grpc.netty.shaded.io.netty.channel.epoll.EpollDomainSocketChannel
 import io.grpc.netty.shaded.io.netty.channel.epoll.EpollEventLoopGroup
@@ -19,11 +16,12 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.util.encodeBase64
 import io.ktor.util.reflect.TypeInfo
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import net.sdfgsdfg.data.model.AskReplyDto
+import net.sdfgsdfg.data.model.AskRequestDto
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 import kotlin.time.Duration.Companion.seconds
@@ -33,10 +31,10 @@ import kotlin.time.Duration.Companion.seconds
 
 // ---
 // todo: remove, if below channel works on both platforms TODO: Test on OSX for debugging [ WIP ] & Linux for prod [ Done ]
-private val channel_old = ManagedChannelBuilder
-    .forAddress("localhost", 1453)
-    .usePlaintext()
-    .build()
+//private val channel_old = ManagedChannelBuilder
+//    .forAddress("localhost", 1453)
+//    .usePlaintext()
+//    .build()
 // ---
 
 val isLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
@@ -69,6 +67,9 @@ private val botStub = BotGrpcKt.BotCoroutineStub(channel)
  */
 fun Route.grpc() {
     post("/api/ask") {
+        val heartbeatSeconds = 20.seconds
+        application.log.info("[gRPC] [init] POST /api/ask with prompt=${call.receive<AskRequestDto>().prompt.take(30)}...")
+
         val body = call.receive<AskRequestDto>()
         val req = AskRequest.newBuilder()
             .setPrompt(body.prompt)
@@ -82,12 +83,15 @@ fun Route.grpc() {
                 val replyDeferred = async { botStub.ask(req) }
 
                 while (replyDeferred.isActive) {
+                    application.log.info("[gRPC] $heartbeatSeconds heartbeat sent while waiting for response")
                     write(" \n")        // legal JSON whitespace keeps Cloudflare happy
                     flush()
-                    delay(20.seconds)  // anything <<100s works
+                    delay(heartbeatSeconds)  // anything <<100s works
                 }
 
                 val reply = replyDeferred.await()
+                application.log.info("[gRPC] response received --> ${reply.text.take(30)}...${reply.text.takeLast(30)}")
+
                 val payload = heartbeatJson.encodeToString(
                     AskReplyDto(
                         text = reply.text,
@@ -96,6 +100,7 @@ fun Route.grpc() {
                 )
                 write(payload)
                 flush()
+                application.log.info("[gRPC] < response flushed to client >")
             }
         }
     }
