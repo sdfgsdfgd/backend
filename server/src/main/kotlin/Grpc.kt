@@ -68,7 +68,8 @@ private val heartbeatJson = Json {
 
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
-private const val DEFAULT_SELFTEST_PROMPT = "ping from ktor self-test"
+private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
+private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
 
 /*
  * ---------- REST → gRPC unary bridge ----------
@@ -142,7 +143,7 @@ fun Route.grpc() {
         application.log.info("[gRPC] [selftest] POST /api/selftest/run prompt='${body?.prompt ?: DEFAULT_SELFTEST_PROMPT}'")
         val req = SelfTestRequest.newBuilder()
             .setPrompt(body?.prompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_PROMPT)
-            .setExpectSubstr(body?.expectSubstr.orEmpty())
+            .setExpectSubstr(body?.expectSubstr?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_EXPECT)
             .setModel(body?.model.orEmpty())
             .setNewChat(body?.newChat ?: false)
             .build()
