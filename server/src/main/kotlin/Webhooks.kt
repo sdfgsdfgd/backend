@@ -46,7 +46,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
         repoFullName = "sdfgsdfgd/server_py",
         commands = listOf(
             "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart server_py.service",
-            "sleep 8",
+            "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'",
             "curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: repo-push' -d '{}' http://127.0.0.1/api/selftest/run"
         ),
     ),
