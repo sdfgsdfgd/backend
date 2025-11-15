@@ -9,6 +9,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.log
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveNullable
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.application
@@ -22,8 +24,12 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
+import net.sdfgsdfg.data.model.SelfTestRequestDto
+import net.sdfgsdfg.data.model.SelfTestResultDto
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
+import rpc.BotOuterClass.SelfTestRequest
+import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -61,6 +67,8 @@ private val heartbeatJson = Json {
 }
 
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
+private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
+private const val DEFAULT_SELFTEST_PROMPT = "ping from ktor self-test"
 
 /*
  * ---------- REST → gRPC unary bridge ----------
@@ -128,4 +136,70 @@ fun Route.grpc() {
 
         application.log.info("[gRPC] < streaming ENDED >")
     }
+
+    post("/api/selftest/run") {
+        val body = call.receiveNullable<SelfTestRequestDto>()
+        application.log.info("[gRPC] [selftest] POST /api/selftest/run prompt='${body?.prompt ?: DEFAULT_SELFTEST_PROMPT}'")
+        val req = SelfTestRequest.newBuilder()
+            .setPrompt(body?.prompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_PROMPT)
+            .setExpectSubstr(body?.expectSubstr.orEmpty())
+            .setModel(body?.model.orEmpty())
+            .setNewChat(body?.newChat ?: false)
+            .build()
+
+        val result = runCatching { botStub.selfTest(req) }
+        val dto = result.fold(
+            onSuccess = {
+                SelfTestResultDto(
+                    ok = it.ok,
+                    textExcerpt = it.textExcerpt,
+                    rawError = it.rawError.takeIf(String::isNotBlank),
+                    latencyMs = it.latencyMs,
+                    satisfiedExpectation = it.satisfiedExpectation,
+                    retried = it.retried,
+                    timestampMs = System.currentTimeMillis()
+                )
+            },
+            onFailure = { err ->
+                application.log.error("[gRPC] [selftest] failed", err)
+                SelfTestResultDto(
+                    ok = false,
+                    textExcerpt = "",
+                    rawError = err.message ?: err::class.simpleName,
+                    latencyMs = 0.0,
+                    satisfiedExpectation = false,
+                    retried = false,
+                    timestampMs = System.currentTimeMillis()
+                )
+            }
+        )
+
+        persistSelfTestResult(dto)
+        call.respond(dto)
+    }
+
+    get("/api/selftest/status") {
+        val saved = loadLastSelfTestResult()
+        if (saved == null) {
+            call.respond(HttpStatusCode.NoContent, "No self-test run recorded")
+        } else {
+            call.respond(saved)
+        }
+    }
 }
+
+private fun persistSelfTestResult(result: SelfTestResultDto) {
+    runCatching {
+        selfTestResultFile.writeText(heartbeatJson.encodeToString(result))
+    }.onFailure {
+        println("[gRPC] [selftest] failed to persist result: ${it.message}")
+    }
+}
+
+private fun loadLastSelfTestResult(): SelfTestResultDto? = runCatching {
+    if (!selfTestResultFile.exists()) {
+        null
+    } else {
+        heartbeatJson.decodeFromString<SelfTestResultDto>(selfTestResultFile.readText())
+    }
+}.getOrNull()

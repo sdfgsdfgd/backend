@@ -43,6 +43,9 @@ service Bot {
 
     // 4) Bi‑di audio streaming - (not implemented yet)
     rpc AudioChat (stream AudioFrame) returns (stream AudioReply);
+
+    // 5) Lightweight health probe that exercises Ask end-to-end
+    rpc SelfTest (SelfTestRequest) returns (SelfTestReply);
 }
 
 message AskRequest {
@@ -77,3 +80,18 @@ message AudioReply {
     }
 }
 
+message SelfTestRequest {
+    string prompt = 1;
+    string expect_substr = 2;
+    string model = 3;
+    bool new_chat = 4;
+}
+
+message SelfTestReply {
+    bool ok = 1;
+    string text_excerpt = 2;
+    string raw_error = 3;
+    double latency_ms = 4;
+    bool satisfied_expectation = 5;
+    bool retried = 6;
+}

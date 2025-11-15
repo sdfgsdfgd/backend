@@ -46,6 +46,13 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
         repoFullName = "sdfgsdfgd/server_py",
         commands = listOf(
             "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart server_py.service",
+            "sleep 8",
+            "curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: repo-push' -d '{}' http://127.0.0.1/api/selftest/run"
+        ),
+    ),
+    "server-py-selftest" to DeploymentProfile(
+        commands = listOf(
+            "curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '{}' http://127.0.0.1/api/selftest/run"
         ),
     ),
 )
