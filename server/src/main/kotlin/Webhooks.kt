@@ -77,6 +77,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
     }
 
     val eventType = request.headers["X-GitHub-Event"] ?: "unknown"
+    val senderLogin = extractSenderLogin(payload)
     val repoFullName = extractRepoFullName(payload)
     val requestedSlug = targetOverride?.lowercase()
     val matchedSlug = when {
@@ -84,6 +85,12 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         repoFullName != null -> repoToSlug[repoFullName.lowercase()]
         else -> null
     } ?: "default"
+    if (matchedSlug == "server-py" && eventType == "push" && senderLogin == "github-actions[bot]") {
+        log("ℹ️ Skipping server-py deployment for GitHub Actions bot push.", deploymentLog)
+        respondText("🙇 Deployment skipped for GitHub Actions bot push", status = HttpStatusCode.Accepted)
+        return
+    }
+
     val profile = deploymentProfiles.getValue(matchedSlug)
 
     if (requestedSlug != null && requestedSlug != matchedSlug) {
@@ -116,6 +123,15 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
     }
 }
+
+private fun extractSenderLogin(payload: String): String? = runCatching {
+    json.parseToJsonElement(payload)
+        .jsonObject["sender"]
+        ?.jsonObject
+        ?.get("login")
+        ?.jsonPrimitive
+        ?.content
+}.getOrNull()
 
 private fun extractRepoFullName(payload: String): String? = runCatching {
     json.parseToJsonElement(payload)
