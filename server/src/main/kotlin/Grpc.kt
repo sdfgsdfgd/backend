@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
+import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestRequestDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import rpc.BotGrpcKt
@@ -156,8 +157,18 @@ fun Route.grpc() {
                     textExcerpt = it.textExcerpt,
                     rawError = it.rawError.takeIf(String::isNotBlank),
                     latencyMs = it.latencyMs,
+                    askLatencyMs = it.askLatencyMs,
+                    auditLatencyMs = it.auditLatencyMs,
                     satisfiedExpectation = it.satisfiedExpectation,
                     retried = it.retried,
+                    cases = it.casesList.map { case ->
+                        SelfTestCaseDto(
+                            name = case.name,
+                            ok = case.ok,
+                            latencyMs = case.latencyMs,
+                            note = case.note.takeIf(String::isNotBlank)
+                        )
+                    },
                     timestampMs = System.currentTimeMillis()
                 )
             },
