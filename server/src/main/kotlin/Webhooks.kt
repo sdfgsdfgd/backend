@@ -9,6 +9,7 @@ import io.ktor.server.routing.post
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -93,6 +94,22 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
     val profile = deploymentProfiles.getValue(matchedSlug)
 
+    val commandsToRun = if (matchedSlug == "server-py-selftest") {
+        val newChatFlag = runCatching {
+            json.parseToJsonElement(payload)
+                .jsonObject["new_chat"]
+                ?.jsonPrimitive
+                ?.booleanOrNull
+        }.getOrNull()
+
+        val payloadBody = """{"new_chat": ${newChatFlag ?: false}}"""
+        val selfTestCmd =
+            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '$payloadBody' http://127.0.0.1/api/selftest/run"""
+        listOf(selfTestCmd)
+    } else {
+        profile.commands
+    }
+
     if (requestedSlug != null && requestedSlug != matchedSlug) {
         log("ℹ️ Unregistered webhook slug '$requestedSlug' - using $matchedSlug.", deploymentLog)
     }
@@ -112,7 +129,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
     )
 
     webhookDeployMutex.withLock {
-        for (command in profile.commands) {
+        for (command in commandsToRun) {
             log("Running command for $matchedSlug: '$command'", deploymentLog)
             val exit = command.shell(logFile = deploymentLog)
             if (exit == 0) {
