@@ -98,46 +98,39 @@ fun Route.grpc() {
                     delay(heartbeatSeconds)  // anything <<100s works
                 }
 
-                val reply = runCatching { replyDeferred.await() }
-                    .onFailure { err ->
-                        when (err) {
-                            is io.grpc.StatusException -> {
-                                val (status, code) = when (err.status.code) {
-                                    io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
-                                    io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
-                                    io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.ClientClosedRequest to "cancelled"
-                                    else                                  -> HttpStatusCode.BadGateway to "grpc_error"
-                                }
-                                application.log.warn("[gRPC] ask failed status=${err.status.code} desc=${err.status.description}")
-                                call.response.status(status)
-                                val payload = heartbeatJson.encodeToString(
-                                    mapOf(
-                                        "error" to code,
-                                        "detail" to (err.status.description ?: "gRPC ${err.status.code}"),
-                                        "status" to err.status.code.name,
-                                    )
-                                )
-                                write(payload)
-                                flush()
-                            }
-                            else -> {
-                                application.log.error("[gRPC] ask failed", err)
-                                call.response.status(HttpStatusCode.BadGateway)
-                                val payload = heartbeatJson.encodeToString(
-                                    mapOf(
-                                        "error" to "proxy_error",
-                                        "detail" to (err.message ?: "unknown")
-                                    )
-                                )
-                                write(payload)
-                                flush()
-                            }
-                        }
+                val reply = try {
+                    replyDeferred.await()
+                } catch (err: io.grpc.StatusException) {
+                    val (status, code) = when (err.status.code) {
+                        io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
+                        io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
+                        io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.BadRequest to "cancelled"
+                        else                                  -> HttpStatusCode.BadGateway to "grpc_error"
                     }
-                    .getOrNull()
-
-                if (reply == null) {
-                    return@respondTextWriter
+                    application.log.warn("[gRPC] ask failed status=${err.status.code} desc=${err.status.description}")
+                    call.response.status(status)
+                    val payload = heartbeatJson.encodeToString(
+                        mapOf(
+                            "error" to code,
+                            "detail" to (err.status.description ?: "gRPC ${err.status.code}"),
+                            "status" to err.status.code.name,
+                        )
+                    )
+                    write(payload)
+                    flush()
+                    return@coroutineScope
+                } catch (err: Exception) {
+                    application.log.error("[gRPC] ask failed", err)
+                    call.response.status(HttpStatusCode.BadGateway)
+                    val payload = heartbeatJson.encodeToString(
+                        mapOf(
+                            "error" to "proxy_error",
+                            "detail" to (err.message ?: "unknown")
+                        )
+                    )
+                    write(payload)
+                    flush()
+                    return@coroutineScope
                 }
                 application.log.info("[gRPC] response received --> ${reply.text.take(30)}...${reply.text.takeLast(30)}")
 
