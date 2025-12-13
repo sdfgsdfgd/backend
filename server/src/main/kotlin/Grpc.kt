@@ -98,7 +98,15 @@ fun Route.grpc() {
                     delay(heartbeatSeconds)  // anything <<100s works
                 }
 
-                val reply = replyDeferred.await()
+                val reply = try {
+                    replyDeferred.await()
+                } catch (e: io.grpc.StatusException) {
+                    application.log.warn("[gRPC] ask failed status=${e.status.code} desc=${e.status.description}")
+                    throw e
+                } catch (e: Exception) {
+                    application.log.error("[gRPC] ask failed", e)
+                    throw e
+                }
                 application.log.info("[gRPC] response received --> ${reply.text.take(30)}...${reply.text.takeLast(30)}")
 
                 val payload = heartbeatJson.encodeToString(
