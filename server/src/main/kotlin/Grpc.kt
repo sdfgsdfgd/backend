@@ -98,14 +98,46 @@ fun Route.grpc() {
                     delay(heartbeatSeconds)  // anything <<100s works
                 }
 
-                val reply = try {
-                    replyDeferred.await()
-                } catch (e: io.grpc.StatusException) {
-                    application.log.warn("[gRPC] ask failed status=${e.status.code} desc=${e.status.description}")
-                    throw e
-                } catch (e: Exception) {
-                    application.log.error("[gRPC] ask failed", e)
-                    throw e
+                val reply = runCatching { replyDeferred.await() }
+                    .onFailure { err ->
+                        when (err) {
+                            is io.grpc.StatusException -> {
+                                val (status, code) = when (err.status.code) {
+                                    io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
+                                    io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
+                                    io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.ClientClosedRequest to "cancelled"
+                                    else                                  -> HttpStatusCode.BadGateway to "grpc_error"
+                                }
+                                application.log.warn("[gRPC] ask failed status=${err.status.code} desc=${err.status.description}")
+                                call.response.status(status)
+                                val payload = heartbeatJson.encodeToString(
+                                    mapOf(
+                                        "error" to code,
+                                        "detail" to (err.status.description ?: "gRPC ${err.status.code}"),
+                                        "status" to err.status.code.name,
+                                    )
+                                )
+                                write(payload)
+                                flush()
+                            }
+                            else -> {
+                                application.log.error("[gRPC] ask failed", err)
+                                call.response.status(HttpStatusCode.BadGateway)
+                                val payload = heartbeatJson.encodeToString(
+                                    mapOf(
+                                        "error" to "proxy_error",
+                                        "detail" to (err.message ?: "unknown")
+                                    )
+                                )
+                                write(payload)
+                                flush()
+                            }
+                        }
+                    }
+                    .getOrNull()
+
+                if (reply == null) {
+                    return@respondTextWriter
                 }
                 application.log.info("[gRPC] response received --> ${reply.text.take(30)}...${reply.text.takeLast(30)}")
 
