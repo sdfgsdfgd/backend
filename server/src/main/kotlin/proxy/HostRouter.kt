@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.http.Url
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.host
+import io.ktor.server.request.uri
 import org.slf4j.LoggerFactory
 
 data class HostRule(
@@ -35,9 +36,16 @@ class HostRouter(
     suspend fun proxy(call: ApplicationCall) {
         val hostHeader = call.request.host().lowercase()
         val target = normalizedRules.firstOrNull { hostHeader in it.hosts }?.target ?: defaultTarget
-        if (target == defaultTarget) {
+        val matched = normalizedRules.firstOrNull { hostHeader in it.hosts }?.hosts
+        logger.info(
+            "Routing host='{}' path='{}' -> target={}",
+            hostHeader,
+            call.request.uri,
+            target
+        )
+        if (matched == null) {
             logger.debug("No explicit host match for '{}', using default {}", hostHeader, defaultTarget)
         }
-        proxies.getValue(target).proxy(call)
+        proxies.getValue(target).proxy(call, hostHeader)
     }
 }

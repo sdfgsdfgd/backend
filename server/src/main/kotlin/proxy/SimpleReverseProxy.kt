@@ -37,13 +37,20 @@ class SimpleReverseProxy(
         "te", "trailers", "transfer-encoding", "upgrade"
     )
 
-    suspend fun proxy(call: ApplicationCall) {
+    suspend fun proxy(call: ApplicationCall, hostHeader: String? = null) {
         val originalUri = call.request.uri
         val proxiedUrl = URLBuilder(targetBaseUrl).apply {
             encodedPath += originalUri
         }.build()
 
-        logger.info("--> [ ${i.getAndIncrement()} ] === Proxying === req URI --> ${call.request.uri} to target URI --> $proxiedUrl")
+        logger.info(
+            "--> [ {} ] host='{}' method={} uri='{}' -> {}",
+            i.getAndIncrement(),
+            hostHeader ?: call.request.host(),
+            call.request.httpMethod.value,
+            originalUri,
+            proxiedUrl
+        )
         call.request.headers.forEach { key, values ->
             logger.debug("Incoming header: {} -> {}", key, values)
         }
