@@ -10,6 +10,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import io.ktor.server.request.host
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import proxy.SimpleReverseProxy
+import proxy.HostRouter
+import proxy.HostRule
 import kotlin.time.Duration.Companion.seconds
 
 fun main() {
@@ -46,7 +49,21 @@ fun Application.module() {
 
 // ------------[ Routes ]--------------
 private fun Application.routes() = routing {
-    val reverseProxy = SimpleReverseProxy(httpClient, Url("http://localhost:3000"))
+    // Host-aware reverse proxy targets. Add more domains by extending this list.
+    val hostRouter = HostRouter(
+        httpClient = httpClient,
+        rules = listOf(
+            HostRule(
+                hosts = setOf("leospecial.com", "www.leospecial.com"),
+                target = Url("http://localhost:3001")
+            ),
+            HostRule(
+                hosts = setOf("sdfgsdfg.net", "www.sdfgsdfg.net", "localhost", "127.0.0.1"),
+                target = Url("http://localhost:3000")
+            )
+        ),
+        defaultTarget = Url("http://localhost:3000")
+    )
 
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
@@ -62,7 +79,7 @@ private fun Application.routes() = routing {
     // [ Reverse Proxy ] -->  Next.js @ :3000
     route("/{...}") {
         handle {
-            reverseProxy.proxy(call)
+            hostRouter.proxy(call)
         }
     }
 }
