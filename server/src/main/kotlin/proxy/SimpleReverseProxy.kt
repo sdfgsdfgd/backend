@@ -37,16 +37,19 @@ class SimpleReverseProxy(
         "te", "trailers", "transfer-encoding", "upgrade"
     )
 
-    suspend fun proxy(call: ApplicationCall, hostHeader: String? = null) {
+    suspend fun proxy(call: ApplicationCall, hostHeader: String? = null, matchedRule: String? = null) {
+        val requestId = i.getAndIncrement()
+        val startNs = System.nanoTime()
         val originalUri = call.request.uri
         val proxiedUrl = URLBuilder(targetBaseUrl).apply {
             encodedPath += originalUri
         }.build()
 
         logger.info(
-            "--> [ {} ] host='{}' method={} uri='{}' -> {}",
-            i.getAndIncrement(),
+            "--> [ {} ] host='{}' matched='{}' method={} uri='{}' -> {}",
+            requestId,
             hostHeader ?: call.request.host(),
+            matchedRule ?: "default",
             call.request.httpMethod.value,
             originalUri,
             proxiedUrl
@@ -75,8 +78,9 @@ class SimpleReverseProxy(
             }
         }
 
+        val status = proxiedResponse.status
         // Log status and response headers from target
-        logger.info("Received response from Next.js: ${proxiedResponse.status}")
+        logger.info("Received response from target: {}", status)
         proxiedResponse.headers.forEach { key, values ->
             logger.debug("Response header from Next.js: {} -> {}", key, values)
         }
@@ -106,8 +110,42 @@ class SimpleReverseProxy(
         call.response.header(HttpHeaders.ContentType, finalContentType)
 
         // Write the response body - Ktor handles chunking or content-length automatically
-        call.respondBytesWriter(status = proxiedResponse.status) {
+        call.respondBytesWriter(status = status) {
             proxiedResponse.bodyAsChannel().copyAndClose(this)
+        }
+
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+        val len = proxiedResponse.headers[HttpHeaders.ContentLength] ?: "chunked"
+        val remote = call.request.origin.remoteHost
+        val ua = call.request.headers[HttpHeaders.UserAgent] ?: "-"
+        if (status.value >= 400) {
+            logger.warn(
+                "<-- [ {} ] host='{}' matched='{}' method={} uri='{}' status={} len={} elapsed={}ms remote={} ua='{}'",
+                requestId,
+                hostHeader ?: call.request.host(),
+                matchedRule ?: "default",
+                call.request.httpMethod.value,
+                originalUri,
+                status.value,
+                len,
+                elapsedMs,
+                remote,
+                ua
+            )
+        } else {
+            logger.info(
+                "<-- [ {} ] host='{}' matched='{}' method={} uri='{}' status={} len={} elapsed={}ms remote={} ua='{}'",
+                requestId,
+                hostHeader ?: call.request.host(),
+                matchedRule ?: "default",
+                call.request.httpMethod.value,
+                originalUri,
+                status.value,
+                len,
+                elapsedMs,
+                remote,
+                ua
+            )
         }
     }
 }

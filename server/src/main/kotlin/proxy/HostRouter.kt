@@ -9,7 +9,8 @@ import org.slf4j.LoggerFactory
 
 data class HostRule(
     val hosts: Set<String>,
-    val target: Url
+    val target: Url,
+    val name: String = target.host
 )
 
 /**
@@ -35,17 +36,18 @@ class HostRouter(
 
     suspend fun proxy(call: ApplicationCall) {
         val hostHeader = call.request.host().lowercase()
-        val target = normalizedRules.firstOrNull { hostHeader in it.hosts }?.target ?: defaultTarget
-        val matched = normalizedRules.firstOrNull { hostHeader in it.hosts }?.hosts
+        val matchedRule = normalizedRules.firstOrNull { hostHeader in it.hosts }
+        val target = matchedRule?.target ?: defaultTarget
         logger.info(
-            "Routing host='{}' path='{}' -> target={}",
+            "Routing host='{}' path='{}' matched='{}' -> target={}",
             hostHeader,
             call.request.uri,
+            matchedRule?.name ?: "default",
             target
         )
-        if (matched == null) {
+        if (matchedRule == null) {
             logger.debug("No explicit host match for '{}', using default {}", hostHeader, defaultTarget)
         }
-        proxies.getValue(target).proxy(call, hostHeader)
+        proxies.getValue(target).proxy(call, hostHeader, matchedRule?.name ?: "default")
     }
 }
