@@ -26,7 +26,7 @@ import kotlin.time.Duration.Companion.hours
 private const val DEFAULT_DB_URL = "jdbc:postgresql://localhost:5432/x"
 private const val DEFAULT_DB_USER = "x"
 private const val DEFAULT_DB_PASSWORD = "x"
-private const val RETENTION_MONTHS = 1
+private const val RETENTION_MONTHS = 3
 
 val RequestEventStartKey = AttributeKey<Long>("request-event-start-ns")
 val RequestEventRecordedKey = AttributeKey<Boolean>("request-event-recorded")
