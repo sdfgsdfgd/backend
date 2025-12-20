@@ -114,6 +114,14 @@ private fun Application.routes() = routing {
                         append(header, value)
                     }
                 }
+                call.request.headers["Sec-WebSocket-Protocol"]?.let { value ->
+                    append("Sec-WebSocket-Protocol", value)
+                }
+                append("Host", call.request.host())
+                append("X-Forwarded-Host", call.request.host())
+                append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
+                append("X-Forwarded-For", remoteIp)
+                append("X-Real-IP", remoteIp)
                 if (isTrustedGrafanaIp(remoteIp)) {
                     append("X-WEBAUTH-USER", "x")
                 }
