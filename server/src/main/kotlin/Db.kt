@@ -255,9 +255,9 @@ object RequestEvents {
                     country_code = COALESCE(ip_blacklist.country_code, EXCLUDED.country_code);
             """.trimIndent()
             TransactionManager.current().connection.prepareStatement(sql, false).apply {
-                setString(1, ip)
-                setString(2, reason)
-                setString(3, countryCode)
+                set(1, ip)
+                set(2, reason)
+                set(3, countryCode)
                 executeUpdate()
                 close()
             }
@@ -273,8 +273,8 @@ object RequestEvents {
                     note = COALESCE(EXCLUDED.note, ip_allowlist.note);
             """.trimIndent()
             TransactionManager.current().connection.prepareStatement(insertSql, false).apply {
-                setString(1, ip)
-                setString(2, note)
+                set(1, ip)
+                set(2, note)
                 executeUpdate()
                 close()
             }
