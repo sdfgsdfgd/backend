@@ -18,8 +18,8 @@ import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.javatime.timestampWithTimeZone
 import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.statements.StatementType
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 import java.time.YearMonth
@@ -254,13 +254,12 @@ object RequestEvents {
                     reason = COALESCE(EXCLUDED.reason, ip_blacklist.reason),
                     country_code = COALESCE(ip_blacklist.country_code, EXCLUDED.country_code);
             """.trimIndent()
-            TransactionManager.current().connection.prepareStatement(sql, false).apply {
-                set(1, ip)
-                if (reason == null) setNull(2, IpBlacklistTable.reason.columnType) else set(2, reason)
-                if (countryCode == null) setNull(3, IpBlacklistTable.countryCode.columnType) else set(3, countryCode)
-                executeUpdate()
-                close()
-            }
+            val args = listOf(
+                IpBlacklistTable.ip.columnType to ip,
+                IpBlacklistTable.reason.columnType to reason,
+                IpBlacklistTable.countryCode.columnType to countryCode
+            )
+            exec(sql, args, StatementType.OTHER)
         }
     }
 
@@ -272,12 +271,11 @@ object RequestEvents {
                 ON CONFLICT (ip) DO UPDATE SET
                     note = COALESCE(EXCLUDED.note, ip_allowlist.note);
             """.trimIndent()
-            TransactionManager.current().connection.prepareStatement(insertSql, false).apply {
-                set(1, ip)
-                if (note == null) setNull(2, IpAllowlistTable.note.columnType) else set(2, note)
-                executeUpdate()
-                close()
-            }
+            val args = listOf(
+                IpAllowlistTable.ip.columnType to ip,
+                IpAllowlistTable.note.columnType to note
+            )
+            exec(insertSql, args, StatementType.OTHER)
             IpBlacklistTable.deleteWhere { IpBlacklistTable.ip eq ip }
         }
     }
