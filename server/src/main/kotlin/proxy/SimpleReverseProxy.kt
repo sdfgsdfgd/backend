@@ -12,6 +12,7 @@ import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.encodedPath
+import io.ktor.http.parseQueryString
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.host
@@ -64,7 +65,7 @@ class SimpleReverseProxy(
             URLBuilder(targetBaseUrl).apply {
                 encodedPath = encodedPath.trimEnd('/') + path
                 if (!rawQuery.isNullOrBlank()) {
-                    encodedQuery = rawQuery
+                    encodedParameters.appendAll(parseQueryString(rawQuery, decode = false))
                 }
             }.build()
         } catch (e: Exception) {
