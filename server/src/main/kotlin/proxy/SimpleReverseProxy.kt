@@ -46,6 +46,7 @@ class SimpleReverseProxy(
         "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade"
     )
+    private val authProxyHeader = "x-webauth-user"
 
     suspend fun proxy(call: ApplicationCall, hostHeader: String? = null, matchedRule: String? = null) {
         val requestId = i.getAndIncrement()
@@ -129,7 +130,10 @@ class SimpleReverseProxy(
                 headers {
                     call.request.headers.forEach { key, values ->
                     val lowerKey = key.lowercase()
-                    if (lowerKey !in hopByHopHeaders && lowerKey != HttpHeaders.ContentLength.lowercase()) {
+                    if (lowerKey !in hopByHopHeaders &&
+                        lowerKey != HttpHeaders.ContentLength.lowercase() &&
+                        lowerKey != authProxyHeader
+                    ) {
                         appendAll(key, values)
                     }
                     }
@@ -141,6 +145,9 @@ class SimpleReverseProxy(
                     append("X-Forwarded-Host", call.request.host())
                     append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
                     append("X-Forwarded-For", call.request.origin.remoteHost)
+                    if (matchedRule == "grafana" && isLocalNetworkIp(remote)) {
+                        append("X-WEBAUTH-USER", "x")
+                    }
                 }
 
                 val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
@@ -303,6 +310,11 @@ class SimpleReverseProxy(
             return "BOT_UA" to 2
         }
         return null
+    }
+
+    private fun isLocalNetworkIp(ip: String): Boolean {
+        if (ip == "127.0.0.1" || ip == "::1") return true
+        return ip.startsWith("192.168.1.")
     }
 
     private fun isIllegalQuery(e: Exception): Boolean {
