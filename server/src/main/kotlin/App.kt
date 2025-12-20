@@ -2,6 +2,7 @@ package net.sdfgsdfg
 
 import io.ktor.http.Url
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.log
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.embeddedServer
@@ -10,7 +11,10 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.webSocket
 import io.ktor.server.request.host
+import io.ktor.server.request.uri
+import io.ktor.server.plugins.origin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -18,10 +22,18 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.joinAll
 import proxy.SimpleReverseProxy
 import proxy.HostRouter
 import proxy.HostRule
 import kotlin.time.Duration.Companion.seconds
+import io.ktor.client.request.headers
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.close
+import java.nio.file.Files
+import java.nio.file.Paths
 
 fun main() {
     // TODO: DB ( Exposed - best for Ktor - NextJS duo )
@@ -83,6 +95,51 @@ private fun Application.routes() = routing {
     githubWebhookRoute()
 
     // [ Reverse Proxy ] -->  Next.js @ :3000
+    webSocket("/api/live/ws") {
+        if (call.request.host().lowercase() != "x.sdfgsdfg.net") {
+            close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "host not allowed"))
+            return@webSocket
+        }
+
+        val requestUri = call.request.uri
+        val targetUrl = "ws://127.0.0.1:3300$requestUri"
+        val remoteIp = resolveGrafanaClientIp(call)
+
+        val clientSession = this
+        wsClient.webSocket(urlString = targetUrl, request = {
+            headers {
+                listOf("Cookie", "Authorization", "Origin", "User-Agent").forEach { header ->
+                    call.request.headers[header]?.let { value ->
+                        append(header, value)
+                    }
+                }
+                if (isTrustedGrafanaIp(remoteIp)) {
+                    append("X-WEBAUTH-USER", "x")
+                }
+            }
+        }) {
+            val upstream = this
+
+            val toUpstream = launch {
+                for (frame in clientSession.incoming) {
+                    upstream.send(frame)
+                }
+            }
+            val toClient = launch {
+                for (frame in upstream.incoming) {
+                    clientSession.send(frame)
+                }
+            }
+
+            try {
+                joinAll(toUpstream, toClient)
+            } finally {
+                toUpstream.cancelAndJoin()
+                toClient.cancelAndJoin()
+            }
+        }
+    }
+
     route("/{...}") {
         handle {
             hostRouter.proxy(call)
@@ -109,4 +166,40 @@ private fun Application.analytics() {
 
 private fun Application.db() {
     RequestEvents.init()
+}
+
+private val grafanaPublicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
+private const val grafanaIpCacheTtlMs = 30_000L
+@Volatile private var grafanaIpCache: String? = null
+@Volatile private var grafanaIpCacheAtMs: Long = 0
+
+private fun resolveGrafanaClientIp(call: ApplicationCall): String {
+    val cf = call.request.headers["CF-Connecting-IP"]
+    if (!cf.isNullOrBlank()) return cf
+    val forwarded = call.request.headers["X-Forwarded-For"]
+        ?.split(',')
+        ?.firstOrNull()
+        ?.trim()
+    if (!forwarded.isNullOrBlank()) return forwarded
+    return call.request.origin.remoteHost
+}
+
+private fun isTrustedGrafanaIp(ip: String): Boolean {
+    if (ip == "127.0.0.1" || ip == "::1") return true
+    if (ip.startsWith("192.168.1.")) return true
+    val publicIp = currentGrafanaPublicIp()
+    return publicIp != null && ip == publicIp
+}
+
+private fun currentGrafanaPublicIp(): String? {
+    val now = System.currentTimeMillis()
+    val cached = grafanaIpCache
+    if (cached != null && now - grafanaIpCacheAtMs < grafanaIpCacheTtlMs) return cached
+    val ip = runCatching { Files.readString(grafanaPublicIpFile).trim() }.getOrNull()
+        ?.takeIf { it.isNotBlank() }
+    if (ip != null) {
+        grafanaIpCache = ip
+        grafanaIpCacheAtMs = now
+    }
+    return ip
 }

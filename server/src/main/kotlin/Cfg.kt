@@ -2,6 +2,8 @@ package net.sdfgsdfg
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.apache.Apache
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
@@ -33,6 +35,10 @@ val httpClient = HttpClient(Apache) {
         requestTimeoutMillis = 7500
         connectTimeoutMillis = 5000
     }
+}
+
+val wsClient = HttpClient(CIO) {
+    install(ClientWebSockets)
 }
 
 private val RequestEventPlugin = createApplicationPlugin("RequestEventPlugin") {

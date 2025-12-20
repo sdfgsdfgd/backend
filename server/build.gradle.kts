@@ -50,6 +50,8 @@ dependencies {
     implementation(libs.ktor.server.auth)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.apache)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.websockets)
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.cors)
