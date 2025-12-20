@@ -29,6 +29,7 @@ import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import org.slf4j.LoggerFactory
 import java.net.URISyntaxException
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicInteger
@@ -41,7 +42,8 @@ class SimpleReverseProxy(
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
     private val publicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
     private val publicIpCacheTtlMs = 30_000L
-    @Volatile private var publicIpCache: String? = null
+    @Volatile private var publicIpv4Cache: String? = null
+    @Volatile private var publicIpv6Cache: String? = null
     @Volatile private var publicIpCacheAtMs: Long = 0
 
     /**
@@ -321,21 +323,51 @@ class SimpleReverseProxy(
     private fun isTrustedIp(ip: String): Boolean {
         if (ip == "127.0.0.1" || ip == "::1") return true
         if (ip.startsWith("192.168.1.")) return true
-        val publicIp = currentPublicIp()
-        return publicIp != null && ip == publicIp
+        val (ipv4, ipv6) = currentPublicIps()
+        return if (ip.contains(":")) {
+            ipv6 != null && sameIpv6Prefix64(ip, ipv6)
+        } else {
+            ipv4 != null && ip == ipv4
+        }
     }
 
-    private fun currentPublicIp(): String? {
+    private fun currentPublicIps(): Pair<String?, String?> {
         val now = System.currentTimeMillis()
-        val cached = publicIpCache
-        if (cached != null && now - publicIpCacheAtMs < publicIpCacheTtlMs) return cached
-        val ip = runCatching { Files.readString(publicIpFile).trim() }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-        if (ip != null) {
-            publicIpCache = ip
+        if (now - publicIpCacheAtMs < publicIpCacheTtlMs) {
+            return publicIpv4Cache to publicIpv6Cache
+        }
+        val raw = runCatching { Files.readString(publicIpFile) }.getOrNull().orEmpty()
+        var v4: String? = null
+        var v6: String? = null
+        raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .forEach { line ->
+                when {
+                    line.startsWith("ipv4=") -> v4 = line.removePrefix("ipv4=")
+                    line.startsWith("ipv6=") -> v6 = line.removePrefix("ipv6=")
+                    line.contains(":") -> v6 = line
+                    line.count { it == '.' } == 3 -> v4 = line
+                }
+            }
+        if (v4 != null || v6 != null) {
+            publicIpv4Cache = v4
+            publicIpv6Cache = v6
             publicIpCacheAtMs = now
         }
-        return ip
+        return v4 to v6
+    }
+
+    private fun sameIpv6Prefix64(left: String, right: String): Boolean {
+        val leftAddr = runCatching { InetAddress.getByName(left) }.getOrNull()
+        val rightAddr = runCatching { InetAddress.getByName(right) }.getOrNull()
+        val leftBytes = leftAddr?.address ?: return false
+        val rightBytes = rightAddr?.address ?: return false
+        if (leftBytes.size != 16 || rightBytes.size != 16) return false
+        for (i in 0 until 8) {
+            if (leftBytes[i] != rightBytes[i]) return false
+        }
+        return true
     }
 
     private fun isIllegalQuery(e: Exception): Boolean {
