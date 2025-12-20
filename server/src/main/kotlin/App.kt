@@ -106,7 +106,9 @@ private fun Application.routes() = routing {
         val targetUrl = "ws://127.0.0.1:3300$requestUri"
         val remoteIp = resolveGrafanaClientIp(call)
 
+        val serverCall = call
         val clientSession = this
+        val trusted = isTrustedGrafanaIp(remoteIp)
         wsClient.webSocket(urlString = targetUrl, request = {
             headers {
                 listOf("Cookie", "Authorization", "Origin", "User-Agent").forEach { header ->
@@ -122,11 +124,12 @@ private fun Application.routes() = routing {
                 append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
                 append("X-Forwarded-For", remoteIp)
                 append("X-Real-IP", remoteIp)
-                if (isTrustedGrafanaIp(remoteIp)) {
+                if (trusted) {
                     append("X-WEBAUTH-USER", "x")
                 }
             }
         }) {
+            serverCall.application.log.info("Grafana WS connected: remote={} trusted={}", remoteIp, trusted)
             val upstream = this
 
             val toUpstream = launch {
