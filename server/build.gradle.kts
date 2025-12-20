@@ -55,6 +55,13 @@ dependencies {
     implementation(libs.ktor.server.cors)
     implementation(libs.logback.classic)
     implementation(libs.kotlinx.atomicfu) // atomic operations
+    implementation(libs.exposed.core)
+    implementation(libs.exposed.jdbc)
+    implementation(libs.exposed.java.time)
+    implementation(libs.hikari)
+    implementation(libs.flyway.core)
+    implementation(libs.flyway.postgresql)
+    implementation(libs.postgresql)
 
     // [ gRPC ]
     implementation(libs.kotlinx.rpc.krpc.ktor.server)

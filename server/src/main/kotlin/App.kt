@@ -43,6 +43,7 @@ fun main() {
 // ---[ ModuleS ]----- //
 fun Application.module() {
     cfg()
+    db()
     routes()
     analytics()
 }
@@ -53,6 +54,11 @@ private fun Application.routes() = routing {
     val hostRouter = HostRouter(
         httpClient = httpClient,
         rules = listOf(
+            HostRule(
+                hosts = setOf("x.sdfgsdfg.net"),
+                target = Url("http://127.0.0.1:3300"),
+                name = "grafana"
+            ),
             HostRule(
                 hosts = setOf("leospecial.com", "www.leospecial.com"),
                 target = Url("http://localhost:3001")
@@ -99,4 +105,8 @@ private fun Application.analytics() {
             delay(30.seconds)
         }
     }
+}
+
+private fun Application.db() {
+    RequestEvents.init()
 }
