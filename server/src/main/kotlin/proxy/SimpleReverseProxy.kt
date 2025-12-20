@@ -67,9 +67,57 @@ class SimpleReverseProxy(
         val rawQuery = call.request.queryString().takeIf { it.isNotBlank() }
         val ua = call.request.headers[HttpHeaders.UserAgent]
         val remote = resolveClientIp(call)
+        val countryCode = call.request.headers["CF-IPCountry"]
+            ?.takeIf { it.isNotBlank() && it != "XX" }
         val suspicion = detectSuspicious(rawQuery, ua)
         val suspiciousReason = suspicion?.first
         val suspiciousSeverity = suspicion?.second
+        val trusted = isTrustedIp(remote)
+        val allowlisted = RequestEvents.isAllowlisted(remote)
+        if (!trusted && !allowlisted && RequestEvents.isBlacklisted(remote)) {
+            RequestEvents.blacklist(remote, reason = null, countryCode = null)
+            val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+            RequestEvents.record(
+                ip = remote,
+                host = host,
+                method = methodValue,
+                path = path,
+                rawQuery = rawQuery,
+                status = HttpStatusCode.Forbidden.value,
+                latencyMs = elapsedMs.toInt(),
+                ua = ua,
+                matchedRule = matchedRule,
+                requestId = requestId.toString(),
+                suspiciousReason = "BLACKLISTED",
+                severity = 4
+            )
+            call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+            return
+        }
+        if (!trusted && !allowlisted) {
+            val exploitReason = detectExploitPath(path)
+            if (suspiciousReason == "BOT_UA" || exploitReason != null) {
+                val reason = exploitReason ?: "BOT_UA"
+                RequestEvents.blacklist(remote, reason = reason, countryCode = countryCode)
+                val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+                RequestEvents.record(
+                    ip = remote,
+                    host = host,
+                    method = methodValue,
+                    path = path,
+                    rawQuery = rawQuery,
+                    status = HttpStatusCode.Forbidden.value,
+                    latencyMs = elapsedMs.toInt(),
+                    ua = ua,
+                    matchedRule = matchedRule,
+                    requestId = requestId.toString(),
+                    suspiciousReason = reason,
+                    severity = 4
+                )
+                call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+                return
+            }
+        }
         val proxiedUrl = try {
             URLBuilder(targetBaseUrl).apply {
                 encodedPath = encodedPath.trimEnd('/') + path
@@ -79,6 +127,9 @@ class SimpleReverseProxy(
             }.build()
         } catch (e: Exception) {
             if (isIllegalQuery(e)) {
+                if (!trusted && !allowlisted) {
+                    RequestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
+                }
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
                 RequestEvents.record(
                     ip = remote,
@@ -168,6 +219,9 @@ class SimpleReverseProxy(
         } catch (e: Exception) {
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
             if (isIllegalQuery(e)) {
+                if (!trusted && !allowlisted) {
+                    RequestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
+                }
                 RequestEvents.record(
                     ip = remote,
                     host = host,
@@ -317,6 +371,16 @@ class SimpleReverseProxy(
         ) {
             return "BOT_UA" to 2
         }
+        return null
+    }
+
+    private fun detectExploitPath(path: String): String? {
+        val p = path.lowercase()
+        if (p.contains("/wp-") || p.startsWith("/wp-")) return "EXPLOIT_PATH"
+        if (p.contains("/.env")) return "EXPLOIT_PATH"
+        if (p.contains("/cgi-bin")) return "EXPLOIT_PATH"
+        if (p.contains("/phpmyadmin")) return "EXPLOIT_PATH"
+        if (p.contains("/.git")) return "EXPLOIT_PATH"
         return null
     }
 

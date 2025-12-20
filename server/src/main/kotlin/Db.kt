@@ -13,9 +13,13 @@ import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.Transaction
 import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.javatime.timestampWithTimeZone
+import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 import java.time.YearMonth
@@ -111,6 +115,63 @@ object RequestEvents {
         }
     }
 
+    fun isBlacklisted(ip: String): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            transaction {
+                IpBlacklistTable.select { IpBlacklistTable.ip eq ip }
+                    .limit(1)
+                    .count() > 0
+            }
+        }.getOrDefault(false)
+    }
+
+    fun isAllowlisted(ip: String): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            transaction {
+                IpAllowlistTable.select { IpAllowlistTable.ip eq ip }
+                    .limit(1)
+                    .count() > 0
+            }
+        }.getOrDefault(false)
+    }
+
+    fun blacklist(
+        ip: String,
+        reason: String?,
+        countryCode: String?,
+        async: Boolean = true
+    ) {
+        if (!initialized || ip.isBlank()) return
+        if (async) {
+            scope.launch {
+                runCatching { upsertBlacklist(ip, reason, countryCode) }
+                    .onFailure { err -> logger.warn("Failed to update blacklist.", err) }
+            }
+        } else {
+            runCatching { upsertBlacklist(ip, reason, countryCode) }
+                .onFailure { err -> logger.warn("Failed to update blacklist.", err) }
+        }
+    }
+
+    fun allowlist(
+        ip: String,
+        note: String?,
+        async: Boolean = true
+    ) {
+        if (!initialized || ip.isBlank()) return
+        if (async) {
+            scope.launch {
+                runCatching { upsertAllowlist(ip, note) }
+                    .onFailure { err -> logger.warn("Failed to update allowlist.", err) }
+            }
+        } else {
+            runCatching { upsertAllowlist(ip, note) }
+                .onFailure { err -> logger.warn("Failed to update allowlist.", err) }
+        }
+    }
+
     private fun startMaintenanceLoop() {
         if (maintenanceStarted) return
         maintenanceStarted = true
@@ -181,6 +242,45 @@ object RequestEvents {
             exec("DELETE FROM request_event_default WHERE ts < now() - interval '${RETENTION_MONTHS} months'")
         }
     }
+
+    private fun upsertBlacklist(ip: String, reason: String?, countryCode: String?) {
+        transaction {
+            val sql = """
+                INSERT INTO ip_blacklist (ip, reason, country_code, first_seen, last_seen, hits)
+                VALUES (?, ?, ?, now(), now(), 1)
+                ON CONFLICT (ip) DO UPDATE SET
+                    last_seen = now(),
+                    hits = ip_blacklist.hits + 1,
+                    reason = COALESCE(EXCLUDED.reason, ip_blacklist.reason),
+                    country_code = COALESCE(ip_blacklist.country_code, EXCLUDED.country_code);
+            """.trimIndent()
+            TransactionManager.current().connection.prepareStatement(sql, false).apply {
+                setString(1, ip)
+                setString(2, reason)
+                setString(3, countryCode)
+                executeUpdate()
+                close()
+            }
+        }
+    }
+
+    private fun upsertAllowlist(ip: String, note: String?) {
+        transaction {
+            val insertSql = """
+                INSERT INTO ip_allowlist (ip, note, created_at)
+                VALUES (?, ?, now())
+                ON CONFLICT (ip) DO UPDATE SET
+                    note = COALESCE(EXCLUDED.note, ip_allowlist.note);
+            """.trimIndent()
+            TransactionManager.current().connection.prepareStatement(insertSql, false).apply {
+                setString(1, ip)
+                setString(2, note)
+                executeUpdate()
+                close()
+            }
+            IpBlacklistTable.deleteWhere { IpBlacklistTable.ip eq ip }
+        }
+    }
 }
 
 object RequestEventTable : Table("request_event") {
@@ -200,4 +300,21 @@ object RequestEventTable : Table("request_event") {
     val severity = integer("severity").nullable()
 
     override val primaryKey = PrimaryKey(id, ts)
+}
+
+object IpBlacklistTable : Table("ip_blacklist") {
+    val ip = text("ip")
+    val reason = text("reason").nullable()
+    val countryCode = text("country_code").nullable()
+    val firstSeen = timestampWithTimeZone("first_seen")
+    val lastSeen = timestampWithTimeZone("last_seen")
+    val hits = long("hits")
+    override val primaryKey = PrimaryKey(ip)
+}
+
+object IpAllowlistTable : Table("ip_allowlist") {
+    val ip = text("ip")
+    val note = text("note").nullable()
+    val createdAt = timestampWithTimeZone("created_at")
+    override val primaryKey = PrimaryKey(ip)
 }

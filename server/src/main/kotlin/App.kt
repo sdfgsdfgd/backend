@@ -1,6 +1,7 @@
 package net.sdfgsdfg
 
 import io.ktor.http.Url
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.log
@@ -83,6 +84,39 @@ private fun Application.routes() = routing {
         ),
         defaultTarget = Url("http://localhost:3000")
     )
+
+    get("/admin/ip/blacklist") {
+        val requesterIp = resolveGrafanaClientIp(call)
+        if (!isTrustedGrafanaIp(requesterIp)) {
+            call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+            return@get
+        }
+        val ip = call.request.queryParameters["ip"]?.trim()
+        if (ip.isNullOrBlank()) {
+            call.respondText("Missing ip", status = HttpStatusCode.BadRequest)
+            return@get
+        }
+        val reason = call.request.queryParameters["reason"]?.trim()?.take(200)
+        val country = call.request.queryParameters["country"]?.trim()?.take(2)?.uppercase()
+        RequestEvents.blacklist(ip, reason ?: "manual", country, async = false)
+        call.respondText("OK")
+    }
+
+    get("/admin/ip/allowlist") {
+        val requesterIp = resolveGrafanaClientIp(call)
+        if (!isTrustedGrafanaIp(requesterIp)) {
+            call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+            return@get
+        }
+        val ip = call.request.queryParameters["ip"]?.trim()
+        if (ip.isNullOrBlank()) {
+            call.respondText("Missing ip", status = HttpStatusCode.BadRequest)
+            return@get
+        }
+        val note = call.request.queryParameters["note"]?.trim()?.take(200)
+        RequestEvents.allowlist(ip, note, async = false)
+        call.respondText("OK")
+    }
 
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
