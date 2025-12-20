@@ -25,6 +25,7 @@ import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 
 val httpClient = HttpClient(Apache) {
+    followRedirects = false
     engine {
         followRedirects = false
     }
