@@ -29,6 +29,8 @@ import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import org.slf4j.LoggerFactory
 import java.net.URISyntaxException
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicInteger
 
 class SimpleReverseProxy(
@@ -37,6 +39,10 @@ class SimpleReverseProxy(
 ) {
     private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
+    private val publicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
+    private val publicIpCacheTtlMs = 30_000L
+    @Volatile private var publicIpCache: String? = null
+    @Volatile private var publicIpCacheAtMs: Long = 0
 
     /**
      * Hop-by-hop headers (per RFC 2616 section 13.5.1)
@@ -145,7 +151,7 @@ class SimpleReverseProxy(
                     append("X-Forwarded-Host", call.request.host())
                     append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
                     append("X-Forwarded-For", call.request.origin.remoteHost)
-                    if (matchedRule == "grafana" && isLocalNetworkIp(remote)) {
+                    if (matchedRule == "grafana" && isTrustedIp(remote)) {
                         append("X-WEBAUTH-USER", "x")
                     }
                 }
@@ -312,9 +318,24 @@ class SimpleReverseProxy(
         return null
     }
 
-    private fun isLocalNetworkIp(ip: String): Boolean {
+    private fun isTrustedIp(ip: String): Boolean {
         if (ip == "127.0.0.1" || ip == "::1") return true
-        return ip.startsWith("192.168.1.")
+        if (ip.startsWith("192.168.1.")) return true
+        val publicIp = currentPublicIp()
+        return publicIp != null && ip == publicIp
+    }
+
+    private fun currentPublicIp(): String? {
+        val now = System.currentTimeMillis()
+        val cached = publicIpCache
+        if (cached != null && now - publicIpCacheAtMs < publicIpCacheTtlMs) return cached
+        val ip = runCatching { Files.readString(publicIpFile).trim() }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        if (ip != null) {
+            publicIpCache = ip
+            publicIpCacheAtMs = now
+        }
+        return ip
     }
 
     private fun isIllegalQuery(e: Exception): Boolean {
