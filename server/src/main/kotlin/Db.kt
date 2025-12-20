@@ -256,8 +256,8 @@ object RequestEvents {
             """.trimIndent()
             TransactionManager.current().connection.prepareStatement(sql, false).apply {
                 set(1, ip)
-                set(2, reason)
-                set(3, countryCode)
+                if (reason == null) setNull(2, IpBlacklistTable.reason.columnType) else set(2, reason)
+                if (countryCode == null) setNull(3, IpBlacklistTable.countryCode.columnType) else set(3, countryCode)
                 executeUpdate()
                 close()
             }
@@ -274,7 +274,7 @@ object RequestEvents {
             """.trimIndent()
             TransactionManager.current().connection.prepareStatement(insertSql, false).apply {
                 set(1, ip)
-                set(2, note)
+                if (note == null) setNull(2, IpAllowlistTable.note.columnType) else set(2, note)
                 executeUpdate()
                 close()
             }
