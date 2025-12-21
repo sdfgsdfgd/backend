@@ -25,8 +25,10 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.utils.io.copyAndClose
+import net.sdfgsdfg.clientInfo
 import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
+import net.sdfgsdfg.silentDrop
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import java.net.URISyntaxException
@@ -77,7 +79,8 @@ class SimpleReverseProxy(
         val path = call.request.path()
         val rawQuery = call.request.queryString().takeIf { it.isNotBlank() }
         val ua = call.request.headers[HttpHeaders.UserAgent]
-        val remote = resolveClientIp(call)
+        val client = call.clientInfo()
+        val remote = client.clientIp
         val countryCode = call.request.headers["CF-IPCountry"]
             ?.takeIf { it.isNotBlank() && it != "XX" }
         val suspicion = detectSuspicious(rawQuery, ua)
@@ -86,7 +89,7 @@ class SimpleReverseProxy(
         val trusted = isTrustedIp(remote)
         val allowlisted = RequestEvents.isAllowlisted(remote)
         if (!trusted && !allowlisted && RequestEvents.isBlacklisted(remote)) {
-            val (clientPlain, clientColor) = clientTag(remote, allowLookup = true)
+            val (clientPlain, clientColor) = clientTag(client, allowLookup = true)
             val plain = buildString {
                 append("[BLOCK][BLACKLISTED] ")
                 append(clientPlain).append(' ')
@@ -122,7 +125,7 @@ class SimpleReverseProxy(
                 suspiciousReason = "BLACKLISTED",
                 severity = 4
             )
-            call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+            call.silentDrop()
             return
         }
         if (!trusted && !allowlisted) {
@@ -134,7 +137,7 @@ class SimpleReverseProxy(
                     exploitReason != null -> "[BLOCK][EXPLOIT_PATH]"
                     else -> "[BLOCK][BOT_UA]"
                 }
-                val (clientPlain, clientColor) = clientTag(remote, allowLookup = true)
+                val (clientPlain, clientColor) = clientTag(client, allowLookup = true)
                 val plain = buildString {
                     append(tagBlock).append(' ')
                     append(clientPlain).append(' ')
@@ -170,7 +173,7 @@ class SimpleReverseProxy(
                     suspiciousReason = reason,
                     severity = 4
                 )
-                call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+                call.silentDrop()
                 return
             }
         }
@@ -202,7 +205,7 @@ class SimpleReverseProxy(
                     severity = 4
                 )
                 logger.warn("Blocked illegal URI: {}", originalUri, e)
-                call.respondText("Bad Request", status = HttpStatusCode.BadRequest)
+                call.silentDrop()
                 return
             }
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
@@ -225,7 +228,7 @@ class SimpleReverseProxy(
             return
         }
 
-        val (clientPlainOut, clientColorOut) = clientTag(remote, allowLookup = false)
+        val (clientPlainOut, clientColorOut) = clientTag(client, allowLookup = false)
         val proxyOutPlain = buildString {
             append("[PROXY_OUT]--> [ ").append(requestId).append(" ] ")
             append(clientPlainOut).append(' ')
@@ -271,7 +274,7 @@ class SimpleReverseProxy(
 
                     append("X-Forwarded-Host", call.request.host())
                     append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
-                    append("X-Forwarded-For", call.request.origin.remoteHost)
+                    append("X-Forwarded-For", remote)
                     if (matchedRule == "grafana" && isTrustedIp(remote)) {
                         append("X-WEBAUTH-USER", "x")
                     }
@@ -305,7 +308,7 @@ class SimpleReverseProxy(
                     severity = 4
                 )
                 logger.warn("Blocked illegal URI: {}", originalUri, e)
-                call.respondText("Bad Request", status = HttpStatusCode.BadRequest)
+                call.silentDrop()
                 return
             }
             RequestEvents.record(
@@ -329,7 +332,7 @@ class SimpleReverseProxy(
 
         val status = proxiedResponse.status
         // Log status and response headers from target
-        val (clientPlainTarget, clientColorTarget) = clientTag(remote, allowLookup = false)
+        val (clientPlainTarget, clientColorTarget) = clientTag(client, allowLookup = false)
         val targetStatusPlain = "status=${status}"
         val targetStatusColor = "status=${status.value.statusColor()}${status}${ansiReset}"
         val targetPlain = "[TARGET] $clientPlainTarget $targetStatusPlain"
@@ -372,7 +375,7 @@ class SimpleReverseProxy(
         val len = proxiedResponse.headers[HttpHeaders.ContentLength] ?: "chunked"
         val statusPlain = "status=${status.value}"
         val statusColor = status.value.statusColor()
-        val (clientPlainIn, clientColorIn) = clientTag(remote, allowLookup = status.value >= 400)
+        val (clientPlainIn, clientColorIn) = clientTag(client, allowLookup = status.value >= 400)
         val proxyInPlain = buildString {
             append("[PROXY_IN]<-- [ ").append(requestId).append(" ] ")
             append(statusPlain).append(' ')
@@ -418,17 +421,6 @@ class SimpleReverseProxy(
             suspiciousReason = suspiciousReason,
             severity = suspiciousSeverity
         )
-    }
-
-    private fun resolveClientIp(call: ApplicationCall): String {
-        val cf = call.request.headers["CF-Connecting-IP"]
-        if (!cf.isNullOrBlank()) return cf
-        val forwarded = call.request.headers["X-Forwarded-For"]
-            ?.split(',')
-            ?.firstOrNull()
-            ?.trim()
-        if (!forwarded.isNullOrBlank()) return forwarded
-        return call.request.origin.remoteHost
     }
 
     private fun detectSuspicious(rawQuery: String?, ua: String?): Pair<String, Int>? {
@@ -514,15 +506,21 @@ class SimpleReverseProxy(
         return e is URISyntaxException || e.message?.contains("Illegal character in query", ignoreCase = true) == true
     }
 
-    private fun clientTag(ip: String, allowLookup: Boolean): Pair<String, String> {
-        val rdns = cachedRdns(ip, allowLookup)
+    private fun clientTag(info: net.sdfgsdfg.ClientInfo, allowLookup: Boolean): Pair<String, String> {
+        val rdns = cachedRdns(info.clientIp, allowLookup)
         val plain = buildString {
-            append("[CLIENT] ip=").append(ip)
-            if (!rdns.isNullOrBlank() && rdns != ip) append(" rdns=").append(rdns)
+            append("[CLIENT] ip=").append(info.clientIp)
+            append(" remote=").append(info.remoteIp)
+            info.cfIp?.let { append(" cf=").append(it) }
+            append(" src=").append(info.source)
+            if (!rdns.isNullOrBlank() && rdns != info.clientIp) append(" rdns=").append(rdns)
         }
         val color = buildString {
-            append("${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}").append(ip).append(ansiReset)
-            if (!rdns.isNullOrBlank() && rdns != ip) append(" rdns=${ansiDim}").append(rdns).append(ansiReset)
+            append("${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}").append(info.clientIp).append(ansiReset)
+            append(" remote=${ansiDim}").append(info.remoteIp).append(ansiReset)
+            info.cfIp?.let { append(" cf=${ansiDim}").append(it).append(ansiReset) }
+            append(" src=${ansiDim}").append(info.source).append(ansiReset)
+            if (!rdns.isNullOrBlank() && rdns != info.clientIp) append(" rdns=${ansiDim}").append(rdns).append(ansiReset)
         }
         return plain to color
     }

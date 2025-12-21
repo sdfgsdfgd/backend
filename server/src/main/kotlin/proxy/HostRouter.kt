@@ -3,9 +3,9 @@ package proxy
 import io.ktor.client.HttpClient
 import io.ktor.http.Url
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.plugins.origin
 import io.ktor.server.request.host
 import io.ktor.server.request.uri
+import net.sdfgsdfg.clientInfo
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 
@@ -43,7 +43,7 @@ class HostRouter(
         val hostHeader = call.request.host().lowercase()
         val matchedRule = normalizedRules.firstOrNull { hostHeader in it.hosts }
         val target = matchedRule?.target ?: defaultTarget
-        val (clientPlain, clientColor) = clientTag(resolveClientIp(call))
+        val (clientPlain, clientColor) = clientTag(call.clientInfo())
         val plain = buildString {
             append("[ROUTE] ").append(clientPlain).append(' ')
             append("Routing ")
@@ -67,20 +67,19 @@ class HostRouter(
         proxies.getValue(target).proxy(call, hostHeader, matchedRule?.name ?: "default")
     }
 
-    private fun resolveClientIp(call: ApplicationCall): String {
-        val cf = call.request.headers["CF-Connecting-IP"]
-        if (!cf.isNullOrBlank()) return cf
-        val forwarded = call.request.headers["X-Forwarded-For"]
-            ?.split(',')
-            ?.firstOrNull()
-            ?.trim()
-        if (!forwarded.isNullOrBlank()) return forwarded
-        return call.request.origin.remoteHost
-    }
-
-    private fun clientTag(ip: String): Pair<String, String> {
-        val plain = "[CLIENT] ip=$ip"
-        val color = "${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}$ip${ansiReset}"
+    private fun clientTag(info: net.sdfgsdfg.ClientInfo): Pair<String, String> {
+        val plain = buildString {
+            append("[CLIENT] ip=").append(info.clientIp)
+            append(" remote=").append(info.remoteIp)
+            info.cfIp?.let { append(" cf=").append(it) }
+            append(" src=").append(info.source)
+        }
+        val color = buildString {
+            append("${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}").append(info.clientIp).append(ansiReset)
+            append(" remote=${ansiDim}").append(info.remoteIp).append(ansiReset)
+            info.cfIp?.let { append(" cf=${ansiDim}").append(it).append(ansiReset) }
+            append(" src=${ansiDim}").append(info.source).append(ansiReset)
+        }
         return plain to color
     }
 

@@ -3,7 +3,6 @@ package net.sdfgsdfg
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.log
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.embeddedServer
@@ -14,8 +13,8 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.webSocket
 import io.ktor.server.request.host
-import io.ktor.server.request.uri
 import io.ktor.server.plugins.origin
+import io.ktor.server.request.uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -86,7 +85,7 @@ private fun Application.routes() = routing {
     )
 
     get("/admin/ip/blacklist") {
-        val requesterIp = resolveGrafanaClientIp(call)
+        val requesterIp = call.clientInfo().clientIp
         if (!isTrustedGrafanaIp(requesterIp)) {
             call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
             return@get
@@ -103,7 +102,7 @@ private fun Application.routes() = routing {
     }
 
     get("/admin/ip/allowlist") {
-        val requesterIp = resolveGrafanaClientIp(call)
+        val requesterIp = call.clientInfo().clientIp
         if (!isTrustedGrafanaIp(requesterIp)) {
             call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
             return@get
@@ -138,7 +137,7 @@ private fun Application.routes() = routing {
 
         val requestUri = call.request.uri
         val targetUrl = "ws://127.0.0.1:3300$requestUri"
-        val remoteIp = resolveGrafanaClientIp(call)
+        val remoteIp = call.clientInfo().clientIp
 
         val serverCall = call
         val clientSession = this
@@ -219,17 +218,6 @@ private const val grafanaIpCacheTtlMs = 30_000L
 @Volatile private var grafanaIpv4Cache: String? = null
 @Volatile private var grafanaIpv6Cache: String? = null
 @Volatile private var grafanaIpCacheAtMs: Long = 0
-
-private fun resolveGrafanaClientIp(call: ApplicationCall): String {
-    val cf = call.request.headers["CF-Connecting-IP"]
-    if (!cf.isNullOrBlank()) return cf
-    val forwarded = call.request.headers["X-Forwarded-For"]
-        ?.split(',')
-        ?.firstOrNull()
-        ?.trim()
-    if (!forwarded.isNullOrBlank()) return forwarded
-    return call.request.origin.remoteHost
-}
 
 private fun isTrustedGrafanaIp(ip: String): Boolean {
     if (ip == "127.0.0.1" || ip == "::1") return true

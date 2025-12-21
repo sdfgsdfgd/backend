@@ -10,10 +10,8 @@ import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
-import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.response.respond
@@ -53,8 +51,9 @@ private val RequestEventPlugin = createApplicationPlugin("RequestEventPlugin") {
         val rawQuery = call.request.queryString().takeIf { it.isNotBlank() }
         val ua = call.request.headers[HttpHeaders.UserAgent]
         val suspicion = detectSuspicious(rawQuery, ua)
+        val client = call.clientInfo()
         RequestEvents.record(
-            ip = resolveClientIp(call),
+            ip = client.clientIp,
             host = call.request.host(),
             method = call.request.httpMethod.value,
             path = call.request.path(),
@@ -106,6 +105,7 @@ fun Application.cfg() {
     }
 
     install(RequestEventPlugin)
+    installEdgeGatekeeper()
 
     routing {
         get("/example") {
@@ -120,17 +120,6 @@ fun Application.cfg() {
             )
         }
     }
-}
-
-private fun resolveClientIp(call: ApplicationCall): String {
-    val cf = call.request.headers["CF-Connecting-IP"]
-    if (!cf.isNullOrBlank()) return cf
-    val forwarded = call.request.headers["X-Forwarded-For"]
-        ?.split(',')
-        ?.firstOrNull()
-        ?.trim()
-    if (!forwarded.isNullOrBlank()) return forwarded
-    return call.request.origin.remoteHost
 }
 
 private fun detectSuspicious(rawQuery: String?, ua: String?): Pair<String, Int>? {
