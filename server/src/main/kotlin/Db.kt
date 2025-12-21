@@ -119,6 +119,7 @@ object RequestEvents {
         if (!initialized) return false
         return runCatching {
             transaction {
+                @Suppress("DEPRECATION")
                 IpBlacklistTable.select { IpBlacklistTable.ip eq ip }
                     .limit(1)
                     .count() > 0
@@ -130,6 +131,7 @@ object RequestEvents {
         if (!initialized) return false
         return runCatching {
             transaction {
+                @Suppress("DEPRECATION")
                 IpAllowlistTable.select { IpAllowlistTable.ip eq ip }
                     .limit(1)
                     .count() > 0

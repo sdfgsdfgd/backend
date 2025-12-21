@@ -28,10 +28,12 @@ import io.ktor.utils.io.copyAndClose
 import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import java.net.URISyntaxException
 import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 class SimpleReverseProxy(
@@ -40,11 +42,20 @@ class SimpleReverseProxy(
 ) {
     private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
+    private val ansiRed = "\u001B[31m"
+    private val ansiGreen = "\u001B[32m"
+    private val ansiYellow = "\u001B[33m"
+    private val ansiBlue = "\u001B[34m"
+    private val ansiCyan = "\u001B[36m"
+    private val ansiDim = "\u001B[2m"
+    private val ansiReset = "\u001B[0m"
     private val publicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
     private val publicIpCacheTtlMs = 30_000L
     @Volatile private var publicIpv4Cache: String? = null
     @Volatile private var publicIpv6Cache: String? = null
     @Volatile private var publicIpCacheAtMs: Long = 0
+    private val rdnsCache = ConcurrentHashMap<String, Pair<Long, String?>>()
+    private val rdnsCacheTtlMs = 10 * 60 * 1000L
 
     /**
      * Hop-by-hop headers (per RFC 2616 section 13.5.1)
@@ -75,6 +86,26 @@ class SimpleReverseProxy(
         val trusted = isTrustedIp(remote)
         val allowlisted = RequestEvents.isAllowlisted(remote)
         if (!trusted && !allowlisted && RequestEvents.isBlacklisted(remote)) {
+            val (clientPlain, clientColor) = clientTag(remote, allowLookup = true)
+            val plain = buildString {
+                append("[BLOCK][BLACKLISTED] ")
+                append(clientPlain).append(' ')
+                append("host".kv(host)).append(' ')
+                append("method".kv(methodValue, quote = false)).append(' ')
+                append("path".kv(path)).append(' ')
+                append("matched".kv(matchedRule ?: "default")).append(' ')
+                append("ua".kv(ua ?: "-"))
+            }
+            val color = buildString {
+                append("${ansiRed}[BLOCK][BLACKLISTED]${ansiReset} ")
+                append(clientColor).append(' ')
+                append("host".kvDim(host)).append(' ')
+                append("method".kvDim(methodValue, quote = false)).append(' ')
+                append("path".kvDim(path)).append(' ')
+                append("matched".kvDim(matchedRule ?: "default")).append(' ')
+                append("ua".kvDim(ua ?: "-"))
+            }
+            log(plain, color, warn = true)
             RequestEvents.blacklist(remote, reason = null, countryCode = null)
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
             RequestEvents.record(
@@ -98,6 +129,31 @@ class SimpleReverseProxy(
             val exploitReason = detectExploitPath(path)
             if (suspiciousReason == "BOT_UA" || exploitReason != null) {
                 val reason = exploitReason ?: "BOT_UA"
+                val tagBlock = when {
+                    exploitReason != null && suspiciousReason == "BOT_UA" -> "[BLOCK][EXPLOIT_PATH][BOT_UA]"
+                    exploitReason != null -> "[BLOCK][EXPLOIT_PATH]"
+                    else -> "[BLOCK][BOT_UA]"
+                }
+                val (clientPlain, clientColor) = clientTag(remote, allowLookup = true)
+                val plain = buildString {
+                    append(tagBlock).append(' ')
+                    append(clientPlain).append(' ')
+                    append("host".kv(host)).append(' ')
+                    append("method".kv(methodValue, quote = false)).append(' ')
+                    append("path".kv(path)).append(' ')
+                    append("matched".kv(matchedRule ?: "default")).append(' ')
+                    append("ua".kv(ua ?: "-"))
+                }
+                val color = buildString {
+                    append("${ansiRed}$tagBlock${ansiReset} ")
+                    append(clientColor).append(' ')
+                    append("host".kvDim(host)).append(' ')
+                    append("method".kvDim(methodValue, quote = false)).append(' ')
+                    append("path".kvDim(path)).append(' ')
+                    append("matched".kvDim(matchedRule ?: "default")).append(' ')
+                    append("ua".kvDim(ua ?: "-"))
+                }
+                log(plain, color, warn = true)
                 RequestEvents.blacklist(remote, reason = reason, countryCode = countryCode)
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
                 RequestEvents.record(
@@ -169,15 +225,27 @@ class SimpleReverseProxy(
             return
         }
 
-        logger.info(
-            "--> [ {} ] host='{}' matched='{}' method={} uri='{}' -> {}",
-            requestId,
-            host,
-            matchedRule ?: "default",
-            methodValue,
-            originalUri,
-            proxiedUrl
-        )
+        val (clientPlainOut, clientColorOut) = clientTag(remote, allowLookup = false)
+        val proxyOutPlain = buildString {
+            append("[PROXY_OUT]--> [ ").append(requestId).append(" ] ")
+            append(clientPlainOut).append(' ')
+            append("host".kv(host)).append(' ')
+            append("matched".kv(matchedRule ?: "default")).append(' ')
+            append("method".kv(methodValue, quote = false)).append(' ')
+            append("uri".kv(originalUri)).append(' ')
+            append("target".kv(proxiedUrl.toString()))
+        }
+        val proxyOutColor = buildString {
+            append("${ansiRed}[PROXY_OUT]-->${ansiReset} [ ${ansiDim}").append(requestId)
+                .append("${ansiReset} ] ")
+            append(clientColorOut).append(' ')
+            append("host".kvDim(host)).append(' ')
+            append("matched".kvDim(matchedRule ?: "default")).append(' ')
+            append("method".kvDim(methodValue, quote = false)).append(' ')
+            append("uri".kvDim(originalUri)).append(' ')
+            append("target".kvDim(proxiedUrl.toString()))
+        }
+        log(proxyOutPlain, proxyOutColor)
         call.request.headers.forEach { key, values ->
             logger.debug("Incoming header: {} -> {}", key, values)
         }
@@ -261,7 +329,12 @@ class SimpleReverseProxy(
 
         val status = proxiedResponse.status
         // Log status and response headers from target
-        logger.info("Received response from target: {}", status)
+        val (clientPlainTarget, clientColorTarget) = clientTag(remote, allowLookup = false)
+        val targetStatusPlain = "status=${status}"
+        val targetStatusColor = "status=${status.value.statusColor()}${status}${ansiReset}"
+        val targetPlain = "[TARGET] $clientPlainTarget $targetStatusPlain"
+        val targetColor = "${ansiBlue}[TARGET]${ansiReset} $clientColorTarget $targetStatusColor"
+        log(targetPlain, targetColor)
         proxiedResponse.headers.forEach { key, values ->
             logger.debug("Response header from Next.js: {} -> {}", key, values)
         }
@@ -297,35 +370,38 @@ class SimpleReverseProxy(
 
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
         val len = proxiedResponse.headers[HttpHeaders.ContentLength] ?: "chunked"
-        val uaLog = ua ?: "-"
+        val statusPlain = "status=${status.value}"
+        val statusColor = status.value.statusColor()
+        val (clientPlainIn, clientColorIn) = clientTag(remote, allowLookup = status.value >= 400)
+        val proxyInPlain = buildString {
+            append("[PROXY_IN]<-- [ ").append(requestId).append(" ] ")
+            append(statusPlain).append(' ')
+            append(clientPlainIn).append(' ')
+            append("host".kv(host)).append(' ')
+            append("matched".kv(matchedRule ?: "default")).append(' ')
+            append("method".kv(methodValue, quote = false)).append(' ')
+            append("uri".kv(originalUri)).append(' ')
+            append("len".kv(len, quote = false)).append(' ')
+            append("elapsed".kv("${elapsedMs}ms", quote = false)).append(' ')
+            append("ua".kv(ua ?: "-"))
+        }
+        val proxyInColor = buildString {
+            append("${ansiGreen}[PROXY_IN]<--${ansiReset} [ ${ansiDim}").append(requestId)
+                .append("${ansiReset} ] ")
+            append("status=${statusColor}").append(status.value).append(ansiReset).append(' ')
+            append(clientColorIn).append(' ')
+            append("host".kvDim(host)).append(' ')
+            append("matched".kvDim(matchedRule ?: "default")).append(' ')
+            append("method".kvDim(methodValue, quote = false)).append(' ')
+            append("uri".kvDim(originalUri)).append(' ')
+            append("len".kvDim(len, quote = false)).append(' ')
+            append("elapsed".kvDim("${elapsedMs}ms", quote = false)).append(' ')
+            append("ua".kvDim(ua ?: "-"))
+        }
         if (status.value >= 400) {
-            logger.warn(
-                "<-- [ {} ] host='{}' matched='{}' method={} uri='{}' status={} len={} elapsed={}ms remote={} ua='{}'",
-                requestId,
-                host,
-                matchedRule ?: "default",
-                methodValue,
-                originalUri,
-                status.value,
-                len,
-                elapsedMs,
-                remote,
-                uaLog
-            )
+            log(proxyInPlain, proxyInColor, warn = true)
         } else {
-            logger.info(
-                "<-- [ {} ] host='{}' matched='{}' method={} uri='{}' status={} len={} elapsed={}ms remote={} ua='{}'",
-                requestId,
-                host,
-                matchedRule ?: "default",
-                methodValue,
-                originalUri,
-                status.value,
-                len,
-                elapsedMs,
-                remote,
-                uaLog
-            )
+            log(proxyInPlain, proxyInColor)
         }
 
         RequestEvents.record(
@@ -436,6 +512,54 @@ class SimpleReverseProxy(
 
     private fun isIllegalQuery(e: Exception): Boolean {
         return e is URISyntaxException || e.message?.contains("Illegal character in query", ignoreCase = true) == true
+    }
+
+    private fun clientTag(ip: String, allowLookup: Boolean): Pair<String, String> {
+        val rdns = cachedRdns(ip, allowLookup)
+        val plain = buildString {
+            append("[CLIENT] ip=").append(ip)
+            if (!rdns.isNullOrBlank() && rdns != ip) append(" rdns=").append(rdns)
+        }
+        val color = buildString {
+            append("${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}").append(ip).append(ansiReset)
+            if (!rdns.isNullOrBlank() && rdns != ip) append(" rdns=${ansiDim}").append(rdns).append(ansiReset)
+        }
+        return plain to color
+    }
+
+    private fun cachedRdns(ip: String, allowLookup: Boolean): String? {
+        val now = System.currentTimeMillis()
+        rdnsCache[ip]?.takeIf { now - it.first < rdnsCacheTtlMs }?.second?.let { return it }
+        if (!allowLookup) return null
+        val resolved = runCatching { InetAddress.getByName(ip).canonicalHostName }
+            .getOrNull()
+            ?.takeUnless { it.isBlank() || it == ip }
+        rdnsCache[ip] = now to resolved
+        return resolved
+    }
+
+    private fun String.kv(value: String, quote: Boolean = true): String =
+        if (quote) "$this='$value'" else "$this=$value"
+
+    private fun String.kvDim(value: String, quote: Boolean = true): String =
+        if (quote) "$this=${ansiDim}'$value'${ansiReset}" else "$this=${ansiDim}$value${ansiReset}"
+
+    private fun log(plain: String, color: String, warn: Boolean = false) {
+        MDC.put("log_prefix", plain)
+        MDC.put("log_prefix_color", color)
+        try {
+            if (warn) logger.warn("") else logger.info("")
+        } finally {
+            MDC.remove("log_prefix")
+            MDC.remove("log_prefix_color")
+        }
+    }
+
+    private fun Int.statusColor(): String = when {
+        this >= 500 -> ansiRed
+        this >= 400 -> ansiYellow
+        this >= 300 -> ansiYellow
+        else -> ansiGreen
     }
 
 }
