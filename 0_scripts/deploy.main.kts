@@ -48,7 +48,7 @@ fun findProcessId(port: Int): String? = try {
 
 // xx === Shell === xx
 // Redirect (vs inheritIO) allows to pipe ALSO to file
-fun String.shell(outputFile: File? = null): String = runCatching {
+fun String.shell(outputFile: File? = null, logCommand: Boolean = true): String = runCatching {
     val process = ProcessBuilder("bash", "-c", this).apply {
         redirectErrorStream(true)
     }.start()
@@ -70,7 +70,9 @@ fun String.shell(outputFile: File? = null): String = runCatching {
 //    val exitCode = process.waitFor()
 
     // Print raw process exit code
-    println("🔎 Shell command: $this | Exit code: $exitCode")
+    if (logCommand) {
+        println("🔎 Shell command: $this | Exit code: $exitCode")
+    }
 
     // Append output to file if needed
 //    outputFile?.appendText("$output\n")
@@ -136,12 +138,28 @@ when (cmd) {
     "stop" -> process?.let { pid ->
         runCatching {
             println("🛑 Stopping $appName (PID: $pid)...")
+            "kill -15 $pid".shell()
+
+            val timeoutMs = 20_000L
+            val pollMs = 1_000L
+            var waitedMs = 0L
+            while (waitedMs < timeoutMs) {
+                Thread.sleep(pollMs)
+                val stillRunning = "ps -p $pid -o pid=".shell().trim().isNotEmpty()
+                if (!stillRunning) {
+                    println("✅ Stopped process.")
+                    return@runCatching
+                }
+                waitedMs += pollMs
+            }
+
+            println("⚠️ Graceful stop timed out; sending SIGKILL...")
             "kill -9 $pid".shell()
+            Thread.sleep(1_000L)
+            println("✅ Stopped process.")
         }.onFailure {
             logException(it, logFile, "Failed to stop application")
             exitProcess(1)
-        }.onSuccess {
-            println("✅ Stopped process.")
         }
     } ?: println("⚠️ $appName is not running.")
 
@@ -164,19 +182,58 @@ when (cmd) {
     "deploy", "" -> runCatching {
         println("🚀 Deploying new version of $appName...")
 
-        println("\n\n\n\n\n 🔨 Pulling latest changes from Git...")
-        "git pull".shell(logBuild)
-        println("✅ Git pull complete!")
+        println("\n\n\n\n\n 🔨 Syncing latest changes from Git...")
+        val gitSyncCmd = """
+            set -euo pipefail
+            orig_head=${'$'}(git rev-parse HEAD)
+            dirty=0
+            if [ -n "${'$'}(git status --porcelain)" ]; then dirty=1; fi
+            if [ "${'$'}dirty" -eq 1 ]; then git stash push -u -m "autostash:backend ${'$'}(date +%s)"; fi
+            git fetch origin main --prune --quiet
+            ahead_counts=${'$'}(git rev-list --left-right --count HEAD...refs/remotes/origin/main)
+            set -- ${'$'}ahead_counts
+            local_ahead=${'$'}1
+            remote_ahead=${'$'}2
+            if [ "${'$'}remote_ahead" -eq 0 ]; then
+              echo "✅ Git sync: already up to date; no rebase needed."
+            else
+              echo "🔁 Git sync: rebasing to pull ${'$'}remote_ahead remote commits (local ahead=${'$'}local_ahead)."
+              if ! git rebase refs/remotes/origin/main; then
+                echo "⚠️ Git sync: rebase failed; restoring original state."
+                git rebase --abort || true
+                git reset --hard "${'$'}orig_head"
+                if [ "${'$'}dirty" -eq 1 ]; then
+                  if ! git stash pop --index; then
+                    echo "Stash pop conflicted; leaving stash."
+                    exit 1
+                  fi
+                fi
+                exit 1
+              fi
+              echo "✅ Git sync: rebase complete."
+            fi
+            if [ "${'$'}dirty" -eq 1 ]; then
+              if ! git stash pop --index; then
+                echo "Stash pop conflicted; restoring original state."
+                git reset --hard "${'$'}orig_head"
+                if ! git stash pop --index; then
+                  echo "Failed to restore original state; leaving stash."
+                  exit 1
+                fi
+                exit 1
+              fi
+            fi
+        """.trimIndent()
+        gitSyncCmd.shell(logBuild, logCommand = false)
+        println("✅ Git sync complete!")
         println("🔨 Rebuilding project (clean + build + installDist)...")
         "./gradlew clean build installDist".shell(logBuild)
         println("✅ Rebuild & installDist successful!")
 
         process?.let { pid ->
             println("   $appName currently running (PID=$pid)")
-            println("🛑 Stopping old instance (PID: $pid)...")
-            "kill -9 $pid".shell()
+            "$scriptPath stop".shell(logBuild)
             Thread.sleep(2000)
-            println("✅ Stopped old instance.")
         }
 
         startServer()
