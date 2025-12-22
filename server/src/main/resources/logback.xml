@@ -11,7 +11,7 @@
             <fileNamePattern>${LOG_DIR}/backend.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>200MB</maxFileSize>
             <maxHistory>730</maxHistory>
-            <totalSizeCap>500GB</totalSizeCap>
+            <totalSizeCap>200GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>%d{YYYY-MM-dd HH:mm:ss.SSS} [%thread] %X{call-id} %-5level %logger{36} - %X{log_prefix}%msg%X{log_suffix}%n</pattern>
