@@ -7,8 +7,10 @@ import io.ktor.server.application.log
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.http.content.staticFiles
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.host
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.webSocket
@@ -83,6 +85,7 @@ private fun Application.routes() = routing {
         ),
         defaultTarget = Url("http://localhost:3000")
     )
+    val cvStaticDir = Paths.get(System.getProperty("user.home"), "Desktop", "cv").toFile()
 
     get("/admin/ip/blacklist") {
         val requesterIp = call.clientInfo().clientIp
@@ -127,6 +130,10 @@ private fun Application.routes() = routing {
 
     // [ Webhooks ]
     githubWebhookRoute()
+
+    host(listOf("kaanos.com", "www.kaanos.com")) {
+        staticFiles("/", cvStaticDir, index = "index.html")
+    }
 
     // [ Reverse Proxy ] -->  Next.js @ :3000
     webSocket("/api/live/ws") {
