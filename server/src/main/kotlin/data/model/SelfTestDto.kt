@@ -2,6 +2,7 @@ package net.sdfgsdfg.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class SelfTestRequestDto(
@@ -22,6 +23,7 @@ data class SelfTestResultDto(
     @SerialName("satisfied_expectation") val satisfiedExpectation: Boolean = false,
     val retried: Boolean = false,
     val cases: List<SelfTestCaseDto> = emptyList(),
+    val zen: JsonObject? = null,
     @SerialName("timestamp_ms") val timestampMs: Long = System.currentTimeMillis(),
 )
 

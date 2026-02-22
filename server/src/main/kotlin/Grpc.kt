@@ -22,6 +22,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -69,6 +71,7 @@ private val heartbeatJson = Json {
 
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
+private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
 private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
 private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
 
@@ -219,8 +222,9 @@ fun Route.grpc() {
             }
         )
 
-        persistSelfTestResult(dto)
-        call.respond(dto)
+        val enriched = dto.withZenStatus()
+        persistSelfTestResult(enriched)
+        call.respond(enriched)
     }
 
     get("/api/selftest/status") {
@@ -228,7 +232,7 @@ fun Route.grpc() {
         if (saved == null) {
             call.respond(HttpStatusCode.NoContent, "No self-test run recorded")
         } else {
-            call.respond(saved)
+            call.respond(saved.withZenStatus())
         }
     }
 }
@@ -248,3 +252,16 @@ private fun loadLastSelfTestResult(): SelfTestResultDto? = runCatching {
         heartbeatJson.decodeFromString<SelfTestResultDto>(selfTestResultFile.readText())
     }
 }.getOrNull()
+
+private fun loadZenAutofixStatus(): JsonObject? = runCatching {
+    if (!zenAutofixStatusFile.exists()) {
+        null
+    } else {
+        heartbeatJson.parseToJsonElement(zenAutofixStatusFile.readText()).jsonObject
+    }
+}.getOrNull()
+
+private fun SelfTestResultDto.withZenStatus(): SelfTestResultDto {
+    val latestZen = loadZenAutofixStatus()
+    return if (latestZen == null) this else copy(zen = latestZen)
+}
