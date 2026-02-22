@@ -1,5 +1,6 @@
 package net.sdfgsdfg
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receiveText
@@ -94,22 +95,6 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
     val profile = deploymentProfiles.getValue(matchedSlug)
 
-    val commandsToRun = if (matchedSlug == "server-py-selftest") {
-        val newChatFlag = runCatching {
-            json.parseToJsonElement(payload)
-                .jsonObject["new_chat"]
-                ?.jsonPrimitive
-                ?.booleanOrNull
-        }.getOrNull()
-
-        val payloadBody = """{"new_chat": ${newChatFlag ?: false}}"""
-        val selfTestCmd =
-            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '$payloadBody' http://127.0.0.1/api/selftest/run"""
-        listOf(selfTestCmd)
-    } else {
-        profile.commands
-    }
-
     if (requestedSlug != null && requestedSlug != matchedSlug) {
         log("ℹ️ Unregistered webhook slug '$requestedSlug' - using $matchedSlug.", deploymentLog)
     }
@@ -123,13 +108,78 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         deploymentLog
     )
 
+    if (matchedSlug == "server-py-selftest") {
+        val newChatFlag = runCatching {
+            json.parseToJsonElement(payload)
+                .jsonObject["new_chat"]
+                ?.jsonPrimitive
+                ?.booleanOrNull
+        }.getOrNull()
+
+        val payloadBody = """{"new_chat": ${newChatFlag ?: false}}"""
+        val selfTestCmd =
+            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '$payloadBody' http://127.0.0.1/api/selftest/run"""
+
+        val stdoutLines = mutableListOf<String>()
+        val stderrLines = mutableListOf<String>()
+
+        val exit = webhookDeployMutex.withLock {
+            log("Running command for $matchedSlug: '$selfTestCmd'", deploymentLog)
+            val commandExit = selfTestCmd.shell(
+                logFile = deploymentLog,
+                onLine = { line, isError ->
+                    if (isError) {
+                        stderrLines += line
+                    } else {
+                        stdoutLines += line
+                    }
+                },
+            )
+            if (commandExit == 0) {
+                log("✅ SUCCESS ($matchedSlug): '$selfTestCmd' executed (exit=$commandExit).", deploymentLog)
+            } else {
+                log("❌ FAILURE ($matchedSlug): '$selfTestCmd' failed (exit=$commandExit).", deploymentLog)
+            }
+            commandExit
+        }
+
+        val stdoutBody = stdoutLines.joinToString("\n").trim()
+        if (exit == 0) {
+            val parsed = runCatching { json.parseToJsonElement(stdoutBody) }.getOrNull()
+            if (parsed != null) {
+                respondText(
+                    text = stdoutBody,
+                    contentType = ContentType.Application.Json,
+                    status = HttpStatusCode.OK,
+                )
+            } else {
+                val preview = stdoutBody.ifBlank { "(empty)" }.escapeJson()
+                respondText(
+                    text = """{"ok":false,"raw_error":"non-json selftest webhook response","preview":"$preview"}""",
+                    contentType = ContentType.Application.Json,
+                    status = HttpStatusCode.BadGateway,
+                )
+            }
+            return
+        }
+
+        val stderrBody = stderrLines.joinToString("\n").ifBlank { "(empty)" }.escapeJson()
+        val stdoutPreview = stdoutBody.ifBlank { "(empty)" }.escapeJson()
+        respondText(
+            text = """{"ok":false,"raw_error":"selftest webhook command failed","exit_code":$exit,"stderr":"$stderrBody","stdout":"$stdoutPreview"}""",
+            contentType = ContentType.Application.Json,
+            status = HttpStatusCode.InternalServerError,
+        )
+        return
+    }
+
     respondText(
         "🙇 Deployment triggered for $matchedSlug!",
         status = HttpStatusCode.Accepted
     )
 
     webhookDeployMutex.withLock {
-        for (command in commandsToRun) {
+        for (command in profile.commands) {
             log("Running command for $matchedSlug: '$command'", deploymentLog)
             val exit = command.shell(logFile = deploymentLog)
             if (exit == 0) {
@@ -158,3 +208,16 @@ private fun extractRepoFullName(payload: String): String? = runCatching {
         ?.jsonPrimitive
         ?.content
 }.getOrNull()
+
+private fun String.escapeJson(): String = buildString {
+    for (ch in this@escapeJson) {
+        when (ch) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(ch)
+        }
+    }
+}
