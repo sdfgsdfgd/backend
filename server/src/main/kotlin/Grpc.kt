@@ -18,6 +18,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.util.encodeBase64
 import io.ktor.util.reflect.TypeInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -33,6 +34,7 @@ import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
+import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -82,7 +84,14 @@ fun Route.grpc() {
     post("/api/ask") {
         val heartbeatSeconds = 20.seconds
         val body = call.receive<AskRequestDto>()
-        application.log.info("[gRPC] [init] POST /api/ask with prompt=${body.prompt.take(30)}...")
+        val requestId = "ask-${UUID.randomUUID().toString().take(8)}"
+        val startedAt = System.nanoTime()
+        fun elapsedMs() = (System.nanoTime() - startedAt) / 1_000_000
+        application.log.info(
+            "[gRPC][$requestId] init POST /api/ask model=${body.model.orEmpty()} " +
+                "new_chat=${body.newChat} want_tts=${body.wantTts} prompt_chars=${body.prompt.length} " +
+                "prompt=${body.prompt.take(30)}..."
+        )
         val req = AskRequest.newBuilder()
             .setPrompt(body.prompt)
             .setModel(body.model.orEmpty())
@@ -91,61 +100,123 @@ fun Route.grpc() {
             .build()
 
         call.respondTextWriter(contentType = ContentType.Application.Json) {
-            coroutineScope {
-                val replyDeferred = async { botStub.ask(req) }
-
-                while (replyDeferred.isActive) {
-                    application.log.info("[gRPC] $heartbeatSeconds heartbeat sent while waiting for response")
-                    write(" \n")        // legal JSON whitespace keeps Cloudflare happy
-                    flush()
-                    delay(heartbeatSeconds)  // anything <<100s works
-                }
-
-                val reply = try {
-                    replyDeferred.await()
-                } catch (err: io.grpc.StatusException) {
-                    val (status, code) = when (err.status.code) {
-                        io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
-                        io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
-                        io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.BadRequest to "cancelled"
-                        else                                  -> HttpStatusCode.BadGateway to "grpc_error"
+            var heartbeatCount = 0
+            try {
+                coroutineScope {
+                    val replyDeferred = async { botStub.ask(req) }
+                    replyDeferred.invokeOnCompletion { cause ->
+                        when (cause) {
+                            null -> application.log.info("[gRPC][$requestId] grpc completed elapsed_ms=${elapsedMs()}")
+                            is CancellationException -> application.log.warn(
+                                "[gRPC][$requestId] grpc cancelled elapsed_ms=${elapsedMs()} " +
+                                    "cause=${cause::class.simpleName}: ${cause.message}"
+                            )
+                            else -> application.log.warn(
+                                "[gRPC][$requestId] grpc failed elapsed_ms=${elapsedMs()} " +
+                                    "cause=${cause::class.qualifiedName}: ${cause.message}",
+                                cause
+                            )
+                        }
                     }
-                    application.log.warn("[gRPC] ask failed status=${err.status.code} desc=${err.status.description}")
-                    call.response.status(status)
-                    val payload = heartbeatJson.encodeToString(
-                        mapOf(
-                            "error" to code,
-                            "detail" to (err.status.description ?: "gRPC ${err.status.code}"),
-                            "status" to err.status.code.name,
-                        )
-                    )
-                    write(payload)
-                    flush()
-                    return@coroutineScope
-                } catch (err: Exception) {
-                    application.log.error("[gRPC] ask failed", err)
-                    call.response.status(HttpStatusCode.BadGateway)
-                    val payload = heartbeatJson.encodeToString(
-                        mapOf(
-                            "error" to "proxy_error",
-                            "detail" to (err.message ?: "unknown")
-                        )
-                    )
-                    write(payload)
-                    flush()
-                    return@coroutineScope
-                }
-                application.log.info("[gRPC] response received --> ${reply.text.take(30)}...${reply.text.takeLast(30)}")
 
-                val payload = heartbeatJson.encodeToString(
-                    AskReplyDto(
-                        text = reply.text,
-                        ttsMp3 = if (body.wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
+                    while (replyDeferred.isActive) {
+                        heartbeatCount += 1
+                        try {
+                            application.log.info("[gRPC][$requestId] heartbeat#$heartbeatCount write elapsed_ms=${elapsedMs()}")
+                            write(" \n")        // legal JSON whitespace keeps Cloudflare happy
+                            flush()
+                            application.log.info("[gRPC][$requestId] heartbeat#$heartbeatCount flushed elapsed_ms=${elapsedMs()}")
+                        } catch (err: CancellationException) {
+                            application.log.warn(
+                                "[gRPC][$requestId] heartbeat#$heartbeatCount cancelled elapsed_ms=${elapsedMs()} " +
+                                    "cause=${err::class.simpleName}: ${err.message}"
+                            )
+                            throw err
+                        } catch (err: Throwable) {
+                            application.log.error(
+                                "[gRPC][$requestId] heartbeat#$heartbeatCount write/flush failed elapsed_ms=${elapsedMs()} " +
+                                    "cause=${err::class.qualifiedName}: ${err.message}",
+                                err
+                            )
+                            throw err
+                        }
+                        delay(heartbeatSeconds)  // anything <<100s works
+                    }
+
+                    application.log.info("[gRPC][$requestId] awaiting grpc reply elapsed_ms=${elapsedMs()}")
+                    val reply = try {
+                        replyDeferred.await().also {
+                            application.log.info(
+                                "[gRPC][$requestId] grpc await returned elapsed_ms=${elapsedMs()} text_chars=${it.text.length}"
+                            )
+                        }
+                    } catch (err: io.grpc.StatusException) {
+                        val (status, code) = when (err.status.code) {
+                            io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
+                            io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
+                            io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.BadRequest to "cancelled"
+                            else                                  -> HttpStatusCode.BadGateway to "grpc_error"
+                        }
+                        application.log.warn(
+                            "[gRPC][$requestId] ask failed status=${err.status.code} " +
+                                "desc=${err.status.description} elapsed_ms=${elapsedMs()}"
+                        )
+                        call.response.status(status)
+                        val payload = heartbeatJson.encodeToString(
+                            mapOf(
+                                "error" to code,
+                                "detail" to (err.status.description ?: "gRPC ${err.status.code}"),
+                                "status" to err.status.code.name,
+                            )
+                        )
+                        application.log.info("[gRPC][$requestId] grpc error payload write elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")
+                        write(payload)
+                        flush()
+                        application.log.info("[gRPC][$requestId] grpc error payload flushed elapsed_ms=${elapsedMs()}")
+                        return@coroutineScope
+                    } catch (err: Exception) {
+                        application.log.error("[gRPC][$requestId] ask failed elapsed_ms=${elapsedMs()}", err)
+                        call.response.status(HttpStatusCode.BadGateway)
+                        val payload = heartbeatJson.encodeToString(
+                            mapOf(
+                                "error" to "proxy_error",
+                                "detail" to (err.message ?: "unknown")
+                            )
+                        )
+                        application.log.info("[gRPC][$requestId] proxy error payload write elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")
+                        write(payload)
+                        flush()
+                        application.log.info("[gRPC][$requestId] proxy error payload flushed elapsed_ms=${elapsedMs()}")
+                        return@coroutineScope
+                    }
+                    application.log.info("[gRPC][$requestId] response received text_preview=${reply.text.take(30)}...${reply.text.takeLast(30)}")
+
+                    val payload = heartbeatJson.encodeToString(
+                        AskReplyDto(
+                            text = reply.text,
+                            ttsMp3 = if (body.wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
+                        )
                     )
+                    application.log.info("[gRPC][$requestId] final payload write elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")
+                    write(payload)
+                    flush()
+                    application.log.info("[gRPC][$requestId] final payload flushed elapsed_ms=${elapsedMs()}")
+                }
+            } catch (err: CancellationException) {
+                application.log.warn(
+                    "[gRPC][$requestId] writer cancelled elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount " +
+                        "cause=${err::class.simpleName}: ${err.message}"
                 )
-                write(payload)
-                flush()
-                application.log.info("[gRPC] < response flushed to client >")
+                throw err
+            } catch (err: Throwable) {
+                application.log.error(
+                    "[gRPC][$requestId] writer failed elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount " +
+                        "cause=${err::class.qualifiedName}: ${err.message}",
+                    err
+                )
+                throw err
+            } finally {
+                application.log.info("[gRPC][$requestId] writer finished elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount")
             }
         }
     }
