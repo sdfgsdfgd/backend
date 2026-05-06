@@ -89,7 +89,8 @@ fun Route.grpc() {
         fun elapsedMs() = (System.nanoTime() - startedAt) / 1_000_000
         application.log.info(
             "[gRPC][$requestId] init POST /api/ask model=${body.model.orEmpty()} " +
-                "new_chat=${body.newChat} want_tts=${body.wantTts} prompt_chars=${body.prompt.length} " +
+                "new_chat=${body.newChat} want_tts=${body.wantTts} deepseek=${body.deepseek} " +
+                "deepseek_search=${body.deepseekSearch} prompt_chars=${body.prompt.length} " +
                 "prompt=${body.prompt.take(30)}..."
         )
         val req = AskRequest.newBuilder()
@@ -97,6 +98,8 @@ fun Route.grpc() {
             .setModel(body.model.orEmpty())
             .setNewChat(body.newChat)
             .setWantTts(body.wantTts)
+            .setDeepseek(body.deepseek)
+            .setDeepseekSearch(body.deepseekSearch)
             .build()
 
         call.respondTextWriter(contentType = ContentType.Application.Json) {

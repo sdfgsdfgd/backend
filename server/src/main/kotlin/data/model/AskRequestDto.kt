@@ -10,6 +10,8 @@ data class AskRequestDto(
     val model: String? = null,
     @SerialName("new_chat") val newChat: Boolean = false,
     @SerialName("want_tts") val wantTts: Boolean = false,
+    val deepseek: Boolean = false,
+    @SerialName("deepseek_search") val deepseekSearch: Boolean = false,
 )
 
 @Serializable

@@ -53,6 +53,8 @@ message AskRequest {
     string prompt = 2;
     bool want_tts = 3;
     bool new_chat = 4;
+    bool deepseek = 5;
+    bool deepseek_search = 6;
 }
 
 message AskReply {
