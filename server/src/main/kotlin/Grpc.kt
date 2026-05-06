@@ -21,7 +21,7 @@ import io.ktor.util.reflect.TypeInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -143,7 +143,9 @@ fun Route.grpc() {
                             )
                             throw err
                         }
-                        delay(heartbeatSeconds)  // anything <<100s works
+                        if (withTimeoutOrNull(heartbeatSeconds.inWholeMilliseconds) { replyDeferred.join(); true } == true) {
+                            break
+                        }
                     }
 
                     application.log.info("[gRPC][$requestId] awaiting grpc reply elapsed_ms=${elapsedMs()}")
