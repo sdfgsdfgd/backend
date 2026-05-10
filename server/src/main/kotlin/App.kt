@@ -2,6 +2,7 @@ package net.sdfgsdfg
 
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.ContentType
 import io.ktor.server.application.Application
 import io.ktor.server.application.log
 import io.ktor.server.engine.EngineConnectorBuilder
@@ -86,6 +87,9 @@ private fun Application.routes() = routing {
         defaultTarget = Url("http://localhost:3000")
     )
     val cvStaticDir = Paths.get(System.getProperty("user.home"), "Desktop", "cv").toFile()
+    val syntheticProbeToken = System.getenv("Q_SYNTHETIC_PROBE_TOKEN")?.trim()?.takeIf { it.isNotBlank() }
+    val syntheticProbeHeader = System.getenv("Q_SYNTHETIC_PROBE_HEADER")?.trim()?.takeIf { it.isNotBlank() }
+        ?: "X-Q-Synthetic-Probe"
 
     get("/admin/ip/blacklist") {
         val requesterIp = call.clientInfo().clientIp
@@ -121,6 +125,23 @@ private fun Application.routes() = routing {
     }
 
     get("/test") { call.respondText(" 🥰  [ OK ]") }
+
+    get("/_q/probe") {
+        val token = syntheticProbeToken
+        if (token == null || call.request.headers[syntheticProbeHeader]?.trim() != token) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@get
+        }
+        call.respondText("", ContentType.Text.Plain, HttpStatusCode.NoContent)
+    }
+
+    get("/metrics/security") {
+        if (!call.clientInfo().isLocal) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@get
+        }
+        call.respondText(RequestEvents.prometheusMetrics(), ContentType.Text.Plain)
+    }
 
     // [ WS ]
     ws()

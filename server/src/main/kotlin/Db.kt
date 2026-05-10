@@ -39,6 +39,7 @@ object RequestEvents {
     private val logger = LoggerFactory.getLogger("db.RequestEvents")
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val monthFormatter = DateTimeFormatter.ofPattern("yyyyMM")
+    private val metricWindows = listOf("5 minutes" to "5m", "1 hour" to "1h")
     private var dataSource: HikariDataSource? = null
     private var initialized = false
     private var maintenanceStarted = false
@@ -174,6 +175,51 @@ object RequestEvents {
         }
     }
 
+    fun prometheusMetrics(): String {
+        val out = StringBuilder()
+        out.appendLine("# HELP backend_request_event_class_total Rolling request-event count grouped by signal class")
+        out.appendLine("# TYPE backend_request_event_class_total gauge")
+        out.appendLine("# HELP backend_request_event_class_by_host_total Rolling request-event count grouped by host and signal class")
+        out.appendLine("# TYPE backend_request_event_class_by_host_total gauge")
+        out.appendLine("# HELP backend_request_event_5xx_total Rolling upstream/server failure count grouped by host, route, and status")
+        out.appendLine("# TYPE backend_request_event_5xx_total gauge")
+        if (!initialized) return out.toString()
+
+        metricWindows.forEach { (interval, window) ->
+            queryClassCounts(interval).forEach { (klass, count) ->
+                out.append("backend_request_event_class_total{window=\"")
+                    .append(label(window))
+                    .append("\",class=\"")
+                    .append(label(klass))
+                    .append("\"} ")
+                    .appendLine(count)
+            }
+            queryHostClassCounts(interval).forEach { row ->
+                out.append("backend_request_event_class_by_host_total{window=\"")
+                    .append(label(window))
+                    .append("\",host=\"")
+                    .append(label(row.host))
+                    .append("\",class=\"")
+                    .append(label(row.klass))
+                    .append("\"} ")
+                    .appendLine(row.count)
+            }
+            query5xxCounts(interval).forEach { row ->
+                out.append("backend_request_event_5xx_total{window=\"")
+                    .append(label(window))
+                    .append("\",host=\"")
+                    .append(label(row.host))
+                    .append("\",matched_rule=\"")
+                    .append(label(row.matchedRule))
+                    .append("\",status=\"")
+                    .append(label(row.status))
+                    .append("\"} ")
+                    .appendLine(row.count)
+            }
+        }
+        return out.toString()
+    }
+
     private fun startMaintenanceLoop() {
         if (maintenanceStarted) return
         maintenanceStarted = true
@@ -281,6 +327,91 @@ object RequestEvents {
             IpBlacklistTable.deleteWhere { IpBlacklistTable.ip eq ip }
         }
     }
+
+    private data class HostClassCount(val host: String, val klass: String, val count: Long)
+    private data class FailureCount(val host: String, val matchedRule: String, val status: String, val count: Long)
+
+    private fun queryClassCounts(interval: String): List<Pair<String, Long>> = transaction {
+        val rows = mutableListOf<Pair<String, Long>>()
+        exec(
+            """
+            SELECT class, count(*)
+            FROM (
+                SELECT COALESCE(
+                    suspicious_reason,
+                    CASE
+                        WHEN status >= 500 THEN 'UPSTREAM_5XX'
+                        WHEN status >= 400 THEN 'HTTP_4XX'
+                        ELSE 'OK_OR_INFO'
+                    END
+                ) AS class
+                FROM request_event
+                WHERE ts > now() - interval '$interval'
+            ) s
+            GROUP BY class
+            ORDER BY count(*) DESC;
+            """.trimIndent()
+        ) { rs ->
+            while (rs.next()) {
+                rows.add(rs.getString(1) to rs.getLong(2))
+            }
+        }
+        rows
+    }
+
+    private fun queryHostClassCounts(interval: String): List<HostClassCount> = transaction {
+        val rows = mutableListOf<HostClassCount>()
+        exec(
+            """
+            SELECT COALESCE(host, ''), class, count(*)
+            FROM (
+                SELECT host, COALESCE(
+                    suspicious_reason,
+                    CASE
+                        WHEN status >= 500 THEN 'UPSTREAM_5XX'
+                        WHEN status >= 400 THEN 'HTTP_4XX'
+                        ELSE 'OK_OR_INFO'
+                    END
+                ) AS class
+                FROM request_event
+                WHERE ts > now() - interval '$interval'
+            ) s
+            WHERE class <> 'OK_OR_INFO'
+            GROUP BY host, class
+            ORDER BY count(*) DESC
+            LIMIT 30;
+            """.trimIndent()
+        ) { rs ->
+            while (rs.next()) {
+                rows.add(HostClassCount(rs.getString(1), rs.getString(2), rs.getLong(3)))
+            }
+        }
+        rows
+    }
+
+    private fun query5xxCounts(interval: String): List<FailureCount> = transaction {
+        val rows = mutableListOf<FailureCount>()
+        exec(
+            """
+            SELECT COALESCE(host, ''), COALESCE(matched_rule, ''), status::text, count(*)
+            FROM request_event
+            WHERE ts > now() - interval '$interval'
+              AND status >= 500
+              AND suspicious_reason IS NULL
+            GROUP BY host, matched_rule, status
+            ORDER BY count(*) DESC
+            LIMIT 30;
+            """.trimIndent()
+        ) { rs ->
+            while (rs.next()) {
+                rows.add(FailureCount(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4)))
+            }
+        }
+        rows
+    }
+
+    private fun label(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 }
 
 object RequestEventTable : Table("request_event") {
