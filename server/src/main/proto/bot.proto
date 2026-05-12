@@ -55,6 +55,7 @@ message AskRequest {
     bool new_chat = 4;
     bool deepseek = 5;
     bool deepseek_search = 6;
+    bool one_time = 7;
 }
 
 message AskReply {

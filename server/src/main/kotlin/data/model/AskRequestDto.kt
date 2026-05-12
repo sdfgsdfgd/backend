@@ -12,6 +12,7 @@ data class AskRequestDto(
     @SerialName("want_tts") val wantTts: Boolean = false,
     val deepseek: Boolean = false,
     @SerialName("deepseek_search") val deepseekSearch: Boolean = false,
+    @SerialName("one_time") val oneTime: Boolean = false,
 )
 
 @Serializable

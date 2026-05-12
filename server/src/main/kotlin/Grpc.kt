@@ -90,7 +90,7 @@ fun Route.grpc() {
         application.log.info(
             "[gRPC][$requestId] init POST /api/ask model=${body.model.orEmpty()} " +
                 "new_chat=${body.newChat} want_tts=${body.wantTts} deepseek=${body.deepseek} " +
-                "deepseek_search=${body.deepseekSearch} prompt_chars=${body.prompt.length} " +
+                "deepseek_search=${body.deepseekSearch} one_time=${body.oneTime} prompt_chars=${body.prompt.length} " +
                 "prompt=${body.prompt.take(30)}..."
         )
         val req = AskRequest.newBuilder()
@@ -100,6 +100,7 @@ fun Route.grpc() {
             .setWantTts(body.wantTts)
             .setDeepseek(body.deepseek)
             .setDeepseekSearch(body.deepseekSearch)
+            .setOneTime(body.oneTime)
             .build()
 
         call.respondTextWriter(contentType = ContentType.Application.Json) {
