@@ -8,6 +8,7 @@ import kotlinx.serialization.Serializable
 data class AskRequestDto(
     val prompt: String,
     val model: String? = null,
+    @SerialName("request_id") val requestId: String? = null,
     @SerialName("new_chat") val newChat: Boolean = false,
     @SerialName("want_tts") val wantTts: Boolean = false,
     val deepseek: Boolean = false,
