@@ -245,11 +245,11 @@ fun Route.grpc() {
             startAskJob(rpcId, requestId, req, body.wantTts, application.log)
         }
 
+        call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
+        call.response.headers.append("X-Backend-Ask-Id", job.backendId)
         call.respondTextWriter(contentType = ContentType.Application.Json) {
             var heartbeatCount = 0
             try {
-                call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
-                call.response.headers.append("X-Backend-Ask-Id", job.backendId)
                 while (!job.deferred.isCompleted) {
                     heartbeatCount += 1
                     try {
