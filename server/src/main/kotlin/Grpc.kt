@@ -276,7 +276,6 @@ fun Route.grpc() {
                     }
                 }
                 val result = job.deferred.await()
-                call.response.status(result.status)
                 application.log.info("[gRPC][$requestId][$rpcId] final payload write elapsed_ms=${elapsedMs()} bytes=${result.payload.toByteArray().size} status=${result.status.value}")
                 write(result.payload)
                 flush()
