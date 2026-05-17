@@ -77,7 +77,8 @@ private fun Application.routes() = routing {
             ),
             HostRule(
                 hosts = setOf("leospecial.com", "www.leospecial.com"),
-                target = Url("http://localhost:3001")
+                target = Url("http://localhost:3001"),
+                name = "leospecial"
             ),
             HostRule(
                 hosts = setOf("sdfgsdfg.net", "www.sdfgsdfg.net", "localhost", "127.0.0.1"),
