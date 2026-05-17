@@ -146,7 +146,7 @@ fun ApplicationCall.silentDrop() {
 
 private fun resolveClientInfo(call: ApplicationCall): ClientInfo {
     val host = call.request.host()
-    val remote = call.request.origin.remoteHost
+    val remote = call.request.origin.remoteAddress.ifBlank { call.request.origin.remoteHost }
     val remoteIp = remote.takeIf { it.isNotBlank() } ?: "unknown"
     val remoteAddr = parseIp(remoteIp)
     val isLocal = remoteAddr?.let { isLocalAddr(it) } == true
