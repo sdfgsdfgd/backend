@@ -14,6 +14,9 @@ data class AskRequestDto(
     val deepseek: Boolean = false,
     @SerialName("deepseek_search") val deepseekSearch: Boolean = false,
     @SerialName("one_time") val oneTime: Boolean = false,
+    @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("new_tab") val newTab: Boolean = false,
+    @SerialName("end_session") val endSession: Boolean = false,
 )
 
 @Serializable
