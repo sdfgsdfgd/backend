@@ -140,6 +140,19 @@ jobs:
           set -euo pipefail
           curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://sdfgsdfg.net/test | tee "$RUNNER_TEMP/public-smoke.txt"
           grep -F "[ OK ]" "$RUNNER_TEMP/public-smoke.txt"
+          curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://ops.sdfgsdfg.net/api/ops/summary > "$RUNNER_TEMP/ops-summary.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(Path(os.environ["RUNNER_TEMP"], "ops-summary.json").read_text())
+          ids = [repo["id"] for repo in summary["repos"]]
+          assert ids == ["backend", "server_py", "arcana"], ids
+          PY
+          curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://ops.sdfgsdfg.net/ | tee "$RUNNER_TEMP/ops-shell.html"
+          grep -F "Trio Ops Cockpit" "$RUNNER_TEMP/ops-shell.html"
+          grep -F "dashboard-web.js" "$RUNNER_TEMP/ops-shell.html"
 
   # Future all-tests branches:
   # - arcana-ingest/contract/local-publisher checks.
