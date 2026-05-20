@@ -210,7 +210,7 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
             detail = "$passed/${cases.size} model cases passing.",
         )
     },
-    TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard has absorbed the old README matrix renderer."),
+    TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard renders the live selftest JSON, workflow link, and model matrix."),
     TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 

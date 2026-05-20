@@ -867,8 +867,8 @@ private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?) {
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("server_py README Matrix Parity", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("First dashboard-owned renderer for the live selftest JSON; README generation stays until this reaches full parity.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text("server_py Live Selftest", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Dashboard-owned renderer for selftest JSON, workflow artifacts, model matrix, Zen state, and conversation signal.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
                 }
                 StatusPill(selfTest?.status?.name ?: "WAITING", selfTest?.status?.color() ?: Color(0xFF8D98A9))
             }
@@ -1306,7 +1306,7 @@ private fun fallbackPipelineSteps(repo: RepoHealthDto): List<TestRunSummaryDto> 
     )
     "server_py" -> listOfNotNull(
         repo.latestRun ?: TestRunSummaryDto("live selftest", repo.status, detail = "Waiting for persisted server-py-selftest.json."),
-        TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard has absorbed the old README matrix renderer."),
+        TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard renders the live selftest JSON, workflow link, and model matrix."),
         TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py keeps browser automation internals; backend displays normalized facts."),
     )
     "arcana" -> listOf(
