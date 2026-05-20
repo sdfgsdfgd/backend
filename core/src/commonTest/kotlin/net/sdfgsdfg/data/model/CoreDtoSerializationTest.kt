@@ -181,5 +181,24 @@ class CoreDtoSerializationTest {
         assertFalse("zenReason" in selfTest)
         assertFalse("zenSeverity" in selfTest)
         assertFalse("zenArtifactPath" in selfTest)
+
+        val ingest = json.parseToJsonElement(
+            json.encodeToString(
+                ArcanaIngestDto(
+                    status = OpsStatusDto.OK,
+                    label = "pytest local publisher",
+                    timestampMs = 21L,
+                    durationMs = 123.0,
+                    detail = "unit spine passed",
+                    issues = IssueSummaryDto(todo = 2, wip = 1, done = 3),
+                    runs = listOf(TestRunSummaryDto("pytest unit", OpsStatusDto.OK)),
+                ),
+            ),
+        ).jsonObject
+        assertEquals(21L, ingest.getValue("timestamp_ms").jsonPrimitive.long)
+        assertEquals(123.0, ingest.getValue("duration_ms").jsonPrimitive.double)
+        assertEquals("pytest unit", ingest.getValue("runs").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
+        assertFalse("timestampMs" in ingest)
+        assertFalse("durationMs" in ingest)
     }
 }

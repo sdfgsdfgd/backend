@@ -3,6 +3,9 @@ package net.sdfgsdfg
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
@@ -309,6 +312,56 @@ class OpsRoutesTest {
         assertEquals(1, issues.review)
         assertEquals(1, issues.done)
         assertEquals(4, issues.active)
+    }
+
+    @Test
+    fun arcanaIngestIsLocalOnlyAndFeedsOpsSummary() = testApplication {
+        val ingestFile = File(createTempDirectory().toFile(), "arcana-ingest.json")
+
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing {
+                opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile)
+            }
+        }
+
+        val publicWrite = client.post("/api/ops/ingest/arcana") {
+            header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"status":"OK"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, publicWrite.status)
+
+        val localWrite = client.post("/api/ops/ingest/arcana") {
+            header(HttpHeaders.Host, "127.0.0.1")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """
+                {
+                  "status": "OK",
+                  "label": "pytest local publisher",
+                  "duration_ms": 123.0,
+                  "detail": "unit spine passed",
+                  "issues": { "todo": 2, "wip": 1, "done": 3 },
+                  "runs": [
+                    { "label": "pytest unit", "status": "OK", "detail": "83 tests" }
+                  ]
+                }
+                """.trimIndent(),
+            )
+        }
+        assertEquals(HttpStatusCode.Accepted, localWrite.status)
+
+        val summaryResponse = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val arcana = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "arcana" }
+        assertEquals(OpsStatusDto.OK, arcana.status)
+        assertEquals("pytest local publisher", arcana.latestRun?.label)
+        assertEquals("unit spine passed", arcana.latestRun?.detail)
+        assertEquals(2, arcana.issues.todo)
+        assertEquals(1, arcana.issues.wip)
+        assertEquals(3, arcana.issues.done)
+        assertEquals(true, arcana.runs.any { it.label == "pytest unit" && it.status == OpsStatusDto.OK })
+        assertEquals(true, ingestFile.readText().contains("timestamp_ms"))
     }
 
     @Test

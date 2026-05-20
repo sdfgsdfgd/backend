@@ -6,12 +6,15 @@ import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.host
 import io.ktor.server.request.path
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -21,6 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import net.sdfgsdfg.data.model.ArcanaIngestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -47,6 +51,7 @@ private val opsTimeFormatter = DateTimeFormatter
     .ofPattern("d MMM, h:mm a z", Locale.ENGLISH)
     .withZone(ZoneId.of("Australia/Melbourne"))
 
+private val defaultArcanaIngestFile = File(resolveLogDir(), "arcana-ingest.json")
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
 private val deployHistoryFile = File(resolveLogDir(), "deploy-history.jsonl")
 private val homeDir = File(System.getProperty("user.home"))
@@ -60,6 +65,7 @@ private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-se
 
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
+    arcanaIngestTargetFile: File = defaultArcanaIngestFile,
     selfTestArtifactFile: File = serverPySelfTestFile,
 ) {
     fun allowed(call: ApplicationCall): Boolean {
@@ -72,7 +78,27 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary())
+        call.respond(opsSummary(arcanaIngestTargetFile))
+    }
+
+    post("/api/ops/ingest/arcana") {
+        if (!call.clientInfo().isLocal) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@post
+        }
+
+        val ingest = runCatching {
+            opsJson.decodeFromString<ArcanaIngestDto>(call.receiveText())
+        }.getOrElse {
+            call.respondText("Invalid Arcana ingest JSON", status = HttpStatusCode.BadRequest)
+            return@post
+        }.let {
+            it.copy(timestampMs = it.timestampMs ?: System.currentTimeMillis())
+        }
+
+        arcanaIngestTargetFile.parentFile?.mkdirs()
+        arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
+        call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
     get(serverPySelfTestArtifactUrl) {
@@ -165,19 +191,21 @@ private fun File.dashboardContentType() = when (extension.lowercase()) {
     else -> ContentType.Application.OctetStream
 }
 
-private fun opsSummary(): OpsSummaryDto {
+private fun opsSummary(arcanaIngestFile: File = defaultArcanaIngestFile): OpsSummaryDto {
     val serverPySelfTest = latestServerPySelfTest()
+    val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
     val backendHistory = deployHistory()
     val backendLatestRun = backendHistory.firstOrNull() ?: TestRunSummaryDto(
         label = "local smoke",
         status = OpsStatusDto.OK,
         detail = "/test and /metrics/security are deploy-gated",
     )
-    val arcanaLatestRun = TestRunSummaryDto(
+    val arcanaLatestRun = arcanaIngest?.toRunSummary() ?: TestRunSummaryDto(
         label = "local-first publisher",
         status = OpsStatusDto.WIP,
         detail = ".arcana/issues.json and run ingestion stay local-first.",
     )
+    val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() } ?: localArcanaIssues(arcanaRepo)
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -212,12 +240,12 @@ private fun opsSummary(): OpsSummaryDto {
                 id = "arcana",
                 name = "arcana",
                 role = "Local codebase comprehension and session engine",
-                status = OpsStatusDto.WIP,
+                status = arcanaIngest?.status ?: OpsStatusDto.WIP,
                 location = arcanaRepo.path,
                 latestRun = arcanaLatestRun,
-                runs = arcanaRuns(arcanaLatestRun),
-                issues = localArcanaIssues(arcanaRepo),
-                note = "RSI/session ingestion is intentionally deferred.",
+                runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
+                issues = arcanaIssues,
+                note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
             ),
         ),
     )
@@ -227,6 +255,12 @@ private fun latestServerPySelfTest(): SelfTestResultDto? = runCatching {
     serverPySelfTestFile.takeIf { it.exists() }
         ?.readText()
         ?.let { opsJson.decodeFromString<SelfTestResultDto>(it) }
+}.getOrNull()
+
+private fun latestArcanaIngest(file: File = defaultArcanaIngestFile): ArcanaIngestDto? = runCatching {
+    file.takeIf { it.isFile }
+        ?.readText()
+        ?.let { opsJson.decodeFromString<ArcanaIngestDto>(it) }
 }.getOrNull()
 
 internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryDto> = runCatching {
@@ -268,11 +302,11 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
     TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 
-private fun arcanaRuns(latestRun: TestRunSummaryDto) = listOf(
-    latestRun,
-    TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "Future local publisher reports pytest/session/issue summaries."),
-    TestRunSummaryDto("RSI sessions", OpsStatusDto.WIP, detail = "Deferred until issue and CI surfaces can receive output."),
-)
+private fun arcanaRuns(latestRun: TestRunSummaryDto, ingest: ArcanaIngestDto?) =
+    listOf(latestRun) + ingest?.runs.orEmpty() + listOf(
+        TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "Future local publisher reports pytest/session/issue summaries."),
+        TestRunSummaryDto("RSI sessions", OpsStatusDto.WIP, detail = "Deferred until issue and CI surfaces can receive output."),
+    )
 
 internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
     val file = repoRoot.resolve(".arcana/issues.json").takeIf { it.isFile } ?: return IssueSummaryDto()
@@ -300,6 +334,17 @@ private fun IssueSummaryDto.with(status: String): IssueSummaryDto = when (status
     "done", "complete", "completed", "closed" -> copy(done = done + 1)
     else -> this
 }
+
+private fun IssueSummaryDto.hasAny(): Boolean = active + done > 0
+
+private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
+    label = label,
+    status = status,
+    timestampMs = timestampMs,
+    durationMs = durationMs,
+    detail = detail,
+    url = url,
+)
 
 private fun SelfTestResultDto.toRunSummary() = TestRunSummaryDto(
     label = "live selftest",

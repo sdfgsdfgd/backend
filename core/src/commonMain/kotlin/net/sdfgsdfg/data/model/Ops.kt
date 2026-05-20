@@ -45,6 +45,18 @@ data class TestRunSummaryDto(
 )
 
 @Serializable
+data class ArcanaIngestDto(
+    val status: OpsStatusDto = OpsStatusDto.WIP,
+    val label: String = "arcana publisher",
+    @SerialName("timestamp_ms") val timestampMs: Long? = null,
+    @SerialName("duration_ms") val durationMs: Double? = null,
+    val detail: String? = null,
+    val url: String? = null,
+    val issues: IssueSummaryDto = IssueSummaryDto(),
+    val runs: List<TestRunSummaryDto> = emptyList(),
+)
+
+@Serializable
 data class SelfTestSummaryDto(
     val status: OpsStatusDto,
     val ok: Boolean,
