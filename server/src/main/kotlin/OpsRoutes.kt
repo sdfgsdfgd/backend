@@ -53,6 +53,8 @@ private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
+private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
+private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
 private val publicIngressUrl = "https://sdfgsdfg.net/test"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 
@@ -248,12 +250,12 @@ internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryD
 
 private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     latestRun,
-    TestRunSummaryDto("server checks", OpsStatusDto.OK, detail = "Gradle :verifyServer gates production deploy before restart."),
+    TestRunSummaryDto("server checks", OpsStatusDto.OK, detail = "Gradle :verifyServer gates production deploy before restart.", url = backendFullSuiteUrl),
     TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External probe stays outside restart gating.", url = publicIngressUrl),
 )
 
 private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> = listOfNotNull(
-    selfTest?.toRunSummary() ?: TestRunSummaryDto("live selftest", OpsStatusDto.UNKNOWN, detail = "Waiting for persisted server-py-selftest.json."),
+    selfTest?.toRunSummary() ?: TestRunSummaryDto("live selftest", OpsStatusDto.UNKNOWN, detail = "Waiting for persisted server-py-selftest.json.", url = serverPyLiveSelftestUrl),
     selfTest?.cases?.takeIf { it.isNotEmpty() }?.let { cases ->
         val passed = cases.count { it.ok }
         TestRunSummaryDto(
@@ -262,7 +264,7 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
             detail = "$passed/${cases.size} model cases passing.",
         )
     },
-    TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard renders the live selftest JSON, workflow link, and model matrix."),
+    TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard renders the live selftest JSON, workflow link, and model matrix.", url = serverPySelfTestArtifactUrl),
     TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 
@@ -305,6 +307,7 @@ private fun SelfTestResultDto.toRunSummary() = TestRunSummaryDto(
     timestampMs = timestampMs.takeIf { it > 0 },
     durationMs = latencyMs,
     detail = rawError ?: textExcerpt.take(120).ifBlank { null },
+    url = workflowUrl ?: serverPyLiveSelftestUrl,
 )
 
 internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {

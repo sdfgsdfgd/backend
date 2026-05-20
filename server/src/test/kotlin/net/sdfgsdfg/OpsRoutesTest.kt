@@ -49,6 +49,10 @@ class OpsRoutesTest {
         assertEquals(true, backendRuns.any { it.label == "server checks" })
         assertEquals(true, backendRuns.any { it.label == "public ingress" })
         assertEquals(
+            "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml",
+            backendRuns.first { it.label == "server checks" }.url,
+        )
+        assertEquals(
             "https://sdfgsdfg.net/test",
             backendRuns.first { it.label == "public ingress" }.url,
         )
