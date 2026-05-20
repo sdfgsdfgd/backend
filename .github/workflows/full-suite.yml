@@ -3,7 +3,8 @@ name: Backend Full Suite
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 21 * * 0" # Mondays 07:30 Australia/Melbourne during AEST.
+    - cron: "30 7 * * 1"
+      timezone: Australia/Melbourne
 
 permissions:
   contents: read
@@ -123,12 +124,6 @@ jobs:
         uses: actions/checkout@v6
 
       - name: server-py-live-selftest
-        env:
-          SELFTEST_WEBHOOK_URL: ${{ vars.SELFTEST_WEBHOOK_URL }}
-          SELFTEST_STATUS_URL: ${{ vars.SELFTEST_STATUS_URL }}
-          SELFTEST_WEBHOOK_HEADER: ${{ secrets.SELFTEST_WEBHOOK_HEADER }}
-          SELFTEST_STATUS_HEADER: ${{ secrets.SELFTEST_STATUS_HEADER }}
-          SELFTEST_RESULT_PATH: server-py-selftest.json
         run: python3 .github/scripts/server_py_live_selftest.py
 
   # ---------------------------------------------------------------------------

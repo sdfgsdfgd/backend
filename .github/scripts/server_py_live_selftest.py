@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 import json
-import os
 import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-WEBHOOK_URL = os.getenv("SELFTEST_WEBHOOK_URL") or "https://sdfgsdfg.net/webhook/github/server-py-selftest"
-STATUS_URL = os.getenv("SELFTEST_STATUS_URL") or "https://sdfgsdfg.net/api/selftest/status"
-RESULT_PATH = Path(os.getenv("SELFTEST_RESULT_PATH") or "server-py-selftest.json")
+WEBHOOK_URL = "https://sdfgsdfg.net/webhook/github/server-py-selftest"
+STATUS_URL = "https://sdfgsdfg.net/api/selftest/status"
+RESULT_PATH = Path("server-py-selftest.json")
 RECENT_WINDOW_MS = 60_000
 POLL_INTERVAL = 5
 POLL_TIMEOUT = 2_100
@@ -35,7 +34,6 @@ def trigger_selftest() -> dict | None:
         **BASE_HEADERS,
         "Content-Type": "application/json",
         "X-GitHub-Event": "live-selftest",
-        **extra_headers(os.getenv("SELFTEST_WEBHOOK_HEADER")),
     }
     req = urllib.request.Request(WEBHOOK_URL, data=body, headers=headers, method="POST")
     print(f"[server-py-live-selftest] triggering {WEBHOOK_URL}", flush=True)
@@ -71,10 +69,9 @@ def trigger_selftest() -> dict | None:
 
 def poll_selftest(started_ms: int) -> int:
     deadline = time.time() + POLL_TIMEOUT
-    headers = {**BASE_HEADERS, **extra_headers(os.getenv("SELFTEST_STATUS_HEADER"))}
     last_payload = None
     while time.time() < deadline:
-        req = urllib.request.Request(STATUS_URL, headers=headers)
+        req = urllib.request.Request(STATUS_URL, headers=BASE_HEADERS)
         try:
             with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as response:
                 if response.status == 204:
@@ -118,15 +115,6 @@ def finish(payload: dict) -> int:
     if not payload.get("ok"):
         raise SystemExit(payload.get("raw_error") or payload.get("text_excerpt") or "Self-test failed")
     return 0
-
-
-def extra_headers(raw: str | None) -> dict[str, str]:
-    headers = {}
-    for line in (raw or "").splitlines():
-        if ":" in line:
-            name, value = line.split(":", 1)
-            headers[name.strip()] = value.strip()
-    return headers
 
 
 def write_result(payload: dict) -> None:
