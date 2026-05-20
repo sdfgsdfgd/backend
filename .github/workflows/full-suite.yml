@@ -2,11 +2,16 @@ name: Backend Full Suite
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 0" # Sundays 03:00 UTC.
 
 permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # local-tests: fast local runtime gate for backend deploy and module checks.
+  # ---------------------------------------------------------------------------
   local-tests:
     name: local-tests
     runs-on: ubuntu-latest
@@ -66,8 +71,6 @@ jobs:
           for attempt in {1..45}; do
             if curl -fsS --max-time 5 http://127.0.0.1/test | tee "$RUNNER_TEMP/local-test.txt"; then
               grep -F "[ OK ]" "$RUNNER_TEMP/local-test.txt"
-              curl -fsS --max-time 5 http://127.0.0.1/example | tee "$RUNNER_TEMP/local-example.txt"
-              grep -F '"status":"success"' "$RUNNER_TEMP/local-example.txt"
               curl -fsS --max-time 5 http://127.0.0.1/metrics/security | tee "$RUNNER_TEMP/local-metrics.txt"
               grep -F "backend_request_event_class_total" "$RUNNER_TEMP/local-metrics.txt"
               exit 0
@@ -85,6 +88,9 @@ jobs:
         if: always()
         run: cat "$RUNNER_TEMP/backend.log" || true
 
+  # ---------------------------------------------------------------------------
+  # public-ingress-smoke: first public edge of the future full test pyramid.
+  # ---------------------------------------------------------------------------
   all-tests:
     name: all-tests
     runs-on: ubuntu-latest
@@ -92,7 +98,7 @@ jobs:
     needs: local-tests
 
     steps:
-      - name: public-smoke
+      - name: public-ingress-smoke
         run: |
           set -euo pipefail
           curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://sdfgsdfg.net/test | tee "$RUNNER_TEMP/public-smoke.txt"

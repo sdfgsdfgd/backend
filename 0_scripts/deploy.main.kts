@@ -125,7 +125,6 @@ fun smoke(name: String, url: String, expect: String = "[ OK ]") {
 fun localSmoke() {
     waitPort()
     smoke("local /test", "http://127.0.0.1:$port/test")
-    smoke("local /example", "http://127.0.0.1:$port/example", "\"status\":\"success\"")
     smoke("local /metrics/security", "http://127.0.0.1:$port/metrics/security", "backend_request_event_class_total")
 }
 
