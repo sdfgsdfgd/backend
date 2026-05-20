@@ -15,6 +15,9 @@ val service: String = "backend.service"
 val port: Int = 80
 val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
+val qHost: String = "q"
+val qArcanaDir: String = "~/Desktop/py/arcana"
+val qArcanaTests: String = "z_tests_n_benchmarks/unit"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
@@ -161,6 +164,50 @@ fun localSmoke() {
 
 fun publicSmoke() {
     smoke("public smoke", "https://sdfgsdfg.net/test")
+}
+
+fun qRun(command: String, check: Boolean = true, quiet: Boolean = false): Result =
+    run("ssh $qHost ${command.shellQuote()}", check = check, quiet = quiet)
+
+fun arcanaSmoke() {
+    log("◆", "q arcana pytest")
+    val head = qRun("cd $qArcanaDir && git rev-parse --short HEAD", quiet = true).out.trim().ifBlank { "unknown" }
+    val started = System.nanoTime()
+    val result = qRun(
+        """
+        set -euo pipefail
+        cd $qArcanaDir
+        if [ ! -x .venv/bin/python ]; then
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+        fi
+        .venv/bin/python -m pytest $qArcanaTests -q
+        """.trimIndent(),
+        check = false,
+    )
+    val durationMs = (System.nanoTime() - started) / 1_000_000
+    val summary = result.out.lineSequence()
+        .map(String::trim)
+        .lastOrNull { it.contains(" passed") || it.contains(" failed") || it.contains(" error") }
+        ?: "pytest exit=${result.code}"
+    val status = if (result.code == 0) "OK" else "FAIL"
+    val detail = "$summary on q $qArcanaDir @$head"
+    val payload = listOf(
+        "\"status\":${status.jsonString()}",
+        "\"label\":\"q arcana unit pytest\"",
+        "\"duration_ms\":$durationMs",
+        "\"detail\":${detail.jsonString()}",
+        "\"runs\":[{${listOf(
+            "\"label\":${qArcanaTests.jsonString()}",
+            "\"status\":${status.jsonString()}",
+            "\"duration_ms\":$durationMs",
+            "\"detail\":${summary.jsonString()}",
+        ).joinToString(",")}}]",
+    ).joinToString(prefix = "{", postfix = "}")
+    qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
+    if (result.code != 0) fail("q arcana pytest failed: $summary")
+    log("✓", "q arcana pytest passed: $summary")
 }
 
 fun localTests() {
@@ -477,10 +524,11 @@ fun dispatch(command: String) {
         "status" -> status()
         "smoke", "local-smoke" -> localSmoke()
         "public-smoke" -> publicSmoke()
+        "arcana-smoke" -> arcanaSmoke()
         "local-tests" -> localTests()
         "all-tests" -> allTests()
         "verify" -> gradle(":verifyServer :installServer")
-        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|verify|local-smoke|public-smoke|local-tests|all-tests]")
+        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|verify|local-smoke|public-smoke|arcana-smoke|local-tests|all-tests]")
     }
 }
 
