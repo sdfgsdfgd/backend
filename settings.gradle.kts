@@ -5,3 +5,6 @@ rootProject.name = "backend"
 
 include(":server")
 include(":core")
+include(":dashboard")
+include(":dashboard:web")
+include(":dashboard:desktop")

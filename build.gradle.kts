@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform) apply false
     alias(libs.plugins.ktor) apply false
     alias(libs.plugins.kotlin.plugin.serialization) apply false
+    alias(libs.plugins.kotlin.plugin.compose) apply false
+    alias(libs.plugins.compose) apply false
 //    alias(libs.plugins.kotlinx.rpc.plugin) apply false
 }
 
@@ -23,8 +25,15 @@ tasks.register("installServer") {
     dependsOn(":server:installDist")
 }
 
+tasks.register("verifyDashboard") {
+    group = "verification"
+    description = "Builds the dashboard web and desktop entrypoints."
+    dependsOn(":dashboard:web:wasmJsBrowserDistribution", ":dashboard:desktop:jvmJar")
+}
+
 subprojects {
     repositories {
+        google()
         mavenCentral()
         maven { url = uri("https://maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-js-wrappers") }
         maven { url = uri("https://jitpack.io") }

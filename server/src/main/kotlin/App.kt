@@ -127,6 +127,9 @@ private fun Application.routes() = routing {
 
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
+    // [ Ops API ] --> public on ops.sdfgsdfg.net; local preview only when deploy stamps BACKEND_ENV=local.
+    opsRoutes()
+
     get("/_q/probe") {
         val token = syntheticProbeToken
         if (token == null || call.request.headers[syntheticProbeHeader]?.trim() != token) {
@@ -155,6 +158,15 @@ private fun Application.routes() = routing {
 
     host(listOf("kaanos.com", "www.kaanos.com")) {
         staticFiles("/", cvStaticDir, index = "index.html")
+    }
+
+    // [ Ops Dashboard ] --> public control-plane UI; exact API routes stay ahead of the SPA fallback.
+    host("ops.sdfgsdfg.net") {
+        route("/{...}") {
+            handle {
+                call.respondOpsDashboard()
+            }
+        }
     }
 
     // [ Reverse Proxy ] -->  Next.js @ :3000

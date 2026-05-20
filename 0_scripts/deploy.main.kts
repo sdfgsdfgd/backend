@@ -189,6 +189,7 @@ fun foreground(): Nothing {
             .also {
                 it.environment().putIfAbsent("JAVA_HOME", javaHome)
                 it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
+                it.environment()["BACKEND_ENV"] = "local"
                 it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
             }
             .start()

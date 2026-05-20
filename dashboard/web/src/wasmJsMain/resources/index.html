@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trio Ops Cockpit</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    (() => {
+      const webglReady = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const show = (title, detail) => {
+        const root = document.getElementById("dashboard");
+        root.className = "boot";
+        root.innerHTML = `
+          <section class="boot-card">
+            <div class="boot-eyebrow">Trio Ops Cockpit</div>
+            <h1>${title}</h1>
+            <p>${detail}</p>
+          </section>
+        `;
+      };
+
+      const loadCompose = () => {
+        const root = document.getElementById("dashboard");
+        root.className = "";
+        root.innerHTML = "";
+
+        const script = document.createElement("script");
+        script.src = "dashboard-web.js";
+        script.type = "application/javascript";
+        script.onerror = () => show("Dashboard bundle failed to load.", "Rebuild :dashboard:web or refresh after the local preview server updates.");
+        document.head.appendChild(script);
+      };
+
+      document.addEventListener("DOMContentLoaded", () => {
+        if (webglReady()) {
+          loadCompose();
+        } else {
+          show("WebGL is disabled in this browser.", "Compose/Wasm needs GPU/WebGL. Relaunch Chrome without --disable-gpu, or use the GPU-enabled preview browser.");
+        }
+      });
+    })();
+  </script>
+</head>
+<body>
+  <div id="dashboard" class="boot">
+    <section class="boot-card">
+      <div class="boot-eyebrow">Trio Ops Cockpit</div>
+      <h1>Starting dashboard...</h1>
+      <p>Loading the Compose/Wasm command surface.</p>
+    </section>
+  </div>
+</body>
+</html>
