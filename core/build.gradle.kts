@@ -1,17 +1,24 @@
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.plugin.serialization)
-//    alias(libs.plugins.kotlinx.rpc.plugin)
 }
 
 kotlin {
     jvm()
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
+    }
 
     sourceSets {
         commonMain.dependencies {
-//            api(libs.kotlinx.rpc.krpc.serialization.json)
-//            api(libs.kotlinx.rpc.core)
+            api(libs.kotlinx.serialization.json)
+        }
+
+        commonTest.dependencies {
+            implementation(kotlin("test"))
         }
     }
 }

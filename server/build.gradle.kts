@@ -73,8 +73,6 @@ dependencies {
     implementation(libs.grpc.netty.shaded)   // HTTP/2 transport + UDS (Unix Domain Sockets - for the FASTEST IPC possible on earth, better than UDP&TPC, no network layer )
     implementation(libs.protobuf.kotlin)    // proto runtime
 
-    implementation("io.ktor:ktor-server-netty-jvm:2.3.9")
-
     runtimeOnly("io.netty:netty-transport-native-epoll:4.1.109.Final:linux-x86_64")
     runtimeOnly("io.netty:netty-transport-native-kqueue:4.1.109.Final:osx-aarch_64")
 

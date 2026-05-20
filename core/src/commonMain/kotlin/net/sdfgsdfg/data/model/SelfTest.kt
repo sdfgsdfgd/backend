@@ -24,7 +24,7 @@ data class SelfTestResultDto(
     val retried: Boolean = false,
     val cases: List<SelfTestCaseDto> = emptyList(),
     val zen: JsonObject? = null,
-    @SerialName("timestamp_ms") val timestampMs: Long = System.currentTimeMillis(),
+    @SerialName("timestamp_ms") val timestampMs: Long = 0L,
 )
 
 @Serializable

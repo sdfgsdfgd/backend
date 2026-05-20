@@ -1,16 +1,17 @@
 [versions]
 koin-version = "3.5.6"
-kotlin-version = "2.1.10"
+kotlin-version = "2.3.21"
 kotlinx-html-version = "0.12.0"
 kotlinx-rpc-version = "0.5.0"
-ktor-version = "3.1.2"
+ktor-version = "3.5.0"
+kotlinx-serialization-version = "1.11.0"
 logback-version = "1.4.14"
 prometheus-version = "1.6.13"
 kotlinx-coroutines = "1.7.3"
 grpc-java-version      = "1.63.0"     # Apr 2024 core release :contentReference[oaicite:0]{index=0}
 grpc-kotlin-version    = "1.4.1"      # Jul 2024 :contentReference[oaicite:1]{index=1}
 protobuf-version       =  "3.25.3"     # latest Feb‑2024
-protobuf-plugin-version = "0.9.5"      # March 2025
+protobuf-plugin-version = "0.10.0"
 exposed-version = "0.51.1"
 hikari-version = "5.1.0"
 flyway-version = "10.22.0"
@@ -27,6 +28,7 @@ koin-ktor = { module = "io.insert-koin:koin-ktor", version.ref = "koin-version" 
 koin-logger-slf4j = { module = "io.insert-koin:koin-logger-slf4j", version.ref = "koin-version" }
 ktor-server-html-builder = { module = "io.ktor:ktor-server-html-builder", version.ref = "ktor-version" }
 kotlinx-html = { module = "org.jetbrains.kotlinx:kotlinx-html", version.ref = "kotlinx-html-version" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-version" }
 kotlinx-atomicfu = { module = "org.jetbrains.kotlinx:atomicfu", version = "0.21.0" }
 ktor-serialization-gson = { module = "io.ktor:ktor-serialization-gson", version.ref = "ktor-version" }
 ktor-server-metrics-micrometer = { module = "io.ktor:ktor-server-metrics-micrometer", version.ref = "ktor-version" }
