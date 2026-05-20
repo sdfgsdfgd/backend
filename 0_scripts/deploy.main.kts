@@ -2,6 +2,8 @@
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
@@ -75,12 +77,15 @@ fun serviceMode(): String = execStart()?.let {
 
 fun insideBackendService(): Boolean = runCatching { File("/proc/self/cgroup").readText().contains(service) }.getOrDefault(false)
 
+fun portOpen(): Boolean = runCatching {
+    Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 1_000) }
+}.isSuccess
+
 fun waitPort(seconds: Long = 30) {
-    log("◆", "waiting for http://127.0.0.1:$port")
+    log("◆", "waiting for 127.0.0.1:$port")
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
     while (System.nanoTime() < deadline) {
-        val code = run("curl -fsS --max-time 2 http://127.0.0.1/ >/dev/null 2>&1", null, check = false, quiet = true).code
-        if (code == 0 || code == 22) return log("✓", "$app is listening on port $port")
+        if (portOpen()) return log("✓", "$app is listening on port $port")
         Thread.sleep(1_000)
     }
     fail("$app did not open port $port within ${seconds}s")

@@ -29,6 +29,7 @@ import net.sdfgsdfg.clientInfo
 import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import net.sdfgsdfg.silentDrop
+import org.apache.hc.client5.http.HttpHostConnectException
 import org.slf4j.LoggerFactory
 import java.net.URISyntaxException
 import java.net.InetAddress
@@ -317,7 +318,13 @@ class SimpleReverseProxy(
                 suspiciousReason = suspiciousReason,
                 severity = suspiciousSeverity
             )
-            logger.error("Proxy request failed for uri='{}'", originalUri, e)
+            val upstreamRefused = e is HttpHostConnectException ||
+                e.message?.contains("Connection refused", ignoreCase = true) == true
+            if (upstreamRefused) {
+                logger.warn("Proxy upstream unavailable for uri='{}', target='{}': {}", originalUri, proxiedUrl, e.message)
+            } else {
+                logger.error("Proxy request failed for uri='{}'", originalUri, e)
+            }
             call.respondText("Bad Gateway", status = HttpStatusCode.BadGateway)
             return
         }
