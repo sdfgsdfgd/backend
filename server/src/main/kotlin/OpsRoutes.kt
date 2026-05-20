@@ -7,7 +7,6 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.host
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondFile
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
@@ -79,15 +78,26 @@ private suspend fun ApplicationCall.respondDashboardAsset(asset: String, dashboa
             contentType = ContentType.Text.Plain,
             status = if (root.isDirectory) HttpStatusCode.NotFound else HttpStatusCode.ServiceUnavailable,
         )
-    } else if (responseFile.extension.equals("wasm", ignoreCase = true)) {
-        response.headers.append(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
-        respondOutputStream(ContentType.parse("application/wasm")) {
+    } else {
+        response.headers.append(HttpHeaders.CacheControl, responseFile.dashboardCacheControl())
+        respondOutputStream(responseFile.dashboardContentType()) {
             responseFile.inputStream().use { it.copyTo(this) }
         }
-    } else {
-        response.headers.append(HttpHeaders.CacheControl, "no-cache")
-        respondFile(responseFile)
     }
+}
+
+private fun File.dashboardCacheControl() = if (extension.equals("wasm", ignoreCase = true)) {
+    "public, max-age=31536000, immutable"
+} else {
+    "no-cache"
+}
+
+private fun File.dashboardContentType() = when (extension.lowercase()) {
+    "css" -> ContentType.Text.CSS
+    "html" -> ContentType.Text.Html
+    "js" -> ContentType.Application.JavaScript
+    "wasm" -> ContentType.parse("application/wasm")
+    else -> ContentType.Application.OctetStream
 }
 
 private fun opsSummary(): OpsSummaryDto {

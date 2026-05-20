@@ -189,10 +189,11 @@ class OpsRoutesTest {
     }
 
     @Test
-    fun opsDashboardServesWasmWithWasmContentType() = testApplication {
+    fun opsDashboardServesStaticAssetsWithExplicitContentAndCacheHeaders() = testApplication {
         val dist = createTempDirectory().toFile()
         File(dist, "index.html").writeText("<main>dashboard</main>")
         File(dist, "dashboard.wasm").writeBytes(byteArrayOf(0, 0x61, 0x73, 0x6d))
+        File(dist, "dashboard-web.js").writeText("console.log('ok')")
 
         application {
             routing {
@@ -208,6 +209,10 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("application/wasm", response.headers[HttpHeaders.ContentType]?.substringBefore(';'))
         assertEquals("public, max-age=31536000, immutable", response.headers[HttpHeaders.CacheControl])
+
+        val scriptResponse = client.get("/dashboard-web.js") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        assertEquals(HttpStatusCode.OK, scriptResponse.status)
+        assertEquals("no-cache", scriptResponse.headers[HttpHeaders.CacheControl])
     }
 
     @Test
