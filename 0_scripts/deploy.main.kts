@@ -114,17 +114,19 @@ fun waitPort(seconds: Long = 30) {
     fail("$app did not open port $port within ${seconds}s")
 }
 
-fun smoke(name: String, url: String) {
+fun smoke(name: String, url: String, expect: String = "[ OK ]") {
     log("◆", "$name: $url")
     val result = run("curl -fsS --max-time 10 ${url.shellQuote()}", check = false, quiet = true)
     if (result.code != 0) fail("$name failed: exit=${result.code}")
-    if ("[ OK ]" !in result.out) fail("$name failed: unexpected response: ${result.out.trim().take(200)}")
+    if (expect !in result.out) fail("$name failed: unexpected response: ${result.out.trim().take(200)}")
     log("✓", "$name passed")
 }
 
 fun localSmoke() {
     waitPort()
-    smoke("local smoke", "http://127.0.0.1:$port/test")
+    smoke("local /test", "http://127.0.0.1:$port/test")
+    smoke("local /example", "http://127.0.0.1:$port/example", "\"status\":\"success\"")
+    smoke("local /metrics/security", "http://127.0.0.1:$port/metrics/security", "backend_request_event_class_total")
 }
 
 fun publicSmoke() {

@@ -5,6 +5,7 @@ import io.ktor.client.engine.apache5.Apache5
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
@@ -14,7 +15,7 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
-import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.request.host
@@ -109,14 +110,9 @@ fun Application.cfg() {
 
     routing {
         get("/example") {
-            call.respond(
-                mapOf(
-                    "status" to "success",
-                    "data" to listOf(
-                        mapOf("id" to 1, "name" to "John Doe"),
-                        mapOf("id" to 2, "name" to "Jane Smith")
-                    )
-                )
+            call.respondText(
+                """{"status":"success","data":[{"id":1,"name":"John Doe"},{"id":2,"name":"Jane Smith"}]}""",
+                ContentType.Application.Json
             )
         }
     }
