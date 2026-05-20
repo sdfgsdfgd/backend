@@ -21,6 +21,8 @@ val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNe
 val buildLog: File = logs.resolve("build.log").apply { if (!exists()) createNewFile() }
 val appLog: File = logs.resolve("app.log").apply { if (!exists()) createNewFile() }
 val lockFile: File = logs.resolve("deploy.lock")
+val scriptPath: String = "0_scripts/deploy.main.kts"
+val scriptFile: File = root.resolve(scriptPath)
 val localDbCompose: File = root.resolve("ops/local/postgres.compose.yml")
 val bin: String = root.resolve("server/build/install/server/bin/server").canonicalPath
 val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -63,6 +65,8 @@ fun run(command: String, file: File? = deployLog, check: Boolean = true, quiet: 
 }
 
 fun q(command: String): String = run(command, file = null, check = false, quiet = true).out.trim()
+
+fun head(): String = q("git rev-parse HEAD 2>/dev/null || true")
 
 fun fail(s: String): Nothing {
     log("✗", s)
@@ -201,6 +205,33 @@ fun systemctl(action: String) = run("sudo systemctl --no-ask-password $action $s
 
 fun gradle(tasks: String) = run("./gradlew $tasks --warning-mode all", buildLog)
 
+fun scriptChanged(from: String, to: String): Boolean =
+    from.isNotBlank() && to.isNotBlank() && from != to &&
+        run("git diff --name-only ${from.shellQuote()} ${to.shellQuote()} -- $scriptPath", null, check = false, quiet = true)
+            .out
+            .lineSequence()
+            .any { it == scriptPath }
+
+fun kotlinRunner(): String =
+    sequenceOf(
+        q("command -v kotlin || true"),
+        System.getenv("KOTLIN_HOME")?.let { "$it/bin/kotlin" }.orEmpty(),
+        File(System.getProperty("user.home"), ".sdkman/candidates/kotlin/current/bin/kotlin").path,
+    )
+        .filter(String::isNotBlank)
+        .firstOrNull { File(it).canExecute() }
+        ?: fail("Could not find executable kotlin runner for deploy reload.")
+
+fun reloadDeploy(command: String): Nothing {
+    log("◆", "$scriptPath changed during git sync; restarting updated deploy script")
+    val exit = ProcessBuilder(kotlinRunner(), scriptFile.absolutePath, command)
+        .directory(root)
+        .inheritIO()
+        .start()
+        .waitFor()
+    exitProcess(exit)
+}
+
 fun syncGit() = run(
     """
     set -euo pipefail
@@ -231,12 +262,11 @@ fun syncGit() = run(
     buildLog,
 )
 
-fun withLock(block: () -> Unit) {
+fun <T> withLock(block: () -> T): T =
     RandomAccessFile(lockFile, "rw").channel.use { channel ->
         val lock = channel.tryLock() ?: fail("Another deploy is already running: ${lockFile.absolutePath}")
         lock.use { block() }
     }
-}
 
 fun installAndForeground(): Nothing {
     log("◆", "using foreground process mode")
@@ -245,37 +275,43 @@ fun installAndForeground(): Nothing {
     foreground()
 }
 
-fun deploy() = withLock {
-    val start = System.nanoTime()
-    val mode = serviceMode()
-    log("◆", "deploying $app")
-    listOf(
-        "mode" to mode,
-        "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
-    ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
-    syncGit()
-    gradle(":verifyServer")
+fun deploy() {
+    val reload = withLock {
+        val start = System.nanoTime()
+        val mode = serviceMode()
+        val beforeSync = head()
+        log("◆", "deploying $app")
+        listOf(
+            "mode" to mode,
+            "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
+        ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
+        syncGit()
+        if (scriptChanged(beforeSync, head())) return@withLock true
+        gradle(":verifyServer")
 
-    when (mode) {
-        "runtime" -> {
-            log("✓", "verification passed; runtime systemd unit detected")
-            systemctl("stop")
-            gradle(":installServer")
-            systemctl("start")
-            waitPort()
-            smoke()
-        }
-        "legacy" -> {
-            if (!insideBackendService()) {
-                fail("$service still self-deploys through deploy.main.kts. Install the runtime unit before detached deploy.")
+        when (mode) {
+            "runtime" -> {
+                log("✓", "verification passed; runtime systemd unit detected")
+                systemctl("stop")
+                gradle(":installServer")
+                systemctl("start")
+                waitPort()
+                smoke()
             }
-            installAndForeground()
+            "legacy" -> {
+                if (!insideBackendService()) {
+                    fail("$service still self-deploys through deploy.main.kts. Install the runtime unit before detached deploy.")
+                }
+                installAndForeground()
+            }
+            "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
+            else -> installAndForeground()
         }
-        "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-        else -> installAndForeground()
-    }
 
-    log("✓", "deploy complete in ${(System.nanoTime() - start) / 1_000_000}ms")
+        log("✓", "deploy complete in ${(System.nanoTime() - start) / 1_000_000}ms")
+        false
+    }
+    if (reload) reloadDeploy("deploy")
 }
 
 fun status() {
