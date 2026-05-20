@@ -48,6 +48,8 @@ val dockerCompose: String by lazy {
 
 data class Result(val code: Int, val out: String)
 
+class ScriptFailure(message: String) : RuntimeException(message)
+
 fun now(): String = LocalDateTime.now().format(timeFormat)
 
 fun log(mark: String, message: String, file: File? = deployLog) {
@@ -82,7 +84,7 @@ fun head(): String = q("git rev-parse HEAD 2>/dev/null || true")
 
 fun fail(s: String): Nothing {
     log("✗", s)
-    exitProcess(1)
+    throw ScriptFailure(s)
 }
 
 fun String.shellQuote(): String = "'${replace("'", "'\\''")}'"
@@ -171,18 +173,23 @@ fun allTests() {
     publicSmoke()
 }
 
-fun appendDeployHistory(mode: String, durationMs: Long) {
+fun appendDeployHistory(
+    mode: String,
+    durationMs: Long,
+    status: String = "OK",
+    detail: String = "verifyServer, dashboard artifact, installServer, local smoke",
+) {
     val head = q("git rev-parse --short HEAD 2>/dev/null || true").ifBlank { "unknown" }
     deployHistory.appendText(
         listOf(
             "\"repo\":\"backend\"",
             "\"label\":${"deploy $head".jsonString()}",
-            "\"status\":\"OK\"",
+            "\"status\":${status.jsonString()}",
             "\"timestamp_ms\":${System.currentTimeMillis()}",
             "\"duration_ms\":$durationMs",
             "\"head\":${head.jsonString()}",
             "\"mode\":${mode.jsonString()}",
-            "\"detail\":\"verifyServer, dashboard artifact, installServer, local smoke\"",
+            "\"detail\":${detail.jsonString()}",
         ).joinToString(prefix = "{", postfix = "}\n"),
     )
 }
@@ -389,43 +396,50 @@ fun installAndForeground(): Nothing {
 }
 
 fun deploy() {
-    val reloadFrom = withLock<String?> {
-        val start = System.nanoTime()
-        val mode = serviceMode()
-        val carriedSyncFrom = System.getenv(syncFromEnv)?.takeIf(String::isNotBlank)
-        val beforeSync = carriedSyncFrom ?: head()
-        log("◆", "deploying $app")
-        listOf(
-            "mode" to mode,
-            "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
-        ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
-        syncGit()
-        if (carriedSyncFrom == null && scriptChanged(beforeSync, head())) return@withLock beforeSync
-        gradle(":verifyServer")
-        buildDashboardWebIfNeeded(beforeSync, head())
+    val start = System.nanoTime()
+    val mode = serviceMode()
+    val reloadFrom = runCatching {
+        withLock<String?> {
+            val carriedSyncFrom = System.getenv(syncFromEnv)?.takeIf(String::isNotBlank)
+            val beforeSync = carriedSyncFrom ?: head()
+            log("◆", "deploying $app")
+            listOf(
+                "mode" to mode,
+                "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
+            ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
+            syncGit()
+            if (carriedSyncFrom == null && scriptChanged(beforeSync, head())) return@withLock beforeSync
+            gradle(":verifyServer")
+            buildDashboardWebIfNeeded(beforeSync, head())
 
-        when (mode) {
-            "runtime" -> {
-                log("✓", "verification passed; runtime systemd unit detected")
-                systemctl("stop")
-                gradle(":installServer")
-                startService()
-                localSmoke()
-            }
-            "legacy" -> {
-                if (!insideBackendService()) {
-                    fail("$service still self-deploys through deploy.main.kts. Install the runtime unit before detached deploy.")
+            when (mode) {
+                "runtime" -> {
+                    log("✓", "verification passed; runtime systemd unit detected")
+                    systemctl("stop")
+                    gradle(":installServer")
+                    startService()
+                    localSmoke()
                 }
-                installAndForeground()
+                "legacy" -> {
+                    if (!insideBackendService()) {
+                        fail("$service still self-deploys through deploy.main.kts. Install the runtime unit before detached deploy.")
+                    }
+                    installAndForeground()
+                }
+                "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
+                else -> installAndForeground()
             }
-            "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> installAndForeground()
-        }
 
+            val durationMs = (System.nanoTime() - start) / 1_000_000
+            appendDeployHistory(mode, durationMs)
+            log("✓", "deploy complete in ${durationMs}ms")
+            null
+        }
+    }.getOrElse {
         val durationMs = (System.nanoTime() - start) / 1_000_000
-        appendDeployHistory(mode, durationMs)
-        log("✓", "deploy complete in ${durationMs}ms")
-        null
+        runCatching { appendDeployHistory(mode, durationMs, "FAIL", it.message ?: it::class.qualifiedName.orEmpty()) }
+            .onFailure { historyError -> log("⚠", "could not write deploy failure history: ${historyError.message}") }
+        throw it
     }
     if (reloadFrom != null) reloadDeploy("deploy", reloadFrom)
 }
@@ -474,7 +488,7 @@ val scriptExit = runCatching { dispatch(args.firstOrNull() ?: "deploy") }
     .fold(
         onSuccess = { 0 },
         onFailure = {
-            log("✗", it.message ?: it::class.qualifiedName.orEmpty())
+            if (it !is ScriptFailure) log("✗", it.message ?: it::class.qualifiedName.orEmpty())
             1
         },
     )

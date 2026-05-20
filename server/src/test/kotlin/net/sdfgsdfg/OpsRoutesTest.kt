@@ -288,19 +288,20 @@ class OpsRoutesTest {
     }
 
     @Test
-    fun deployHistoryReadsNewestSuccessfulRuns() {
+    fun deployHistoryReadsNewestRunsWithStatus() {
         val file = File(createTempDirectory().toFile(), "deploy-history.jsonl")
         file.writeText(
             """
             not-json
             {"label":"deploy old","status":"OK","timestamp_ms":1,"duration_ms":11,"head":"old","detail":"old detail"}
-            {"label":"deploy new","status":"OK","timestamp_ms":2,"duration_ms":22,"head":"new","detail":"new detail"}
+            {"label":"deploy failed","status":"FAIL","timestamp_ms":2,"duration_ms":22,"head":"fail","detail":"gradle failed"}
             """.trimIndent(),
         )
 
         val history = deployHistory(file)
-        assertEquals(listOf("deploy new", "deploy old"), history.map { it.label })
-        assertEquals(listOf("new detail", "old detail"), history.map { it.detail })
+        assertEquals(listOf("deploy failed", "deploy old"), history.map { it.label })
+        assertEquals(listOf(OpsStatusDto.FAIL, OpsStatusDto.OK), history.map { it.status })
+        assertEquals(listOf("gradle failed", "old detail"), history.map { it.detail })
         assertEquals(2L, history.first().timestampMs)
         assertEquals(22.0, history.first().durationMs)
     }
