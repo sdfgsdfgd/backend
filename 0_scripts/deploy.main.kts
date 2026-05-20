@@ -49,6 +49,7 @@ val dockerCompose: String by lazy {
         else -> fail("Docker Compose is required for local foreground deploy.")
     }
 }
+val runningOnQ: Boolean by lazy { q("hostname -s 2>/dev/null || hostname").equals(qHost, ignoreCase = true) }
 
 data class Result(val code: Int, val out: String)
 
@@ -168,7 +169,7 @@ fun publicSmoke() {
 }
 
 fun qRun(command: String, check: Boolean = true, quiet: Boolean = false): Result =
-    run("ssh $qHost ${command.shellQuote()}", check = check, quiet = quiet)
+    run(if (runningOnQ) command else "ssh $qHost ${command.shellQuote()}", check = check, quiet = quiet)
 
 fun arcanaSmoke() {
     log("◆", "q arcana pytest")

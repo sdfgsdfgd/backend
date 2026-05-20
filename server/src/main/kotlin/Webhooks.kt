@@ -18,6 +18,7 @@ import java.io.File
 
 private val webhookDeployMutex = Mutex()
 private val webhookSelfTestMutex = Mutex()
+private val webhookArcanaSmokeMutex = Mutex()
 
 fun Route.githubWebhookRoute() {
     post("/webhook/github") { call.processGitHubWebhook(targetOverride = null) }
@@ -25,6 +26,9 @@ fun Route.githubWebhookRoute() {
 }
 
 private val json = Json { ignoreUnknownKeys = true }
+private val arcanaSmokeWebhookSecret = System.getenv("ARCANA_SMOKE_WEBHOOK_SECRET")?.trim().takeIf { !it.isNullOrEmpty() }
+private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADER")?.trim()
+    .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
 
 private data class DeploymentProfile(
     val commands: List<String>,
@@ -58,6 +62,11 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
             "curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '{}' http://127.0.0.1/api/selftest/run"
         ),
     ),
+    "arcana-smoke" to DeploymentProfile(
+        commands = listOf(
+            "cd /home/x/Desktop/kotlin/backend && /home/x/.sdkman/candidates/kotlin/current/bin/kotlin /home/x/Desktop/kotlin/backend/0_scripts/deploy.main.kts arcana-smoke"
+        ),
+    ),
 )
 
 private val repoToSlug: Map<String, String> = deploymentProfiles
@@ -88,7 +97,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         repoFullName != null -> repoToSlug[repoFullName.lowercase()]
         else -> null
     } ?: "default"
-    if (matchedSlug != "server-py-selftest" && eventType != "push") {
+    if (matchedSlug !in setOf("server-py-selftest", "arcana-smoke") && eventType != "push") {
         log("ℹ️ Ignoring GitHub webhook event='$eventType' for target='$matchedSlug'; deployments only run on push.", deploymentLog)
         respondText("🙇 Deployment ignored for non-push GitHub event '$eventType'", status = HttpStatusCode.Accepted)
         return
@@ -170,6 +179,45 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
             text = """{"ok":false,"raw_error":"selftest webhook command failed","exit_code":$exit,"stderr":"$stderrBody","stdout":"$stdoutPreview"}""",
             contentType = ContentType.Application.Json,
             status = HttpStatusCode.InternalServerError,
+        )
+        return
+    }
+
+    if (matchedSlug == "arcana-smoke") {
+        if (arcanaSmokeWebhookSecret.isNullOrBlank() || request.headers[arcanaSmokeWebhookHeader]?.trim() != arcanaSmokeWebhookSecret) {
+            log("⚠️ Rejected unauthorized arcana-smoke webhook.", deploymentLog)
+            respondText(
+                text = """{"ok":false,"raw_error":"unauthorized arcana-smoke webhook"}""",
+                contentType = ContentType.Application.Json,
+                status = HttpStatusCode.Unauthorized,
+            )
+            return
+        }
+
+        val command = profile.commands.single()
+        val stdoutLines = mutableListOf<String>()
+        val stderrLines = mutableListOf<String>()
+        val exit = webhookArcanaSmokeMutex.withLock {
+            log("Running command for $matchedSlug: '$command'", deploymentLog)
+            val commandExit = command.shell(
+                logFile = deploymentLog,
+                onLine = { line, isError ->
+                    if (isError) stderrLines += line else stdoutLines += line
+                },
+            )
+            if (commandExit == 0) {
+                log("✅ SUCCESS ($matchedSlug): '$command' executed (exit=$commandExit).", deploymentLog)
+            } else {
+                log("❌ FAILURE ($matchedSlug): '$command' failed (exit=$commandExit).", deploymentLog)
+            }
+            commandExit
+        }
+        val stdoutPreview = stdoutLines.joinToString("\n").trim().take(4_000).escapeJson()
+        val stderrPreview = stderrLines.joinToString("\n").trim().take(4_000).escapeJson()
+        respondText(
+            text = """{"ok":${exit == 0},"exit_code":$exit,"stdout":"$stdoutPreview","stderr":"$stderrPreview"}""",
+            contentType = ContentType.Application.Json,
+            status = if (exit == 0) HttpStatusCode.OK else HttpStatusCode.InternalServerError,
         )
         return
     }

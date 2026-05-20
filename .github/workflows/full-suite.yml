@@ -127,6 +127,23 @@ jobs:
         run: python3 .github/scripts/server_py_live_selftest.py
 
   # ---------------------------------------------------------------------------
+  # arcana-smoke: asks backend to run q-local Arcana pytest and publish JSON.
+  # ---------------------------------------------------------------------------
+  arcana-smoke:
+    name: all-tests / arcana-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: arcana-smoke
+        env:
+          ARCANA_SMOKE_WEBHOOK_SECRET: ${{ secrets.ARCANA_SMOKE_WEBHOOK_SECRET }}
+        run: python3 .github/scripts/arcana_smoke.py
+
+  # ---------------------------------------------------------------------------
   # public-ingress-smoke: first public edge of the future full test pyramid.
   # ---------------------------------------------------------------------------
   public-ingress:
@@ -155,7 +172,7 @@ jobs:
           grep -F "dashboard-web.js" "$RUNNER_TEMP/ops-shell.html"
 
   # Future all-tests branches:
-  # - arcana-ingest/contract/local-publisher checks.
+  # - arcana issue/session contract checks once Arcana owns those schemas.
 
   dashboard-web:
     name: all-tests / dashboard-web
@@ -203,6 +220,7 @@ jobs:
       - backend-local
       - server-py-contract-tests
       - server-py-live-selftest
+      - arcana-smoke
       - public-ingress
       - dashboard-web
       - dashboard-desktop
@@ -215,6 +233,7 @@ jobs:
           test "${{ needs.backend-local.result }}" = "success"
           test "${{ needs.server-py-contract-tests.result }}" = "success"
           test "${{ needs.server-py-live-selftest.result }}" = "success"
+          test "${{ needs.arcana-smoke.result }}" = "success"
           test "${{ needs.public-ingress.result }}" = "success"
           test "${{ needs.dashboard-web.result }}" = "success"
           test "${{ needs.dashboard-desktop.result }}" = "success"
