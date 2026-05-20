@@ -407,6 +407,9 @@ private fun RunPanel(run: TestRunSummaryDto) {
         run.detail?.let {
             Text(it, color = muted, fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
+        run.url?.let {
+            Text(it, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -839,6 +842,9 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
             }
             step.detail?.let {
                 Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            step.url?.let {
+                Text(it, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

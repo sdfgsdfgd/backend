@@ -43,6 +43,10 @@ class OpsRoutesTest {
             listOf("local smoke", "server checks", "public ingress"),
             summary.repos.first { it.id == "backend" }.runs.map { it.label },
         )
+        assertEquals(
+            "https://sdfgsdfg.net/test",
+            summary.repos.first { it.id == "backend" }.runs.first { it.label == "public ingress" }.url,
+        )
     }
 
     @Test

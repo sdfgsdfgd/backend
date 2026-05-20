@@ -39,6 +39,7 @@ private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
+private val publicIngressUrl = "https://sdfgsdfg.net/test"
 
 fun Route.opsRoutes(localPreview: Boolean = System.getenv("BACKEND_ENV") == "local") {
     get("/api/ops/summary") {
@@ -145,7 +146,7 @@ private fun latestServerPySelfTest(): SelfTestResultDto? = runCatching {
 private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     latestRun,
     TestRunSummaryDto("server checks", OpsStatusDto.OK, detail = "Gradle :verifyServer gates production deploy before restart."),
-    TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External https://sdfgsdfg.net/test stays outside restart gating."),
+    TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External probe stays outside restart gating.", url = publicIngressUrl),
 )
 
 private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> = listOfNotNull(
