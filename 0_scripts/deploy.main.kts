@@ -7,11 +7,13 @@ import java.net.Socket
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
 val app: String = "backend"
 val service: String = "backend.service"
 val port: Int = 80
+val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
@@ -19,8 +21,16 @@ val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNe
 val buildLog: File = logs.resolve("build.log").apply { if (!exists()) createNewFile() }
 val appLog: File = logs.resolve("app.log").apply { if (!exists()) createNewFile() }
 val lockFile: File = logs.resolve("deploy.lock")
+val localDbCompose: File = root.resolve("ops/local/postgres.compose.yml")
 val bin: String = root.resolve("server/build/install/server/bin/server").canonicalPath
 val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+val dockerCompose: String by lazy {
+    when {
+        run("docker compose version", null, check = false, quiet = true).code == 0 -> "docker compose"
+        run("docker-compose version", null, check = false, quiet = true).code == 0 -> "docker-compose"
+        else -> fail("Docker Compose is required for local foreground deploy.")
+    }
+}
 
 data class Result(val code: Int, val out: String)
 
@@ -59,11 +69,16 @@ fun fail(s: String): Nothing {
     exitProcess(1)
 }
 
+fun String.shellQuote(): String = "'${replace("'", "'\\''")}'"
+
 fun portPid(): String? = listOf(
     "lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null | head -n1",
     "ss -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -n1",
     "sudo ss -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -n1",
 ).firstNotNullOfOrNull { q(it).takeIf(String::isNotBlank) }
+
+fun localDb(command: String, check: Boolean = true, quiet: Boolean = false): Result =
+    run("$dockerCompose -f ${localDbCompose.absolutePath.shellQuote()} $command", check = check, quiet = quiet)
 
 fun execStart(): String? = run("systemctl show -p ExecStart --value $service 2>/dev/null", null, check = false, quiet = true)
     .takeIf { it.code == 0 }
@@ -110,31 +125,65 @@ fun stopPort() {
     run("kill -9 $pid", check = false)
 }
 
+fun startLocalDb() {
+    if (!localDbCompose.exists()) fail("Missing local Postgres compose file: ${localDbCompose.absolutePath}")
+    log("◆", "starting local postgres")
+    localDb("up -d postgres")
+    log("◆", "waiting for local postgres on 127.0.0.1:$postgresPort")
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
+    while (System.nanoTime() < deadline) {
+        if (localDb("exec -T postgres pg_isready -U x -d x", check = false, quiet = true).code == 0) {
+            return log("✓", "local postgres is ready")
+        }
+        Thread.sleep(1_000)
+    }
+    fail("local postgres did not become ready within 45s")
+}
+
+fun stopLocalDb() {
+    if (!localDbCompose.exists()) return
+    log("◆", "stopping local postgres")
+    localDb("down --volumes --remove-orphans", check = false)
+}
+
 fun foreground(): Nothing {
     if (!File(bin).exists()) fail("Missing runtime script: $bin. Run deploy first.")
+    startLocalDb()
     log("◆", "starting $app in foreground: $bin", appLog)
-    val process = ProcessBuilder(bin)
-        .directory(root)
-        .inheritIO()
-        .also {
-            it.environment().putIfAbsent("JAVA_HOME", javaHome)
-            it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
-            it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
-        }
-        .start()
-    val stopChild = Thread {
-        if (!process.isAlive) return@Thread
-        log("◆", "stopping $app foreground process pid=${process.pid()}", appLog)
-        process.destroy()
-        if (!process.waitFor(5, TimeUnit.SECONDS)) {
-            log("⚠", "foreground process did not stop; killing pid=${process.pid()}", appLog)
-            process.destroyForcibly()
-            process.waitFor(5, TimeUnit.SECONDS)
-        }
+    val process = runCatching {
+        ProcessBuilder(bin)
+            .directory(root)
+            .inheritIO()
+            .also {
+                it.environment().putIfAbsent("JAVA_HOME", javaHome)
+                it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
+                it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
+            }
+            .start()
     }
-    Runtime.getRuntime().addShutdownHook(stopChild)
+        .getOrElse {
+            stopLocalDb()
+            throw it
+        }
+    val stopped = AtomicBoolean(false)
+    fun stopForeground() {
+        if (!stopped.compareAndSet(false, true)) return
+        if (process.isAlive) {
+            log("◆", "stopping $app foreground process pid=${process.pid()}", appLog)
+            process.destroy()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                log("⚠", "foreground process did not stop; killing pid=${process.pid()}", appLog)
+                process.destroyForcibly()
+                process.waitFor(5, TimeUnit.SECONDS)
+            }
+        }
+        stopLocalDb()
+    }
+    val stopHook = Thread(::stopForeground)
+    Runtime.getRuntime().addShutdownHook(stopHook)
     val exit = process.waitFor()
-    runCatching { Runtime.getRuntime().removeShutdownHook(stopChild) }
+    runCatching { Runtime.getRuntime().removeShutdownHook(stopHook) }
+    stopForeground()
     exitProcess(exit)
 }
 
@@ -241,12 +290,12 @@ fun dispatch(command: String) {
         "stop" -> when (mode) {
             "runtime" -> systemctl("stop")
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> stopPort()
+            else -> { stopPort(); stopLocalDb() }
         }
         "restart" -> when (mode) {
             "runtime" -> { systemctl("restart"); waitPort() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> { stopPort(); foreground() }
+            else -> { stopPort(); stopLocalDb(); foreground() }
         }
         "status" -> status()
         "verify" -> gradle("clean build installDist")
