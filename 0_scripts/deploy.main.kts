@@ -23,6 +23,17 @@ val appLog: File = logs.resolve("app.log").apply { if (!exists()) createNewFile(
 val lockFile: File = logs.resolve("deploy.lock")
 val scriptPath: String = "0_scripts/deploy.main.kts"
 val scriptFile: File = root.resolve(scriptPath)
+val syncFromEnv: String = "BACKEND_DEPLOY_SYNC_FROM"
+val dashboardWebArtifact: File = root.resolve("dashboard/web/build/dist/wasmJs/productionExecutable/dashboard-web.js")
+val dashboardWebInputs: List<String> = listOf(
+    "dashboard",
+    "core/src/commonMain",
+    "core/build.gradle.kts",
+    "gradle/libs.versions.toml",
+    "gradle.properties",
+    "settings.gradle.kts",
+    "build.gradle.kts",
+)
 val localDbCompose: File = root.resolve("ops/local/postgres.compose.yml")
 val bin: String = root.resolve("server/build/install/server/bin/server").canonicalPath
 val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -74,6 +85,8 @@ fun fail(s: String): Nothing {
 }
 
 fun String.shellQuote(): String = "'${replace("'", "'\\''")}'"
+
+fun List<String>.shellPathspec(): String = joinToString(" ") { it.shellQuote() }
 
 fun portPid(): String? = listOf(
     "lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null | head -n1",
@@ -237,6 +250,32 @@ fun scriptChanged(from: String, to: String): Boolean =
             .lineSequence()
             .any { it == scriptPath }
 
+fun changedIn(from: String, to: String, paths: List<String>): Boolean =
+    from.isNotBlank() && to.isNotBlank() && from != to &&
+        run("git diff --name-only ${from.shellQuote()} ${to.shellQuote()} -- ${paths.shellPathspec()}", null, check = false, quiet = true)
+            .out
+            .lineSequence()
+            .any(String::isNotBlank)
+
+fun dirtyIn(paths: List<String>): Boolean =
+    run("git status --porcelain -- ${paths.shellPathspec()}", null, check = false, quiet = true)
+        .out
+        .lineSequence()
+        .any(String::isNotBlank)
+
+fun dashboardWebBuildReason(from: String, to: String): String? = when {
+    !dashboardWebArtifact.isFile -> "missing artifact"
+    changedIn(from, to, dashboardWebInputs) -> "dashboard inputs changed"
+    dirtyIn(dashboardWebInputs) -> "dirty dashboard inputs"
+    else -> null
+}
+
+fun buildDashboardWebIfNeeded(from: String, to: String) {
+    val reason = dashboardWebBuildReason(from, to) ?: return log("✓", "dashboard web artifact is current")
+    log("◆", "building dashboard web artifact: $reason")
+    gradle(":dashboard:web:wasmJsBrowserDistribution")
+}
+
 fun kotlinRunner(): String =
     sequenceOf(
         q("command -v kotlin || true"),
@@ -247,13 +286,14 @@ fun kotlinRunner(): String =
         .firstOrNull { File(it).canExecute() }
         ?: fail("Could not find executable kotlin runner for deploy reload.")
 
-fun reloadDeploy(command: String): Nothing {
+fun reloadDeploy(command: String, syncFrom: String): Nothing {
     log("◆", "$scriptPath changed during git sync; restarting updated deploy script")
-    val exit = ProcessBuilder(kotlinRunner(), scriptFile.absolutePath, command)
+    val process = ProcessBuilder(kotlinRunner(), scriptFile.absolutePath, command)
         .directory(root)
         .inheritIO()
+        .also { it.environment()[syncFromEnv] = syncFrom }
         .start()
-        .waitFor()
+    val exit = process.waitFor()
     exitProcess(exit)
 }
 
@@ -317,18 +357,20 @@ fun installAndForeground(): Nothing {
 }
 
 fun deploy() {
-    val reload = withLock {
+    val reloadFrom = withLock<String?> {
         val start = System.nanoTime()
         val mode = serviceMode()
-        val beforeSync = head()
+        val carriedSyncFrom = System.getenv(syncFromEnv)?.takeIf(String::isNotBlank)
+        val beforeSync = carriedSyncFrom ?: head()
         log("◆", "deploying $app")
         listOf(
             "mode" to mode,
             "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
         ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
         syncGit()
-        if (scriptChanged(beforeSync, head())) return@withLock true
+        if (carriedSyncFrom == null && scriptChanged(beforeSync, head())) return@withLock beforeSync
         gradle(":verifyServer")
+        buildDashboardWebIfNeeded(beforeSync, head())
 
         when (mode) {
             "runtime" -> {
@@ -349,9 +391,9 @@ fun deploy() {
         }
 
         log("✓", "deploy complete in ${(System.nanoTime() - start) / 1_000_000}ms")
-        false
+        null
     }
-    if (reload) reloadDeploy("deploy")
+    if (reloadFrom != null) reloadDeploy("deploy", reloadFrom)
 }
 
 fun status() {
