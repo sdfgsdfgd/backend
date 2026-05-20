@@ -11,3 +11,5 @@ internal expect fun loadOpsSummary(
     onLoaded: (OpsSummaryDto) -> Unit,
     onFailed: (String) -> Unit,
 )
+
+internal expect fun openOpsUrl(url: String)

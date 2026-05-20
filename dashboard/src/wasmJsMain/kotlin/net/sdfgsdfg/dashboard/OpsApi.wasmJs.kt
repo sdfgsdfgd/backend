@@ -39,11 +39,20 @@ internal actual fun loadOpsSummary(
     )
 }
 
+internal actual fun openOpsUrl(url: String) {
+    window.open(opsUrl(url), "_blank")
+}
+
 private fun opsSummaryUrl(): String {
+    return opsUrl("/api/ops/summary")
+}
+
+private fun opsUrl(pathOrUrl: String): String {
+    if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) return pathOrUrl
     val port = window.location.port
     return if (port.isBlank() || port == "80" || port == "443") {
-        "/api/ops/summary"
+        pathOrUrl
     } else {
-        "http://127.0.0.1/api/ops/summary"
+        "http://127.0.0.1$pathOrUrl"
     }
 }

@@ -408,7 +408,14 @@ private fun RunPanel(run: TestRunSummaryDto) {
             Text(it, color = muted, fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         run.url?.let {
-            Text(it, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                it,
+                modifier = Modifier.clickable { openOpsUrl(it) },
+                color = cyan,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -845,7 +852,14 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
                 Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             step.url?.let {
-                Text(it, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    it,
+                    modifier = Modifier.clickable { openOpsUrl(it) },
+                    color = cyan,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -1098,18 +1112,20 @@ private fun SelfTestArtifacts(selfTest: SelfTestSummaryDto) {
 @Composable
 private fun ArtifactTile(artifact: OpsArtifactDto) {
     val shape = RoundedCornerShape(7.dp)
+    val url = artifact.url
+    val tile = Modifier
+        .fillMaxWidth()
+        .surfaceDepth(shape, cyan, glowAlpha = 0.045f)
+        .clip(shape)
+        .background(Color(0xFF0D141B))
+        .border(BorderStroke(1.dp, Color(0xFF202B38)), shape)
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .surfaceDepth(shape, cyan, glowAlpha = 0.045f)
-            .clip(shape)
-            .background(Color(0xFF0D141B))
-            .border(BorderStroke(1.dp, Color(0xFF202B38)), shape)
+        modifier = (url?.let { tile.clickable { openOpsUrl(it) } } ?: tile)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(artifact.name, color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(artifact.url ?: artifact.path ?: "pending", color = muted, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(url ?: artifact.path ?: "pending", color = if (url == null) muted else cyan, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
