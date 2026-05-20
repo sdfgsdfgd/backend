@@ -49,7 +49,7 @@ dependencies {
     implementation(libs.ktor.server.sessions)
     implementation(libs.ktor.server.auth)
     implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.apache)
+    implementation(libs.ktor.client.apache5)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.websockets)
     implementation(libs.ktor.server.auth.jwt)
@@ -95,14 +95,20 @@ dependencies {
 }
 
 protobuf {
-    protoc { artifact = "com.google.protobuf:protoc:3.25.3" }
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.version.get()}" }
 
     plugins {
-        id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.63.0" }
-        id("grpckt") { artifact = "io.grpc:protoc-gen-grpc-kotlin:1.4.1:jdk8@jar" }
+        id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.java.version.get()}" }
+        id("grpckt") { artifact = "io.grpc:protoc-gen-grpc-kotlin:${libs.versions.grpc.kotlin.version.get()}:jdk8@jar" }
     }
 
     generateProtoTasks {
-        all().forEach { it.plugins { id("grpc");id("grpckt");id("kotlin") } }
+        all().forEach {
+            it.builtins { id("kotlin") }
+            it.plugins {
+                id("grpc")
+                id("grpckt")
+            }
+        }
     }
 }

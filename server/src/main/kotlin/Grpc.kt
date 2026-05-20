@@ -17,7 +17,6 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
-import io.ktor.util.encodeBase64
 import io.ktor.util.reflect.TypeInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +39,7 @@ import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.io.encoding.Base64
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -138,7 +138,7 @@ private fun startAskJob(
             val payload = heartbeatJson.encodeToString(
                 AskReplyDto(
                     text = reply.text,
-                    ttsMp3 = if (wantTts) reply.ttsMp3.toByteArray().encodeBase64() else null
+                    ttsMp3 = if (wantTts) Base64.Default.encode(reply.ttsMp3.toByteArray()) else null
                 )
             )
             log.info("[gRPC][$backendId][$rpcId] job result ready elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")

@@ -87,6 +87,11 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         repoFullName != null -> repoToSlug[repoFullName.lowercase()]
         else -> null
     } ?: "default"
+    if (matchedSlug != "server-py-selftest" && eventType != "push") {
+        log("ℹ️ Ignoring GitHub webhook event='$eventType' for target='$matchedSlug'; deployments only run on push.", deploymentLog)
+        respondText("🙇 Deployment ignored for non-push GitHub event '$eventType'", status = HttpStatusCode.Accepted)
+        return
+    }
     if (matchedSlug == "server-py" && eventType == "push" && senderLogin == "github-actions[bot]") {
         log("ℹ️ Skipping server-py deployment for GitHub Actions bot push.", deploymentLog)
         respondText("🙇 Deployment skipped for GitHub Actions bot push", status = HttpStatusCode.Accepted)

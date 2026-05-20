@@ -1,7 +1,7 @@
 package net.sdfgsdfg
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.apache.Apache
+import io.ktor.client.engine.apache5.Apache5
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 import io.ktor.client.plugins.HttpTimeout
@@ -24,7 +24,7 @@ import io.ktor.server.request.queryString
 import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 
-val httpClient = HttpClient(Apache) {
+val httpClient = HttpClient(Apache5) {
     followRedirects = false
     engine {
         followRedirects = false
