@@ -559,7 +559,7 @@ private fun CiResults(loadState: OpsLoadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "CI Results",
             detail = "Waiting for the ops summary before shaping the pyramid lanes.",
-            items = listOf("backend-local", "server_py live selftest", "dashboard web / desktop", "arcana local publisher"),
+            items = listOf("backend-local", "server_py live selftest", "dashboard web / desktop", "arcana-smoke"),
         )
         is OpsLoadState.Failed -> WorkSurface(
             title = "CI Results Unavailable",
@@ -771,7 +771,7 @@ private fun PyramidHeader(summary: OpsSummaryDto) {
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Big CI Pyramid", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("GitHub Actions, deploy smoke, server_py live selftest, and future Arcana publishers converge here.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
+                Text("GitHub Actions, deploy smoke, server_py live selftest, and Arcana pytest smoke converge here.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
             }
             StatusPill("${summary.repos.size} repos", cyan)
         }
@@ -1381,8 +1381,8 @@ private fun fallbackPipelineSteps(repo: RepoHealthDto): List<TestRunSummaryDto> 
         TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py keeps browser automation internals; backend displays normalized facts."),
     )
     "arcana" -> listOf(
-        repo.latestRun ?: TestRunSummaryDto("local publisher", OpsStatusDto.WIP, detail = "Arcana remains local-first for MVP."),
-        TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "Future local publisher reports pytest/session/issue summaries."),
+        repo.latestRun ?: TestRunSummaryDto("arcana-smoke", OpsStatusDto.WIP, detail = "Run q Arcana pytest and publish only summary JSON."),
+        TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "Waiting for q arcana-smoke result."),
         TestRunSummaryDto("RSI sessions", OpsStatusDto.WIP, detail = "Deferred until issue and CI surfaces can receive output."),
     )
     else -> listOf(repo.latestRun ?: TestRunSummaryDto("latest run", repo.status, detail = repo.note))

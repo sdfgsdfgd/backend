@@ -311,11 +311,17 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
     TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 
-private fun arcanaRuns(latestRun: TestRunSummaryDto, ingest: ArcanaIngestDto?) =
-    listOf(latestRun) + ingest?.runs.orEmpty() + listOf(
-        TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "Future local publisher reports pytest/session/issue summaries."),
+private fun arcanaRuns(latestRun: TestRunSummaryDto, ingest: ArcanaIngestDto?) = buildList {
+    add(latestRun)
+    addAll(ingest?.runs.orEmpty())
+    if (ingest == null) {
+        add(TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "arcana-smoke has not published a q pytest summary yet."))
+    }
+    addAll(listOf(
+        TestRunSummaryDto("issue/session schema", OpsStatusDto.WIP, detail = "Waits for Arcana-owned .arcana/issues.json and session output contracts."),
         TestRunSummaryDto("RSI sessions", OpsStatusDto.WIP, detail = "Deferred until issue and CI surfaces can receive output."),
-    )
+    ))
+}
 
 internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
     val file = repoRoot.resolve(".arcana/issues.json").takeIf { it.isFile } ?: return IssueSummaryDto()

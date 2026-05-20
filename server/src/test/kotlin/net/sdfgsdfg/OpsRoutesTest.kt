@@ -381,6 +381,8 @@ class OpsRoutesTest {
         assertEquals(1, arcana.issues.wip)
         assertEquals(3, arcana.issues.done)
         assertEquals(true, arcana.runs.any { it.label == "pytest unit" && it.status == OpsStatusDto.OK })
+        assertEquals(false, arcana.runs.any { it.label == "pytest unit spine" })
+        assertEquals(true, arcana.runs.any { it.label == "issue/session schema" && it.status == OpsStatusDto.WIP })
         assertEquals(true, ingestFile.readText().contains("timestamp_ms"))
     }
 
