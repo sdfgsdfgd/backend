@@ -59,7 +59,11 @@ fun fail(s: String): Nothing {
     exitProcess(1)
 }
 
-fun portPid(): String? = q("(lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null || true) | head -n1").takeIf { it.isNotBlank() }
+fun portPid(): String? = listOf(
+    "lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null | head -n1",
+    "ss -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -n1",
+    "sudo ss -ltnp 'sport = :$port' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -n1",
+).firstNotNullOfOrNull { q(it).takeIf(String::isNotBlank) }
 
 fun execStart(): String? = run("systemctl show -p ExecStart --value $service 2>/dev/null", null, check = false, quiet = true)
     .takeIf { it.code == 0 }
@@ -208,7 +212,7 @@ fun status() {
         "head" to q("git rev-parse --short HEAD 2>/dev/null || true").ifBlank { "unknown" },
         "mode" to serviceMode(),
         "exec" to (execStart() ?: "unavailable"),
-        "port:$port" to (portPid()?.let { "listening pid=$it" } ?: "closed"),
+        "port:$port" to (portPid()?.let { "listening pid=$it" } ?: if (portOpen()) "listening" else "closed"),
     ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
 }
 
