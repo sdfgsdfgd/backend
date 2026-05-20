@@ -223,6 +223,11 @@ fun foreground(): Nothing {
 
 fun systemctl(action: String) = run("sudo systemctl --no-ask-password $action $service")
 
+fun startService() {
+    systemctl("reset-failed")
+    systemctl("start")
+}
+
 fun gradle(tasks: String) = run("./gradlew $tasks --warning-mode all", buildLog)
 
 fun scriptChanged(from: String, to: String): Boolean =
@@ -330,7 +335,7 @@ fun deploy() {
                 log("✓", "verification passed; runtime systemd unit detected")
                 systemctl("stop")
                 gradle(":installServer")
-                systemctl("start")
+                startService()
                 localSmoke()
             }
             "legacy" -> {
@@ -365,7 +370,7 @@ fun dispatch(command: String) {
     when (command) {
         "deploy", "" -> deploy()
         "start" -> when (mode) {
-            "runtime" -> { systemctl("start"); localSmoke() }
+            "runtime" -> { startService(); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> foreground()
         }
@@ -375,7 +380,7 @@ fun dispatch(command: String) {
             else -> { stopPort(); stopLocalDb() }
         }
         "restart" -> when (mode) {
-            "runtime" -> { systemctl("restart"); localSmoke() }
+            "runtime" -> { systemctl("reset-failed"); systemctl("restart"); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> { stopPort(); stopLocalDb(); foreground() }
         }
