@@ -24,16 +24,25 @@ internal actual fun loadOpsSummary(
 }
 
 private fun fetchOpsSummary(): OpsSummaryDto {
-    val endpoint = System.getenv("OPS_API_BASE")?.trim()?.trimEnd('/')
+    val endpoints = System.getenv("OPS_API_BASE")?.trim()?.trimEnd('/')
         ?.takeIf { it.isNotBlank() }
-        ?: "http://127.0.0.1"
-    val request = HttpRequest.newBuilder()
-        .uri(URI.create("$endpoint/api/ops/summary"))
-        .GET()
-        .build()
-    val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
-    if (response.statusCode() !in 200..299) {
-        error("GET /api/ops/summary failed with ${response.statusCode()}")
+        ?.let(::listOf)
+        ?: listOf("http://127.0.0.1", "https://ops.sdfgsdfg.net")
+
+    val client = HttpClient.newHttpClient()
+    var lastError: Throwable? = null
+    endpoints.forEach { endpoint ->
+        runCatching {
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("$endpoint/api/ops/summary"))
+                .GET()
+                .build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() !in 200..299) {
+                error("GET $endpoint/api/ops/summary failed with ${response.statusCode()}")
+            }
+            return dashboardJson.decodeFromString<OpsSummaryDto>(response.body())
+        }.onFailure { lastError = it }
     }
-    return dashboardJson.decodeFromString<OpsSummaryDto>(response.body())
+    throw lastError ?: error("No ops API endpoints configured")
 }
