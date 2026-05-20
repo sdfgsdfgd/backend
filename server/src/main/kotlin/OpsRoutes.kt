@@ -54,15 +54,38 @@ private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
 private val publicIngressUrl = "https://sdfgsdfg.net/test"
+private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 
-fun Route.opsRoutes(localPreview: Boolean = System.getenv("BACKEND_ENV") == "local") {
-    get("/api/ops/summary") {
+fun Route.opsRoutes(
+    localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
+    selfTestArtifactFile: File = serverPySelfTestFile,
+) {
+    fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
-        if (!opsHost && !(localPreview && call.clientInfo().isLocal)) {
+        return opsHost || (localPreview && call.clientInfo().isLocal)
+    }
+
+    get("/api/ops/summary") {
+        if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
         call.respond(opsSummary())
+    }
+
+    get(serverPySelfTestArtifactUrl) {
+        if (!allowed(call)) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@get
+        }
+
+        val artifact = selfTestArtifactFile.takeIf { it.isFile }
+        if (artifact == null) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+        } else {
+            call.response.headers.append(HttpHeaders.CacheControl, "no-store")
+            call.respondText(artifact.readText(), ContentType.Application.Json)
+        }
     }
 }
 
@@ -313,7 +336,7 @@ internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {
         zenSeverity = zen?.text("severity"),
         zenArtifactPath = zen?.text("folder") ?: zen?.text("context_file") ?: zen?.text("status_file"),
         workflowUrl = workflowUrl,
-        artifacts = listOf(OpsArtifactDto(name = "server-py-selftest.json", path = serverPySelfTestFile.path)),
+        artifacts = listOf(OpsArtifactDto(name = "server-py-selftest.json", path = serverPySelfTestFile.path, url = serverPySelfTestArtifactUrl)),
         cases = caseSummaries,
     )
 }

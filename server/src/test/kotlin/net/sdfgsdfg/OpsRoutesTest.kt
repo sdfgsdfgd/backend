@@ -130,6 +130,26 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsSelftestArtifactIsScopedAndDownloadable() = testApplication {
+        val artifact = File(createTempDirectory().toFile(), "server-py-selftest.json")
+        artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok"}""")
+
+        application {
+            routing {
+                opsRoutes(selfTestArtifactFile = artifact)
+            }
+        }
+
+        val opsResponse = client.get("/api/ops/artifacts/server-py-selftest.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val publicResponse = client.get("/api/ops/artifacts/server-py-selftest.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
+
+        assertEquals(HttpStatusCode.OK, opsResponse.status)
+        assertEquals("no-store", opsResponse.headers[HttpHeaders.CacheControl])
+        assertEquals("""{"ok":true,"text_excerpt":"conversation ok"}""", opsResponse.body<String>())
+        assertEquals(HttpStatusCode.NotFound, publicResponse.status)
+    }
+
+    @Test
     fun opsApiIsAvailableOnLoopbackForLocalDashboardPreview() = testApplication {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
@@ -347,6 +367,7 @@ class OpsRoutesTest {
         assertEquals("error", summary.zenSeverity)
         assertEquals("/tmp/zen-artifact", summary.zenArtifactPath)
         assertEquals("server-py-selftest.json", summary.artifacts.single().name)
+        assertEquals("/api/ops/artifacts/server-py-selftest.json", summary.artifacts.single().url)
         assertEquals(listOf(OpsStatusDto.OK, OpsStatusDto.FAIL), summary.cases.map { it.status })
     }
 }
