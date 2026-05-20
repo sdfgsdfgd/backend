@@ -105,8 +105,12 @@ private suspend fun ApplicationCall.respondDashboardAsset(asset: String, dashboa
 
 private fun File.dashboardIndex(root: File): String {
     val script = root.resolve("dashboard-web.js")
-    val version = script.takeIf { it.isFile }?.sha256Prefix() ?: lastModified().toString()
-    return readText().replace(Regex("""dashboard-web\.js(?:\?v=[^"]*)?"""), "dashboard-web.js?v=$version")
+    val styles = root.resolve("styles.css")
+    val scriptVersion = script.takeIf { it.isFile }?.sha256Prefix() ?: lastModified().toString()
+    val styleVersion = styles.takeIf { it.isFile }?.sha256Prefix() ?: lastModified().toString()
+    return readText()
+        .replace(Regex("""styles\.css(?:\?v=[^"]*)?"""), "styles.css?v=$styleVersion")
+        .replace(Regex("""dashboard-web\.js(?:\?v=[^"]*)?"""), "dashboard-web.js?v=$scriptVersion")
 }
 
 private fun File.sha256Prefix(): String {

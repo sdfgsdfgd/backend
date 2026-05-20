@@ -220,7 +220,8 @@ class OpsRoutesTest {
     @Test
     fun opsDashboardIndexesVersionTheUnhashedJsShell() = testApplication {
         val dist = createTempDirectory().toFile()
-        File(dist, "index.html").writeText("""<script src="dashboard-web.js"></script>""")
+        File(dist, "index.html").writeText("""<link rel="stylesheet" href="styles.css"><script src="dashboard-web.js"></script>""")
+        File(dist, "styles.css").writeText("body { color: white; }")
         File(dist, "dashboard-web.js").writeText("console.log('versioned')")
 
         application {
@@ -234,8 +235,10 @@ class OpsRoutesTest {
         }
 
         val response = client.get("/") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val body = response.body<String>()
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(true, Regex("""dashboard-web\.js\?v=[a-f0-9]{16}""").containsMatchIn(response.body<String>()))
+        assertEquals(true, Regex("""styles\.css\?v=[a-f0-9]{16}""").containsMatchIn(body))
+        assertEquals(true, Regex("""dashboard-web\.js\?v=[a-f0-9]{16}""").containsMatchIn(body))
     }
 
     @Test
