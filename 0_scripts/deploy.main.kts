@@ -215,7 +215,25 @@ fun arcanaSmoke() {
 
 fun localTests() {
     gradle(":verifyServer :installServer")
-    localSmoke()
+    if (portOpen()) {
+        log("◆", "using existing local backend for tests")
+        localSmoke()
+        return
+    }
+    startLocalDb()
+    val process = runCatching {
+        log("◆", "starting temporary local backend: $bin", appLog)
+        startBackendProcess(console = false)
+    }.getOrElse {
+        stopLocalDb()
+        throw it
+    }
+    try {
+        localSmoke()
+    } finally {
+        stopBackendProcess(process)
+        stopLocalDb()
+    }
 }
 
 fun allTests() {
@@ -281,22 +299,36 @@ fun stopLocalDb() {
     localDb("down --volumes --remove-orphans", check = false)
 }
 
-fun foreground(): Nothing {
+fun startBackendProcess(console: Boolean): Process {
     if (!File(bin).exists()) fail("Missing runtime script: $bin. Run deploy first.")
+    return ProcessBuilder(bin)
+        .directory(root)
+        .redirectErrorStream(true)
+        .also {
+            it.environment().putIfAbsent("JAVA_HOME", javaHome)
+            it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
+            it.environment()["BACKEND_ENV"] = "local"
+            it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
+            if (console) it.inheritIO() else it.redirectOutput(ProcessBuilder.Redirect.appendTo(appLog))
+        }
+        .start()
+}
+
+fun stopBackendProcess(process: Process) {
+    if (!process.isAlive) return
+    log("◆", "stopping $app process pid=${process.pid()}", appLog)
+    process.destroy()
+    if (!process.waitFor(5, TimeUnit.SECONDS)) {
+        log("⚠", "process did not stop; killing pid=${process.pid()}", appLog)
+        process.destroyForcibly()
+        process.waitFor(5, TimeUnit.SECONDS)
+    }
+}
+
+fun foreground(): Nothing {
     startLocalDb()
     log("◆", "starting $app in foreground: $bin", appLog)
-    val process = runCatching {
-        ProcessBuilder(bin)
-            .directory(root)
-            .inheritIO()
-            .also {
-                it.environment().putIfAbsent("JAVA_HOME", javaHome)
-                it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
-                it.environment()["BACKEND_ENV"] = "local"
-                it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
-            }
-            .start()
-    }
+    val process = runCatching { startBackendProcess(console = true) }
         .getOrElse {
             stopLocalDb()
             throw it
@@ -304,15 +336,7 @@ fun foreground(): Nothing {
     val stopped = AtomicBoolean(false)
     fun stopForeground() {
         if (!stopped.compareAndSet(false, true)) return
-        if (process.isAlive) {
-            log("◆", "stopping $app foreground process pid=${process.pid()}", appLog)
-            process.destroy()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                log("⚠", "foreground process did not stop; killing pid=${process.pid()}", appLog)
-                process.destroyForcibly()
-                process.waitFor(5, TimeUnit.SECONDS)
-            }
-        }
+        stopBackendProcess(process)
         stopLocalDb()
     }
     val stopHook = Thread(::stopForeground)
