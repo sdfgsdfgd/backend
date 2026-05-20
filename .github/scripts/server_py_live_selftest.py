@@ -15,6 +15,10 @@ POLL_INTERVAL = 5
 POLL_TIMEOUT = 2_100
 HTTP_TIMEOUT = 20
 ZEN_IN_PROGRESS = {"queued", "in_progress", "verifying", "committing", "pushing"}
+BASE_HEADERS = {
+    "Accept": "*/*",
+    "User-Agent": "curl/8.5.0",
+}
 
 
 def main() -> int:
@@ -28,6 +32,7 @@ def main() -> int:
 def trigger_selftest() -> dict | None:
     body = json.dumps({"new_chat": True}).encode()
     headers = {
+        **BASE_HEADERS,
         "Content-Type": "application/json",
         "X-GitHub-Event": "live-selftest",
         **extra_headers(os.getenv("SELFTEST_WEBHOOK_HEADER")),
@@ -66,7 +71,7 @@ def trigger_selftest() -> dict | None:
 
 def poll_selftest(started_ms: int) -> int:
     deadline = time.time() + POLL_TIMEOUT
-    headers = extra_headers(os.getenv("SELFTEST_STATUS_HEADER"))
+    headers = {**BASE_HEADERS, **extra_headers(os.getenv("SELFTEST_STATUS_HEADER"))}
     last_payload = None
     while time.time() < deadline:
         req = urllib.request.Request(STATUS_URL, headers=headers)
