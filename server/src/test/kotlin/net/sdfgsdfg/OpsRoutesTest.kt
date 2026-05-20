@@ -217,6 +217,27 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsDashboardIndexesVersionTheUnhashedJsShell() = testApplication {
+        val dist = createTempDirectory().toFile()
+        File(dist, "index.html").writeText("""<script src="dashboard-web.js"></script>""")
+        File(dist, "dashboard-web.js").writeText("console.log('versioned')")
+
+        application {
+            routing {
+                route("/{...}") {
+                    handle {
+                        call.respondOpsDashboard(dist)
+                    }
+                }
+            }
+        }
+
+        val response = client.get("/") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(true, Regex("""dashboard-web\.js\?v=[a-f0-9]{16}""").containsMatchIn(response.body<String>()))
+    }
+
+    @Test
     fun opsDashboardHostIsExplicitWhenArtifactIsMissing() = testApplication {
         val missingDist = File(createTempDirectory().toFile(), "missing")
 

@@ -32,7 +32,7 @@
 
       const loadCompose = () => {
         const script = document.createElement("script");
-        script.src = "dashboard-web.js?v=4";
+        script.src = "dashboard-web.js";
         script.type = "application/javascript";
         script.onerror = () => show("Dashboard bundle failed to load.", "Rebuild :dashboard:web or refresh after the local preview server updates.");
         document.head.appendChild(script);

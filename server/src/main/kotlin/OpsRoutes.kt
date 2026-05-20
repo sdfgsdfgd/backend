@@ -29,6 +29,7 @@ import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
 import java.nio.file.Paths
+import java.security.MessageDigest
 
 private val opsJson = Json {
     ignoreUnknownKeys = true
@@ -80,10 +81,33 @@ private suspend fun ApplicationCall.respondDashboardAsset(asset: String, dashboa
         )
     } else {
         response.headers.append(HttpHeaders.CacheControl, responseFile.dashboardCacheControl())
-        respondOutputStream(responseFile.dashboardContentType()) {
-            responseFile.inputStream().use { it.copyTo(this) }
+        if (responseFile.name == "index.html") {
+            respondText(responseFile.dashboardIndex(root), ContentType.Text.Html)
+        } else {
+            respondOutputStream(responseFile.dashboardContentType()) {
+                responseFile.inputStream().use { it.copyTo(this) }
+            }
         }
     }
+}
+
+private fun File.dashboardIndex(root: File): String {
+    val script = root.resolve("dashboard-web.js")
+    val version = script.takeIf { it.isFile }?.sha256Prefix() ?: lastModified().toString()
+    return readText().replace(Regex("""dashboard-web\.js(?:\?v=[^"]*)?"""), "dashboard-web.js?v=$version")
+}
+
+private fun File.sha256Prefix(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().take(8).joinToString("") { "%02x".format(it) }
 }
 
 private fun File.dashboardCacheControl() = if (extension.equals("wasm", ignoreCase = true)) {
