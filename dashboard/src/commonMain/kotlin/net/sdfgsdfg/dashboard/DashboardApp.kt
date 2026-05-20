@@ -283,7 +283,7 @@ private fun HomeSignalGrid(summary: OpsSummaryDto) {
                 WorkSurface(
                     title = "Next Landing Zones",
                     detail = "Collectors should feed real DTOs before the UI pretends to know more than the control plane knows.",
-                    items = listOf("README parity", ".arcana schema", "CI history"),
+                    items = listOf("selftest parity", ".arcana schema", "CI history"),
                 )
             }
         } else {
@@ -302,7 +302,7 @@ private fun HomeSignalGrid(summary: OpsSummaryDto) {
                     WorkSurface(
                         title = "Next Landing Zones",
                         detail = "Collectors should feed real DTOs before the UI pretends to know more than the control plane knows.",
-                        items = listOf("README parity", ".arcana schema", "CI history"),
+                        items = listOf("selftest parity", ".arcana schema", "CI history"),
                     )
                 }
             }
@@ -1306,7 +1306,7 @@ private fun fallbackPipelineSteps(repo: RepoHealthDto): List<TestRunSummaryDto> 
     )
     "server_py" -> listOfNotNull(
         repo.latestRun ?: TestRunSummaryDto("live selftest", repo.status, detail = "Waiting for persisted server-py-selftest.json."),
-        TestRunSummaryDto("README matrix parity", OpsStatusDto.WIP, detail = "Dashboard must reach README live matrix parity before absorption."),
+        TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard has absorbed the old README matrix renderer."),
         TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py keeps browser automation internals; backend displays normalized facts."),
     )
     "arcana" -> listOf(

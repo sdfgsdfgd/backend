@@ -171,7 +171,7 @@ private fun opsSummary(): OpsSummaryDto {
                 runs = serverPyRuns(serverPySelfTest),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
                 issues = localArcanaIssues(serverPyRepo),
-                note = "README matrix remains canonical until dashboard parity.",
+                note = "Live selftest JSON is rendered by the dashboard and preserved as a workflow artifact.",
             ),
             RepoHealthDto(
                 id = "arcana",
@@ -210,7 +210,7 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
             detail = "$passed/${cases.size} model cases passing.",
         )
     },
-    TestRunSummaryDto("README matrix parity", OpsStatusDto.WIP, detail = "Dashboard must reach README live matrix parity before absorption."),
+    TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard has absorbed the old README matrix renderer."),
     TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 
