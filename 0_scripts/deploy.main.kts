@@ -15,6 +15,8 @@ val service: String = "backend.service"
 val port: Int = 80
 val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
+val publicSmokeUrl: String = System.getenv("PUBLIC_SMOKE_URL")?.trim()?.takeIf { it.isNotBlank() }
+    ?: "https://sdfgsdfg.net/test"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
@@ -114,12 +116,31 @@ fun waitPort(seconds: Long = 30) {
     fail("$app did not open port $port within ${seconds}s")
 }
 
-fun smoke() {
-    log("◆", "smoke testing http://127.0.0.1:$port/test")
-    val result = run("curl -fsS --max-time 5 http://127.0.0.1:$port/test", check = false, quiet = true)
-    if (result.code != 0) fail("$app smoke failed: /test exit=${result.code}")
-    if ("[ OK ]" !in result.out) fail("$app smoke failed: unexpected /test response: ${result.out.trim().take(200)}")
-    log("✓", "smoke passed: /test")
+fun smoke(name: String, url: String) {
+    log("◆", "$name: $url")
+    val result = run("curl -fsS --max-time 10 ${url.shellQuote()}", check = false, quiet = true)
+    if (result.code != 0) fail("$name failed: exit=${result.code}")
+    if ("[ OK ]" !in result.out) fail("$name failed: unexpected response: ${result.out.trim().take(200)}")
+    log("✓", "$name passed")
+}
+
+fun localSmoke() {
+    waitPort()
+    smoke("local smoke", "http://127.0.0.1:$port/test")
+}
+
+fun publicSmoke() {
+    smoke("public smoke", publicSmokeUrl)
+}
+
+fun localTests() {
+    gradle(":verifyServer :installServer")
+    localSmoke()
+}
+
+fun allTests() {
+    localTests()
+    publicSmoke()
 }
 
 fun stopPort() {
@@ -193,8 +214,7 @@ fun foreground(): Nothing {
     }
     val stopHook = Thread(::stopForeground)
     Runtime.getRuntime().addShutdownHook(stopHook)
-    waitPort()
-    smoke()
+    localSmoke()
     val exit = process.waitFor()
     runCatching { Runtime.getRuntime().removeShutdownHook(stopHook) }
     stopForeground()
@@ -295,8 +315,7 @@ fun deploy() {
                 systemctl("stop")
                 gradle(":installServer")
                 systemctl("start")
-                waitPort()
-                smoke()
+                localSmoke()
             }
             "legacy" -> {
                 if (!insideBackendService()) {
@@ -330,7 +349,7 @@ fun dispatch(command: String) {
     when (command) {
         "deploy", "" -> deploy()
         "start" -> when (mode) {
-            "runtime" -> { systemctl("start"); waitPort(); smoke() }
+            "runtime" -> { systemctl("start"); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> foreground()
         }
@@ -340,14 +359,17 @@ fun dispatch(command: String) {
             else -> { stopPort(); stopLocalDb() }
         }
         "restart" -> when (mode) {
-            "runtime" -> { systemctl("restart"); waitPort(); smoke() }
+            "runtime" -> { systemctl("restart"); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> { stopPort(); stopLocalDb(); foreground() }
         }
         "status" -> status()
-        "smoke" -> { waitPort(); smoke() }
+        "smoke", "local-smoke" -> localSmoke()
+        "public-smoke" -> publicSmoke()
+        "local-tests" -> localTests()
+        "all-tests" -> allTests()
         "verify" -> gradle(":verifyServer :installServer")
-        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|smoke|verify]")
+        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|verify|local-smoke|public-smoke|local-tests|all-tests]")
     }
 }
 
