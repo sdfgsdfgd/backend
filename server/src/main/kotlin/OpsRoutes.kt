@@ -17,7 +17,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -45,6 +48,7 @@ private val opsTimeFormatter = DateTimeFormatter
     .withZone(ZoneId.of("Australia/Melbourne"))
 
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
+private val deployHistoryFile = File(resolveLogDir(), "deploy-history.jsonl")
 private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
@@ -134,7 +138,8 @@ private fun File.dashboardContentType() = when (extension.lowercase()) {
 
 private fun opsSummary(): OpsSummaryDto {
     val serverPySelfTest = latestServerPySelfTest()
-    val backendLatestRun = TestRunSummaryDto(
+    val backendHistory = deployHistory()
+    val backendLatestRun = backendHistory.firstOrNull() ?: TestRunSummaryDto(
         label = "local smoke",
         status = OpsStatusDto.OK,
         detail = "/test and /metrics/security are deploy-gated",
@@ -157,6 +162,7 @@ private fun opsSummary(): OpsSummaryDto {
                 serviceName = "backend.service",
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
+                history = backendHistory,
                 issues = localArcanaIssues(backendRepo),
                 note = "Production deploy verifies before restart.",
             ),
@@ -193,6 +199,25 @@ private fun latestServerPySelfTest(): SelfTestResultDto? = runCatching {
         ?.readText()
         ?.let { opsJson.decodeFromString<SelfTestResultDto>(it) }
 }.getOrNull()
+
+internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryDto> = runCatching {
+    file.takeIf { it.isFile }
+        ?.readLines()
+        ?.asReversed()
+        ?.mapNotNull { line ->
+            val item = runCatching { opsJson.parseToJsonElement(line).jsonObject }.getOrNull() ?: return@mapNotNull null
+            val head = item.text("head")
+            TestRunSummaryDto(
+                label = item.text("label") ?: head?.let { "deploy $it" } ?: "deploy",
+                status = item.text("status")?.let { status -> runCatching { OpsStatusDto.valueOf(status) }.getOrNull() } ?: OpsStatusDto.UNKNOWN,
+                timestampMs = item.long("timestamp_ms"),
+                durationMs = item.double("duration_ms"),
+                detail = item.text("detail") ?: item.text("mode"),
+            )
+        }
+        ?.take(8)
+        ?: emptyList()
+}.getOrDefault(emptyList())
 
 private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     latestRun,
@@ -293,3 +318,7 @@ private fun JsonObject.text(name: String): String? = this[name]
     ?.jsonPrimitive
     ?.contentOrNull
     ?.takeIf { it.isNotBlank() }
+
+private fun JsonObject.long(name: String): Long? = this[name]?.jsonPrimitive?.longOrNull
+
+private fun JsonObject.double(name: String): Double? = this[name]?.jsonPrimitive?.doubleOrNull

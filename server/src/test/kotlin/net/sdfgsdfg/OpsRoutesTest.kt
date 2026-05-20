@@ -44,14 +44,13 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
 
         val summary = json.decodeFromString<OpsSummaryDto>(response.body<String>())
+        val backendRuns = summary.repos.first { it.id == "backend" }.runs
         assertEquals(listOf("backend", "server_py", "arcana"), summary.repos.map { it.id })
-        assertEquals(
-            listOf("local smoke", "server checks", "public ingress"),
-            summary.repos.first { it.id == "backend" }.runs.map { it.label },
-        )
+        assertEquals(true, backendRuns.any { it.label == "server checks" })
+        assertEquals(true, backendRuns.any { it.label == "public ingress" })
         assertEquals(
             "https://sdfgsdfg.net/test",
-            summary.repos.first { it.id == "backend" }.runs.first { it.label == "public ingress" }.url,
+            backendRuns.first { it.label == "public ingress" }.url,
         )
     }
 
@@ -286,7 +285,25 @@ class OpsRoutesTest {
     }
 
     @Test
-    fun selfTestSummaryPreservesReadmeParitySignals() {
+    fun deployHistoryReadsNewestSuccessfulRuns() {
+        val file = File(createTempDirectory().toFile(), "deploy-history.jsonl")
+        file.writeText(
+            """
+            not-json
+            {"label":"deploy old","status":"OK","timestamp_ms":1,"duration_ms":11,"head":"old","detail":"old detail"}
+            {"label":"deploy new","status":"OK","timestamp_ms":2,"duration_ms":22,"head":"new","detail":"new detail"}
+            """.trimIndent(),
+        )
+
+        val history = deployHistory(file)
+        assertEquals(listOf("deploy new", "deploy old"), history.map { it.label })
+        assertEquals(listOf("new detail", "old detail"), history.map { it.detail })
+        assertEquals(2L, history.first().timestampMs)
+        assertEquals(22.0, history.first().durationMs)
+    }
+
+    @Test
+    fun selfTestSummaryPreservesLiveSelftestSignals() {
         val summary = SelfTestResultDto(
             ok = true,
             textExcerpt = "conversation ok",

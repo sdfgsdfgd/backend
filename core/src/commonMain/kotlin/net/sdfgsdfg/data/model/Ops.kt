@@ -19,6 +19,7 @@ data class RepoHealthDto(
     @SerialName("service_name") val serviceName: String? = null,
     @SerialName("latest_run") val latestRun: TestRunSummaryDto? = null,
     val runs: List<TestRunSummaryDto> = emptyList(),
+    val history: List<TestRunSummaryDto> = emptyList(),
     @SerialName("self_test") val selfTest: SelfTestSummaryDto? = null,
     val issues: IssueSummaryDto = IssueSummaryDto(),
     val note: String? = null,

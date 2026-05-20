@@ -562,6 +562,7 @@ private fun CiResults(loadState: OpsLoadState) {
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             PyramidHeader(loadState.summary)
             PipelineGrid(loadState.summary.repos)
+            RunHistoryPanel(loadState.summary)
             ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest)
         }
     }
@@ -845,6 +846,60 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
             }
             step.url?.let {
                 Text(it, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunHistoryPanel(summary: OpsSummaryDto) {
+    val events = summary.repos
+        .flatMap { repo -> repo.history.map { repo to it } }
+        .sortedByDescending { it.second.timestampMs ?: 0L }
+        .take(8)
+    if (events.isEmpty()) return
+
+    val shape = RoundedCornerShape(8.dp)
+    Card(
+        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, green, glowAlpha = 0.06f),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = panelRaised),
+        border = BorderStroke(1.dp, border),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    ) {
+        Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Successful deploy-gated runs emitted by the backend control plane.", color = muted, fontSize = 12.sp)
+                }
+                StatusPill("${events.size} events", green)
+            }
+            events.forEach { (repo, run) -> RunHistoryRow(repo, run) }
+        }
+    }
+}
+
+@Composable
+private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color(0xFF0D141B))
+            .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.24f)), RoundedCornerShape(7.dp))
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        StatusDot(run.status)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${repo.name} / ${run.label}", color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(run.durationMs?.ms() ?: run.status.name, color = run.status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            run.detail?.let {
+                Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }

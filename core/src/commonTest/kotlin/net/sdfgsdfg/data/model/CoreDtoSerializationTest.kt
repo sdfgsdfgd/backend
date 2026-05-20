@@ -97,6 +97,14 @@ class CoreDtoSerializationTest {
                                 status = OpsStatusDto.WIP,
                             ),
                         ),
+                        history = listOf(
+                            TestRunSummaryDto(
+                                label = "deploy abc1234",
+                                status = OpsStatusDto.OK,
+                                timestampMs = 13L,
+                                durationMs = 44.0,
+                            ),
+                        ),
                         selfTest = SelfTestSummaryDto(
                             status = OpsStatusDto.OK,
                             ok = true,
@@ -138,6 +146,7 @@ class CoreDtoSerializationTest {
         val repo = obj.getValue("repos").jsonArray.first().jsonObject
         val run = repo.getValue("latest_run").jsonObject
         val pyramidRun = repo.getValue("runs").jsonArray.first().jsonObject
+        val historyRun = repo.getValue("history").jsonArray.first().jsonObject
         val selfTest = repo.getValue("self_test").jsonObject
         val selfTestCase = selfTest.getValue("cases").jsonArray.first().jsonObject
         assertEquals(7L, obj.getValue("generated_at_ms").jsonPrimitive.long)
@@ -145,6 +154,9 @@ class CoreDtoSerializationTest {
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
         assertEquals("public ingress", pyramidRun.getValue("label").jsonPrimitive.content)
+        assertEquals("deploy abc1234", historyRun.getValue("label").jsonPrimitive.content)
+        assertEquals(13L, historyRun.getValue("timestamp_ms").jsonPrimitive.long)
+        assertEquals(44.0, historyRun.getValue("duration_ms").jsonPrimitive.double)
         assertEquals(true, selfTest.getValue("satisfied_expectation").jsonPrimitive.boolean)
         assertEquals("20 May, 12:24 AM AEST", selfTest.getValue("timestamp_label").jsonPrimitive.content)
         assertEquals(33.0, selfTest.getValue("ask_latency_ms").jsonPrimitive.double)

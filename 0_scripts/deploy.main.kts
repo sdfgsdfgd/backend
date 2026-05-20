@@ -18,6 +18,7 @@ val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
+val deployHistory: File = logs.resolve("deploy-history.jsonl").apply { if (!exists()) createNewFile() }
 val buildLog: File = logs.resolve("build.log").apply { if (!exists()) createNewFile() }
 val appLog: File = logs.resolve("app.log").apply { if (!exists()) createNewFile() }
 val lockFile: File = logs.resolve("deploy.lock")
@@ -86,6 +87,21 @@ fun fail(s: String): Nothing {
 
 fun String.shellQuote(): String = "'${replace("'", "'\\''")}'"
 
+fun String.jsonString(): String = buildString {
+    append('"')
+    for (ch in this@jsonString) {
+        when (ch) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(ch)
+        }
+    }
+    append('"')
+}
+
 fun List<String>.shellPathspec(): String = joinToString(" ") { it.shellQuote() }
 
 fun portPid(): String? = listOf(
@@ -153,6 +169,22 @@ fun localTests() {
 fun allTests() {
     localTests()
     publicSmoke()
+}
+
+fun appendDeployHistory(mode: String, durationMs: Long) {
+    val head = q("git rev-parse --short HEAD 2>/dev/null || true").ifBlank { "unknown" }
+    deployHistory.appendText(
+        listOf(
+            "\"repo\":\"backend\"",
+            "\"label\":${"deploy $head".jsonString()}",
+            "\"status\":\"OK\"",
+            "\"timestamp_ms\":${System.currentTimeMillis()}",
+            "\"duration_ms\":$durationMs",
+            "\"head\":${head.jsonString()}",
+            "\"mode\":${mode.jsonString()}",
+            "\"detail\":\"verifyServer, dashboard artifact, installServer, local smoke\"",
+        ).joinToString(prefix = "{", postfix = "}\n"),
+    )
 }
 
 fun stopPort() {
@@ -390,7 +422,9 @@ fun deploy() {
             else -> installAndForeground()
         }
 
-        log("✓", "deploy complete in ${(System.nanoTime() - start) / 1_000_000}ms")
+        val durationMs = (System.nanoTime() - start) / 1_000_000
+        appendDeployHistory(mode, durationMs)
+        log("✓", "deploy complete in ${durationMs}ms")
         null
     }
     if (reloadFrom != null) reloadDeploy("deploy", reloadFrom)
