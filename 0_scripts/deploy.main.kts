@@ -113,16 +113,29 @@ fun stopPort() {
 fun foreground(): Nothing {
     if (!File(bin).exists()) fail("Missing runtime script: $bin. Run deploy first.")
     log("◆", "starting $app in foreground: $bin", appLog)
-    ProcessBuilder(bin)
+    val process = ProcessBuilder(bin)
         .directory(root)
         .inheritIO()
         .also {
             it.environment().putIfAbsent("JAVA_HOME", javaHome)
+            it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
             it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
         }
         .start()
-        .waitFor()
-        .let(::exitProcess)
+    val stopChild = Thread {
+        if (!process.isAlive) return@Thread
+        log("◆", "stopping $app foreground process pid=${process.pid()}", appLog)
+        process.destroy()
+        if (!process.waitFor(5, TimeUnit.SECONDS)) {
+            log("⚠", "foreground process did not stop; killing pid=${process.pid()}", appLog)
+            process.destroyForcibly()
+            process.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+    Runtime.getRuntime().addShutdownHook(stopChild)
+    val exit = process.waitFor()
+    runCatching { Runtime.getRuntime().removeShutdownHook(stopChild) }
+    exitProcess(exit)
 }
 
 fun systemctl(action: String) = run("sudo systemctl --no-ask-password $action $service")
