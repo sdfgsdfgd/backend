@@ -11,6 +11,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 
+// Purpose: protect public JSON wire names shared by backend, server_py,
+// GitHub Actions artifacts, and the dashboard clients. These are compatibility
+// tests, not generic serialization coverage; keep them only for DTOs that cross
+// repo/process boundaries.
 class CoreDtoSerializationTest {
     private val json = Json { encodeDefaults = true }
 
@@ -37,12 +41,14 @@ class CoreDtoSerializationTest {
     @Test
     fun selfTestDtosKeepPublicWireNames() {
         val request = json.parseToJsonElement(
-            json.encodeToString(SelfTestRequestDto(expectSubstr = "OK", newChat = true)),
+            json.encodeToString(SelfTestRequestDto(expectSubstr = "OK", newChat = true, workflowUrl = "https://github.com/x/backend/actions/runs/1")),
         ).jsonObject
         assertEquals("OK", request.getValue("expect_substr").jsonPrimitive.content)
         assertEquals(true, request.getValue("new_chat").jsonPrimitive.boolean)
+        assertEquals("https://github.com/x/backend/actions/runs/1", request.getValue("workflow_url").jsonPrimitive.content)
         assertFalse("expectSubstr" in request)
         assertFalse("newChat" in request)
+        assertFalse("workflowUrl" in request)
 
         val result = json.parseToJsonElement(
             json.encodeToString(
@@ -53,14 +59,17 @@ class CoreDtoSerializationTest {
                     askLatencyMs = 12.0,
                     auditLatencyMs = 3.0,
                     satisfiedExpectation = true,
+                    workflowUrl = "https://github.com/x/backend/actions/runs/1",
                     timestampMs = 42L,
                 ),
             ),
         ).jsonObject
         assertEquals("healthy", result.getValue("text_excerpt").jsonPrimitive.content)
         assertEquals(true, result.getValue("satisfied_expectation").jsonPrimitive.boolean)
+        assertEquals("https://github.com/x/backend/actions/runs/1", result.getValue("workflow_url").jsonPrimitive.content)
         assertFalse("textExcerpt" in result)
         assertFalse("satisfiedExpectation" in result)
+        assertFalse("workflowUrl" in result)
     }
 
     @Test

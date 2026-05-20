@@ -246,6 +246,7 @@ internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {
         caseCount = caseSummaries.size,
         casePassCount = caseSummaries.count { it.status == OpsStatusDto.OK },
         zenPresent = zen != null,
+        workflowUrl = workflowUrl,
         artifacts = listOf(OpsArtifactDto(name = "server-py-selftest.json", path = serverPySelfTestFile.path)),
         cases = caseSummaries,
     )

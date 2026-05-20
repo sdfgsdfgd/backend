@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -29,7 +30,10 @@ def main() -> int:
 
 
 def trigger_selftest() -> dict | None:
-    body = json.dumps({"new_chat": True}).encode()
+    payload = {"new_chat": True}
+    if url := workflow_url():
+        payload["workflow_url"] = url
+    body = json.dumps(payload).encode()
     headers = {
         **BASE_HEADERS,
         "Content-Type": "application/json",
@@ -119,6 +123,15 @@ def finish(payload: dict) -> int:
 
 def write_result(payload: dict) -> None:
     RESULT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def workflow_url() -> str | None:
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not repo or not run_id:
+        return None
+    server = os.environ.get("GITHUB_SERVER_URL") or "https://github.com"
+    return f"{server}/{repo}/actions/runs/{run_id}"
 
 
 if __name__ == "__main__":

@@ -14,9 +14,21 @@ body {
 }
 
 .boot {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: grid;
   place-items: center;
   color: #d9e2ef;
+  background: #0b0d10;
+  opacity: 1;
+  transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+.boot-done {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .boot::before {
@@ -61,6 +73,26 @@ body {
   line-height: 1.5;
 }
 
+.boot-meter {
+  height: 6px;
+  margin-top: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(107, 213, 255, 0.18);
+  border-radius: 999px;
+  background: #0a1118;
+  box-shadow: inset 0 1px 8px rgba(0, 0, 0, 0.42);
+}
+
+.boot-meter span {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6bd5ff, #72f09d);
+  box-shadow: 0 0 22px rgba(107, 213, 255, 0.42);
+  animation: boot-meter 1.35s ease-in-out infinite;
+}
+
 @keyframes boot-scan {
   0% {
     transform: translateX(-48vw);
@@ -72,5 +104,17 @@ body {
   100% {
     transform: translateX(106vw);
     opacity: 0.15;
+  }
+}
+
+@keyframes boot-meter {
+  0% {
+    transform: translateX(-110%);
+  }
+  48% {
+    transform: translateX(62%);
+  }
+  100% {
+    transform: translateX(275%);
   }
 }

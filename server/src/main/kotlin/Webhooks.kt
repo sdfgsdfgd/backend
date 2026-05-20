@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -114,16 +115,17 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
     )
 
     if (matchedSlug == "server-py-selftest") {
-        val newChatFlag = runCatching {
-            json.parseToJsonElement(payload)
-                .jsonObject["new_chat"]
-                ?.jsonPrimitive
-                ?.booleanOrNull
-        }.getOrNull()
-
-        val payloadBody = """{"new_chat": ${newChatFlag ?: false}}"""
+        val selfTestPayload = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
+        val newChatFlag = selfTestPayload?.get("new_chat")?.jsonPrimitive?.booleanOrNull
+        val workflowUrl = selfTestPayload?.get("workflow_url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val payloadBody = buildString {
+            append("""{"new_chat": ${newChatFlag ?: false}""")
+            workflowUrl?.let { append(""", "workflow_url": "${it.escapeJson()}"""") }
+            append("}")
+        }
+        val quotedPayloadBody = "'${payloadBody.replace("'", "'\\''")}'"
         val selfTestCmd =
-            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d '$payloadBody' http://127.0.0.1/api/selftest/run"""
+            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d $quotedPayloadBody http://127.0.0.1/api/selftest/run"""
 
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()

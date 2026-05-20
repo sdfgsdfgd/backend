@@ -18,22 +18,19 @@
       };
 
       const show = (title, detail) => {
-        const root = document.getElementById("dashboard");
-        root.className = "boot";
-        root.innerHTML = `
+        const boot = document.getElementById("boot");
+        boot.className = "boot";
+        boot.innerHTML = `
           <section class="boot-card">
             <div class="boot-eyebrow">Trio Ops Cockpit</div>
             <h1>${title}</h1>
             <p>${detail}</p>
+            <div class="boot-meter"><span></span></div>
           </section>
         `;
       };
 
       const loadCompose = () => {
-        const root = document.getElementById("dashboard");
-        root.className = "";
-        root.innerHTML = "";
-
         const script = document.createElement("script");
         script.src = "dashboard-web.js?v=3";
         script.type = "application/javascript";
@@ -52,11 +49,13 @@
   </script>
 </head>
 <body>
-  <div id="dashboard" class="boot">
+  <div id="dashboard"></div>
+  <div id="boot" class="boot">
     <section class="boot-card">
       <div class="boot-eyebrow">Trio Ops Cockpit</div>
       <h1>Starting dashboard...</h1>
       <p>Loading the Compose/Wasm command surface.</p>
+      <div class="boot-meter"><span></span></div>
     </section>
   </div>
 </body>

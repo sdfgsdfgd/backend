@@ -24,9 +24,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.io.path.createTempDirectory
 
-// These tests pin the ops dashboard contracts that caused real failures:
-// host/path routing must not expose APIs on the wrong domain, and Wasm assets
-// must never become a blank canvas through bad MIME or SPA fallback behavior.
+// Purpose: protect ops cockpit contracts that are easy to break during routing
+// and dashboard plumbing: host-scoped APIs, Compose/Wasm asset serving, local
+// .arcana issue summaries, and server_py selftest parity. Keep these only while
+// those contracts feed the dashboard; replace them when ownership moves.
 class OpsRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -276,6 +277,7 @@ class OpsRoutesTest {
                 SelfTestCaseDto("o3", ok = false, latencyMs = 10.0, note = "missing"),
             ),
             zen = buildJsonObject {},
+            workflowUrl = "https://github.com/x/backend/actions/runs/1",
             timestampMs = 42L,
         ).toOpsSelfTestSummary()
 
@@ -286,6 +288,7 @@ class OpsRoutesTest {
         assertEquals(70.0, summary.askLatencyMs)
         assertEquals(20.0, summary.auditLatencyMs)
         assertEquals(true, summary.retried)
+        assertEquals("https://github.com/x/backend/actions/runs/1", summary.workflowUrl)
         assertEquals(2, summary.caseCount)
         assertEquals(1, summary.casePassCount)
         assertEquals(true, summary.zenPresent)

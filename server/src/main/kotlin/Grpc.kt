@@ -331,6 +331,7 @@ fun Route.grpc() {
     post("/api/selftest/run") {
         val body = call.receiveNullable<SelfTestRequestDto>()
         application.log.info("[gRPC] [selftest] POST /api/selftest/run prompt='${body?.prompt ?: DEFAULT_SELFTEST_PROMPT}'")
+        val workflowUrl = body?.workflowUrl?.takeIf { it.isNotBlank() }
         val req = SelfTestRequest.newBuilder()
             .setPrompt(body?.prompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_PROMPT)
             .setExpectSubstr(body?.expectSubstr?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_EXPECT)
@@ -358,6 +359,7 @@ fun Route.grpc() {
                             note = case.note.takeIf(String::isNotBlank)
                         )
                     },
+                    workflowUrl = workflowUrl,
                     timestampMs = System.currentTimeMillis()
                 )
             },
@@ -370,6 +372,7 @@ fun Route.grpc() {
                     latencyMs = 0.0,
                     satisfiedExpectation = false,
                     retried = false,
+                    workflowUrl = workflowUrl,
                     timestampMs = System.currentTimeMillis()
                 )
             }

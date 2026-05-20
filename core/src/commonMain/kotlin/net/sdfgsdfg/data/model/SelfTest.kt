@@ -10,6 +10,7 @@ data class SelfTestRequestDto(
     @SerialName("expect_substr") val expectSubstr: String? = null,
     val model: String? = null,
     @SerialName("new_chat") val newChat: Boolean = false,
+    @SerialName("workflow_url") val workflowUrl: String? = null,
 )
 
 @Serializable
@@ -24,6 +25,7 @@ data class SelfTestResultDto(
     val retried: Boolean = false,
     val cases: List<SelfTestCaseDto> = emptyList(),
     val zen: JsonObject? = null,
+    @SerialName("workflow_url") val workflowUrl: String? = null,
     @SerialName("timestamp_ms") val timestampMs: Long = 0L,
 )
 
