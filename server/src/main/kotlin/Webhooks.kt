@@ -35,7 +35,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
         repoFullName = "sdfgsdfgd/backend",
         commands = listOf(
             // Schedule deploy outside backend.service so the live backend stays up while the new build verifies.
-            "systemd-run --user --unit=backend-deploy-${'$'}(date +%s) --collect --working-directory=/home/x/Desktop/kotlin/backend --setenv=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 --setenv=PATH=/usr/lib/jvm/java-21-openjdk-amd64/bin:/home/x/.sdkman/candidates/kotlin/current/bin:/usr/bin:/bin /home/x/.sdkman/candidates/kotlin/current/bin/kotlin /home/x/Desktop/kotlin/backend/0_scripts/deploy.main.kts deploy",
+            "sudo systemd-run --unit=backend-deploy-${'$'}(date +%s) --collect --property=User=x --property=Group=x --working-directory=/home/x/Desktop/kotlin/backend --setenv=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 --setenv=PATH=/usr/lib/jvm/java-21-openjdk-amd64/bin:/home/x/.sdkman/candidates/kotlin/current/bin:/usr/bin:/bin /home/x/.sdkman/candidates/kotlin/current/bin/kotlin /home/x/Desktop/kotlin/backend/0_scripts/deploy.main.kts deploy",
         ),
     ),
     "frontend-next" to DeploymentProfile(
