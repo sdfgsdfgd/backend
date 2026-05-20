@@ -15,6 +15,7 @@ import io.ktor.server.routing.route
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -22,6 +23,7 @@ import net.sdfgsdfg.data.model.SelfTestResultDto
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.io.path.createTempDirectory
 
 // Purpose: protect ops cockpit contracts that are easy to break during routing
@@ -297,7 +299,12 @@ class OpsRoutesTest {
                 SelfTestCaseDto("5.5-thinking-heavy", ok = true, latencyMs = 50.0, note = "selected"),
                 SelfTestCaseDto("o3", ok = false, latencyMs = 10.0, note = "missing"),
             ),
-            zen = buildJsonObject {},
+            zen = buildJsonObject {
+                put("state", "push_failed")
+                put("reason", "model selector drift")
+                put("severity", "error")
+                put("folder", "/tmp/zen-artifact")
+            },
             workflowUrl = "https://github.com/x/backend/actions/runs/1",
             timestampMs = 42L,
         ).toOpsSelfTestSummary()
@@ -305,6 +312,7 @@ class OpsRoutesTest {
         assertEquals(OpsStatusDto.OK, summary.status)
         assertEquals(true, summary.satisfiedExpectation)
         assertEquals(42L, summary.timestampMs)
+        assertEquals(true, assertNotNull(summary.timestampLabel).isNotBlank())
         assertEquals(100.0, summary.latencyMs)
         assertEquals(70.0, summary.askLatencyMs)
         assertEquals(20.0, summary.auditLatencyMs)
@@ -313,6 +321,10 @@ class OpsRoutesTest {
         assertEquals(2, summary.caseCount)
         assertEquals(1, summary.casePassCount)
         assertEquals(true, summary.zenPresent)
+        assertEquals("push_failed", summary.zenState)
+        assertEquals("model selector drift", summary.zenReason)
+        assertEquals("error", summary.zenSeverity)
+        assertEquals("/tmp/zen-artifact", summary.zenArtifactPath)
         assertEquals("server-py-selftest.json", summary.artifacts.single().name)
         assertEquals(listOf(OpsStatusDto.OK, OpsStatusDto.FAIL), summary.cases.map { it.status })
     }

@@ -876,6 +876,7 @@ private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?) {
                 SelfTestWaitingPanel()
             } else {
                 SelfTestStats(selfTest)
+                SelfTestZenPanel(selfTest)
                 SelfTestExcerpt(selfTest)
                 SelfTestArtifacts(selfTest)
                 SelfTestCases(selfTest)
@@ -921,7 +922,7 @@ private fun SelfTestStats(selfTest: SelfTestSummaryDto) {
         FieldSpec("ask", selfTest.askLatencyMs.ms()),
         FieldSpec("audit", selfTest.auditLatencyMs.ms()),
         FieldSpec("model menu", "${selfTest.casePassCount}/${selfTest.caseCount}"),
-        FieldSpec("zen", if (selfTest.zenPresent) "present" else "none"),
+        FieldSpec("last run", selfTest.timestampLabel ?: "unknown"),
         FieldSpec("retry", if (selfTest.retried) "yes" else "no"),
     )
     BoxWithConstraints {
@@ -959,6 +960,44 @@ private fun SelfTestStatTile(stat: FieldSpec) {
     ) {
         Text(stat.name.uppercase(), color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(stat.value, color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun SelfTestZenPanel(selfTest: SelfTestSummaryDto) {
+    val fields = listOfNotNull(
+        selfTest.zenState?.let { FieldSpec("state", it) },
+        selfTest.zenSeverity?.let { FieldSpec("severity", it) },
+        selfTest.zenReason?.let { FieldSpec("reason", it) },
+        selfTest.zenArtifactPath?.let { FieldSpec("artifact", it) },
+    )
+    if (fields.isEmpty()) return
+
+    val shape = RoundedCornerShape(7.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .surfaceDepth(shape, amber, glowAlpha = 0.045f)
+            .clip(shape)
+            .background(Color(0xFF11161D))
+            .border(BorderStroke(1.dp, amber.copy(alpha = 0.2f)), shape)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("zen/autofix", color = amber, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        BoxWithConstraints {
+            if (maxWidth < 780.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    fields.forEach { Field(it.name, it.value) }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    fields.forEach { field ->
+                        Box(modifier = Modifier.weight(1f)) { Field(field.name, field.value) }
+                    }
+                }
+            }
+        }
     }
 }
 

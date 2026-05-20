@@ -30,11 +30,19 @@ import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
 import java.nio.file.Paths
 import java.security.MessageDigest
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 private val opsJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
 }
+
+private val opsTimeFormatter = DateTimeFormatter
+    .ofPattern("d MMM, h:mm a z", Locale.ENGLISH)
+    .withZone(ZoneId.of("Australia/Melbourne"))
 
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
 private val homeDir = File(System.getProperty("user.home"))
@@ -261,6 +269,7 @@ internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {
         ok = ok,
         satisfiedExpectation = satisfiedExpectation,
         timestampMs = timestampMs.takeIf { it > 0 },
+        timestampLabel = timestampMs.takeIf { it > 0 }?.let { opsTimeFormatter.format(Instant.ofEpochMilli(it)) },
         latencyMs = latencyMs,
         askLatencyMs = askLatencyMs,
         auditLatencyMs = auditLatencyMs,
@@ -270,8 +279,17 @@ internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {
         caseCount = caseSummaries.size,
         casePassCount = caseSummaries.count { it.status == OpsStatusDto.OK },
         zenPresent = zen != null,
+        zenState = zen?.text("state"),
+        zenReason = zen?.text("reason"),
+        zenSeverity = zen?.text("severity"),
+        zenArtifactPath = zen?.text("folder") ?: zen?.text("context_file") ?: zen?.text("status_file"),
         workflowUrl = workflowUrl,
         artifacts = listOf(OpsArtifactDto(name = "server-py-selftest.json", path = serverPySelfTestFile.path)),
         cases = caseSummaries,
     )
 }
+
+private fun JsonObject.text(name: String): String? = this[name]
+    ?.jsonPrimitive
+    ?.contentOrNull
+    ?.takeIf { it.isNotBlank() }

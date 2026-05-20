@@ -102,6 +102,7 @@ class CoreDtoSerializationTest {
                             ok = true,
                             satisfiedExpectation = true,
                             timestampMs = 11L,
+                            timestampLabel = "20 May, 12:24 AM AEST",
                             latencyMs = 44.0,
                             askLatencyMs = 33.0,
                             auditLatencyMs = 7.0,
@@ -109,6 +110,10 @@ class CoreDtoSerializationTest {
                             caseCount = 1,
                             casePassCount = 1,
                             zenPresent = true,
+                            zenState = "push_failed",
+                            zenReason = "model selector drift",
+                            zenSeverity = "error",
+                            zenArtifactPath = "/tmp/zen",
                             workflowUrl = "https://github.com/x/backend/actions/runs/1",
                             artifacts = listOf(
                                 OpsArtifactDto(
@@ -141,12 +146,17 @@ class CoreDtoSerializationTest {
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
         assertEquals("public ingress", pyramidRun.getValue("label").jsonPrimitive.content)
         assertEquals(true, selfTest.getValue("satisfied_expectation").jsonPrimitive.boolean)
+        assertEquals("20 May, 12:24 AM AEST", selfTest.getValue("timestamp_label").jsonPrimitive.content)
         assertEquals(33.0, selfTest.getValue("ask_latency_ms").jsonPrimitive.double)
         assertEquals(7.0, selfTest.getValue("audit_latency_ms").jsonPrimitive.double)
         assertEquals("healthy", selfTest.getValue("text_excerpt").jsonPrimitive.content)
         assertEquals(1, selfTest.getValue("case_count").jsonPrimitive.content.toInt())
         assertEquals(1, selfTest.getValue("case_pass_count").jsonPrimitive.content.toInt())
         assertEquals(true, selfTest.getValue("zen_present").jsonPrimitive.boolean)
+        assertEquals("push_failed", selfTest.getValue("zen_state").jsonPrimitive.content)
+        assertEquals("model selector drift", selfTest.getValue("zen_reason").jsonPrimitive.content)
+        assertEquals("error", selfTest.getValue("zen_severity").jsonPrimitive.content)
+        assertEquals("/tmp/zen", selfTest.getValue("zen_artifact_path").jsonPrimitive.content)
         assertEquals("https://github.com/x/backend/actions/runs/1", selfTest.getValue("workflow_url").jsonPrimitive.content)
         assertEquals("server-py-selftest.json", selfTest.getValue("artifacts").jsonArray.first().jsonObject.getValue("name").jsonPrimitive.content)
         assertEquals("5.5-thinking-heavy", selfTestCase.getValue("name").jsonPrimitive.content)
@@ -154,5 +164,10 @@ class CoreDtoSerializationTest {
         assertFalse("serviceName" in repo)
         assertFalse("latestRun" in repo)
         assertFalse("selfTest" in repo)
+        assertFalse("timestampLabel" in selfTest)
+        assertFalse("zenState" in selfTest)
+        assertFalse("zenReason" in selfTest)
+        assertFalse("zenSeverity" in selfTest)
+        assertFalse("zenArtifactPath" in selfTest)
     }
 }
