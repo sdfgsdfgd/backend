@@ -24,6 +24,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.io.path.createTempDirectory
 
+// These tests pin the ops dashboard contracts that caused real failures:
+// host/path routing must not expose APIs on the wrong domain, and Wasm assets
+// must never become a blank canvas through bad MIME or SPA fallback behavior.
 class OpsRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -143,6 +146,8 @@ class OpsRoutesTest {
         assertEquals(listOf("backend", "server_py", "arcana"), json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.map { it.id })
     }
 
+    // Static asset tests are intentionally kept together: they protect the
+    // public Compose/Wasm shell, not generic file-serving trivia.
     @Test
     fun opsDashboardFallbackDoesNotServeDashboardForApiPaths() = testApplication {
         val dist = createTempDirectory().toFile()
