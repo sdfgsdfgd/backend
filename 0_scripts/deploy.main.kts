@@ -15,8 +15,6 @@ val service: String = "backend.service"
 val port: Int = 80
 val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
-val publicSmokeUrl: String = System.getenv("PUBLIC_SMOKE_URL")?.trim()?.takeIf { it.isNotBlank() }
-    ?: "https://sdfgsdfg.net/test"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
@@ -130,7 +128,7 @@ fun localSmoke() {
 }
 
 fun publicSmoke() {
-    smoke("public smoke", publicSmokeUrl)
+    smoke("public smoke", "https://sdfgsdfg.net/test")
 }
 
 fun localTests() {
