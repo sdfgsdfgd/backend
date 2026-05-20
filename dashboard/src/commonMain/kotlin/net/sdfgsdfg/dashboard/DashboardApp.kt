@@ -568,7 +568,7 @@ private fun CiResults(loadState: OpsLoadState) {
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             PyramidHeader(loadState.summary)
-            PipelineGrid(loadState.summary.repos)
+            PipelineGrid(loadState.summary)
             RunHistoryPanel(loadState.summary)
             ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest)
         }
@@ -779,16 +779,17 @@ private fun PyramidHeader(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun PipelineGrid(repos: List<RepoHealthDto>) {
+private fun PipelineGrid(summary: OpsSummaryDto) {
+    val repos = summary.repos
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { PipelineLane(it, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { PipelineLane(it, summary.generatedAtMs, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    PipelineLane(repo, modifier = Modifier.weight(1f))
+                    PipelineLane(repo, summary.generatedAtMs, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -796,7 +797,7 @@ private fun PipelineGrid(repos: List<RepoHealthDto>) {
 }
 
 @Composable
-private fun PipelineLane(repo: RepoHealthDto, modifier: Modifier = Modifier) {
+private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
     val steps = pipelineSteps(repo)
     val shape = RoundedCornerShape(8.dp)
     Card(
@@ -817,7 +818,46 @@ private fun PipelineLane(repo: RepoHealthDto, modifier: Modifier = Modifier) {
             steps.forEachIndexed { index, step ->
                 PipelineStep(index + 1, step)
             }
+            if (repo.id == "arcana") ArcanaOperatorTile(repo.latestRun, generatedAtMs)
         }
+    }
+}
+
+@Composable
+private fun ArcanaOperatorTile(run: TestRunSummaryDto?, generatedAtMs: Long) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color(0xFF0D141B))
+            .border(BorderStroke(1.dp, cyan.copy(alpha = 0.24f)), RoundedCornerShape(7.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Operator Trigger", color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            StatusPill("manual", cyan)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MiniFact("source", "arcana-smoke", modifier = Modifier.weight(1f))
+            MiniFact("last", run?.timestampMs?.ageFrom(generatedAtMs) ?: "waiting", modifier = Modifier.weight(1f))
+            MiniFact("duration", run?.durationMs?.ms() ?: "-", modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun MiniFact(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF101821))
+            .border(BorderStroke(1.dp, Color(0xFF202B38)), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(label.uppercase(), color = muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1326,6 +1366,16 @@ private fun OpsStatusDto.color(): Color = when (this) {
 }
 
 private fun Double.ms(): String = if (this <= 0.0) "-" else "${roundToInt()}ms"
+
+private fun Long.ageFrom(nowMs: Long): String {
+    val seconds = ((nowMs - this) / 1_000).coerceAtLeast(0)
+    return when {
+        seconds < 60 -> "${seconds}s ago"
+        seconds < 3_600 -> "${seconds / 60}m ago"
+        seconds < 86_400 -> "${seconds / 3_600}h ago"
+        else -> "${seconds / 86_400}d ago"
+    }
+}
 
 private fun Modifier.surfaceDepth(shape: RoundedCornerShape, accent: Color, glowAlpha: Float): Modifier = this
     .dropShadow(
