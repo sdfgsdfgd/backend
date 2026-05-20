@@ -157,6 +157,26 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun arcanaIngestArtifactIsScopedAndDownloadable() = testApplication {
+        val artifact = File(createTempDirectory().toFile(), "arcana-ingest.json")
+        artifact.writeText("""{"status":"OK","label":"q arcana unit pytest"}""")
+
+        application {
+            routing {
+                opsRoutes(arcanaIngestTargetFile = artifact)
+            }
+        }
+
+        val opsResponse = client.get("/api/ops/artifacts/arcana-ingest.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val publicResponse = client.get("/api/ops/artifacts/arcana-ingest.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
+
+        assertEquals(HttpStatusCode.OK, opsResponse.status)
+        assertEquals("no-store", opsResponse.headers[HttpHeaders.CacheControl])
+        assertEquals("""{"status":"OK","label":"q arcana unit pytest"}""", opsResponse.body<String>())
+        assertEquals(HttpStatusCode.NotFound, publicResponse.status)
+    }
+
+    @Test
     fun opsApiIsAvailableOnLoopbackForLocalDashboardPreview() = testApplication {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }

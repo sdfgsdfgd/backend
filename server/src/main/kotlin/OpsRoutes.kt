@@ -62,6 +62,7 @@ private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
 private val publicIngressUrl = "https://sdfgsdfg.net/test"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
+private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
 
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
@@ -71,6 +72,21 @@ fun Route.opsRoutes(
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
         return opsHost || (localPreview && call.clientInfo().isLocal)
+    }
+
+    suspend fun ApplicationCall.respondJsonArtifact(file: File) {
+        if (!allowed(this)) {
+            respondText("Not Found", status = HttpStatusCode.NotFound)
+            return
+        }
+
+        val artifact = file.takeIf { it.isFile }
+        if (artifact == null) {
+            respondText("Not Found", status = HttpStatusCode.NotFound)
+        } else {
+            response.headers.append(HttpHeaders.CacheControl, "no-store")
+            respondText(artifact.readText(), ContentType.Application.Json)
+        }
     }
 
     get("/api/ops/summary") {
@@ -102,18 +118,11 @@ fun Route.opsRoutes(
     }
 
     get(serverPySelfTestArtifactUrl) {
-        if (!allowed(call)) {
-            call.respondText("Not Found", status = HttpStatusCode.NotFound)
-            return@get
-        }
+        call.respondJsonArtifact(selfTestArtifactFile)
+    }
 
-        val artifact = selfTestArtifactFile.takeIf { it.isFile }
-        if (artifact == null) {
-            call.respondText("Not Found", status = HttpStatusCode.NotFound)
-        } else {
-            call.response.headers.append(HttpHeaders.CacheControl, "no-store")
-            call.respondText(artifact.readText(), ContentType.Application.Json)
-        }
+    get(arcanaIngestArtifactUrl) {
+        call.respondJsonArtifact(arcanaIngestTargetFile)
     }
 }
 

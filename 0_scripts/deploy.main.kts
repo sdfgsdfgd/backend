@@ -18,6 +18,7 @@ val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val qHost: String = "q"
 val qArcanaDir: String = "~/Desktop/py/arcana"
 val qArcanaTests: String = "z_tests_n_benchmarks/unit"
+val arcanaIngestArtifactUrl: String = "/api/ops/artifacts/arcana-ingest.json"
 val root: File = File(".").canonicalFile
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
@@ -198,11 +199,13 @@ fun arcanaSmoke() {
         "\"label\":\"q arcana unit pytest\"",
         "\"duration_ms\":$durationMs",
         "\"detail\":${detail.jsonString()}",
+        "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
         "\"runs\":[{${listOf(
             "\"label\":${qArcanaTests.jsonString()}",
             "\"status\":${status.jsonString()}",
             "\"duration_ms\":$durationMs",
             "\"detail\":${summary.jsonString()}",
+            "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
         ).joinToString(",")}}]",
     ).joinToString(prefix = "{", postfix = "}")
     qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
