@@ -2,11 +2,13 @@ package net.sdfgsdfg
 
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.host
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
+import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -68,16 +70,23 @@ private suspend fun ApplicationCall.respondDashboardAsset(asset: String, dashboa
     val requested = root.resolve(asset.ifBlank { "index.html" }).canonicalFile
     val insideRoot = requested == root || requested.path.startsWith(root.path + File.separator)
     val target = requested.takeIf { insideRoot && it.isFile }
-        ?: root.resolve("index.html").takeIf { it.isFile }
+    val fallback = root.resolve("index.html").takeIf { !asset.substringAfterLast('/').contains('.') && it.isFile }
+    val responseFile = target ?: fallback
 
-    if (target == null) {
+    if (responseFile == null) {
         respondText(
-            text = "Trio Ops Cockpit artifact is not built yet. Run ./gradlew :dashboard:web:wasmJsBrowserDistribution.",
+            text = if (root.isDirectory) "Not Found" else "Trio Ops Cockpit artifact is not built yet. Run ./gradlew :dashboard:web:wasmJsBrowserDistribution.",
             contentType = ContentType.Text.Plain,
-            status = HttpStatusCode.ServiceUnavailable,
+            status = if (root.isDirectory) HttpStatusCode.NotFound else HttpStatusCode.ServiceUnavailable,
         )
+    } else if (responseFile.extension.equals("wasm", ignoreCase = true)) {
+        response.headers.append(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+        respondOutputStream(ContentType.parse("application/wasm")) {
+            responseFile.inputStream().use { it.copyTo(this) }
+        }
     } else {
-        respondFile(target)
+        response.headers.append(HttpHeaders.CacheControl, "no-cache")
+        respondFile(responseFile)
     }
 }
 

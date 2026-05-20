@@ -164,6 +164,48 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsDashboardDoesNotFallbackStaticAssetMissesToIndex() = testApplication {
+        val dist = createTempDirectory().toFile()
+        File(dist, "index.html").writeText("<main>dashboard</main>")
+
+        application {
+            routing {
+                route("/{...}") {
+                    handle {
+                        call.respondOpsDashboard(dist)
+                    }
+                }
+            }
+        }
+
+        val response = client.get("/missing.wasm") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals("Not Found", response.body<String>())
+    }
+
+    @Test
+    fun opsDashboardServesWasmWithWasmContentType() = testApplication {
+        val dist = createTempDirectory().toFile()
+        File(dist, "index.html").writeText("<main>dashboard</main>")
+        File(dist, "dashboard.wasm").writeBytes(byteArrayOf(0, 0x61, 0x73, 0x6d))
+
+        application {
+            routing {
+                route("/{...}") {
+                    handle {
+                        call.respondOpsDashboard(dist)
+                    }
+                }
+            }
+        }
+
+        val response = client.get("/dashboard.wasm") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("application/wasm", response.headers[HttpHeaders.ContentType]?.substringBefore(';'))
+        assertEquals("public, max-age=31536000, immutable", response.headers[HttpHeaders.CacheControl])
+    }
+
+    @Test
     fun opsDashboardHostIsExplicitWhenArtifactIsMissing() = testApplication {
         val missingDist = File(createTempDirectory().toFile(), "missing")
 
