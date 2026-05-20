@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Stop" type="KotlinStandaloneScriptRunConfigurationType">
+  <configuration default="false" name="Deploy Server" type="KotlinStandaloneScriptRunConfigurationType">
     <module name="backend" />
-    <option name="PROGRAM_PARAMETERS" value="stop" />
+    <option name="PROGRAM_PARAMETERS" value="deploy" />
     <shortenClasspath name="NONE" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <option name="filePath" value="$PROJECT_DIR$/0_scripts/deploy.main.kts" />

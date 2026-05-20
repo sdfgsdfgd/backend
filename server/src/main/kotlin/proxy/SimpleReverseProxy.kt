@@ -30,7 +30,6 @@ import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import net.sdfgsdfg.silentDrop
 import org.slf4j.LoggerFactory
-import org.slf4j.MDC
 import java.net.URISyntaxException
 import java.net.InetAddress
 import java.nio.file.Files
@@ -44,13 +43,6 @@ class SimpleReverseProxy(
 ) {
     private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
-    private val ansiRed = "\u001B[31m"
-    private val ansiGreen = "\u001B[32m"
-    private val ansiYellow = "\u001B[33m"
-    private val ansiBlue = "\u001B[34m"
-    private val ansiCyan = "\u001B[36m"
-    private val ansiDim = "\u001B[2m"
-    private val ansiReset = "\u001B[0m"
     private val publicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
     private val publicIpCacheTtlMs = 30_000L
     @Volatile private var publicIpv4Cache: String? = null
@@ -100,7 +92,7 @@ class SimpleReverseProxy(
                 append("ua".kv(ua ?: "-"))
             }
             val color = buildString {
-                append("${ansiRed}[BLOCK][BLACKLISTED]${ansiReset} ")
+                append("${ProxyLog.red}[BLOCK][BLACKLISTED]${ProxyLog.reset} ")
                 append(clientColor).append(' ')
                 append("host".kvDim(host)).append(' ')
                 append("method".kvDim(methodValue, quote = false)).append(' ')
@@ -148,7 +140,7 @@ class SimpleReverseProxy(
                     append("ua".kv(ua ?: "-"))
                 }
                 val color = buildString {
-                    append("${ansiRed}$tagBlock${ansiReset} ")
+                    append("${ProxyLog.red}$tagBlock${ProxyLog.reset} ")
                     append(clientColor).append(' ')
                     append("host".kvDim(host)).append(' ')
                     append("method".kvDim(methodValue, quote = false)).append(' ')
@@ -239,8 +231,8 @@ class SimpleReverseProxy(
             append("target".kv(proxiedUrl.toString()))
         }
         val proxyOutColor = buildString {
-            append("${ansiRed}[PROXY_OUT]-->${ansiReset} [ ${ansiDim}").append(requestId)
-                .append("${ansiReset} ] ")
+            append("${ProxyLog.red}[PROXY_OUT]-->${ProxyLog.reset} [ ${ProxyLog.dim}").append(requestId)
+                .append("${ProxyLog.reset} ] ")
             append(clientColorOut).append(' ')
             append("host".kvDim(host)).append(' ')
             append("matched".kvDim(matchedRule ?: "default")).append(' ')
@@ -334,9 +326,9 @@ class SimpleReverseProxy(
         // Log status and response headers from target
         val (clientPlainTarget, clientColorTarget) = clientTag(client, allowLookup = false)
         val targetStatusPlain = "status=${status}"
-        val targetStatusColor = "status=${status.value.statusColor()}${status}${ansiReset}"
+        val targetStatusColor = "status=${status.value.statusColor()}${status}${ProxyLog.reset}"
         val targetPlain = "[TARGET] $clientPlainTarget $targetStatusPlain"
-        val targetColor = "${ansiBlue}[TARGET]${ansiReset} $clientColorTarget $targetStatusColor"
+        val targetColor = "${ProxyLog.blue}[TARGET]${ProxyLog.reset} $clientColorTarget $targetStatusColor"
         log(targetPlain, targetColor)
         proxiedResponse.headers.forEach { key, values ->
             logger.debug("Response header from Next.js: {} -> {}", key, values)
@@ -389,9 +381,9 @@ class SimpleReverseProxy(
             append("ua".kv(ua ?: "-"))
         }
         val proxyInColor = buildString {
-            append("${ansiGreen}[PROXY_IN]<--${ansiReset} [ ${ansiDim}").append(requestId)
-                .append("${ansiReset} ] ")
-            append("status=${statusColor}").append(status.value).append(ansiReset).append(' ')
+            append("${ProxyLog.green}[PROXY_IN]<--${ProxyLog.reset} [ ${ProxyLog.dim}").append(requestId)
+                .append("${ProxyLog.reset} ] ")
+            append("status=${statusColor}").append(status.value).append(ProxyLog.reset).append(' ')
             append(clientColorIn).append(' ')
             append("host".kvDim(host)).append(' ')
             append("matched".kvDim(matchedRule ?: "default")).append(' ')
@@ -508,21 +500,7 @@ class SimpleReverseProxy(
 
     private fun clientTag(info: net.sdfgsdfg.ClientInfo, allowLookup: Boolean): Pair<String, String> {
         val rdns = cachedRdns(info.clientIp, allowLookup)
-        val plain = buildString {
-            append("[CLIENT] ip=").append(info.clientIp)
-            append(" remote=").append(info.remoteIp)
-            info.cfIp?.let { append(" cf=").append(it) }
-            append(" src=").append(info.source)
-            if (!rdns.isNullOrBlank() && rdns != info.clientIp) append(" rdns=").append(rdns)
-        }
-        val color = buildString {
-            append("${ansiCyan}[CLIENT]${ansiReset} ip=${ansiDim}").append(info.clientIp).append(ansiReset)
-            append(" remote=${ansiDim}").append(info.remoteIp).append(ansiReset)
-            info.cfIp?.let { append(" cf=${ansiDim}").append(it).append(ansiReset) }
-            append(" src=${ansiDim}").append(info.source).append(ansiReset)
-            if (!rdns.isNullOrBlank() && rdns != info.clientIp) append(" rdns=${ansiDim}").append(rdns).append(ansiReset)
-        }
-        return plain to color
+        return ProxyLog.clientTag(info, rdns)
     }
 
     private fun cachedRdns(ip: String, allowLookup: Boolean): String? {
@@ -536,28 +514,7 @@ class SimpleReverseProxy(
         return resolved
     }
 
-    private fun String.kv(value: String, quote: Boolean = true): String =
-        if (quote) "$this='$value'" else "$this=$value"
-
-    private fun String.kvDim(value: String, quote: Boolean = true): String =
-        if (quote) "$this=${ansiDim}'$value'${ansiReset}" else "$this=${ansiDim}$value${ansiReset}"
-
-    private fun log(plain: String, color: String, warn: Boolean = false) {
-        MDC.put("log_prefix", plain)
-        MDC.put("log_prefix_color", color)
-        try {
-            if (warn) logger.warn("") else logger.info("")
-        } finally {
-            MDC.remove("log_prefix")
-            MDC.remove("log_prefix_color")
-        }
-    }
-
-    private fun Int.statusColor(): String = when {
-        this >= 500 -> ansiRed
-        this >= 400 -> ansiYellow
-        this >= 300 -> ansiYellow
-        else -> ansiGreen
-    }
+    private fun log(plain: String, color: String, warn: Boolean = false) =
+        ProxyLog.write(logger, plain, color, warn)
 
 }
