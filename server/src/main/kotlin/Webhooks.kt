@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 private val webhookDeployMutex = Mutex()
+private val webhookSelfTestMutex = Mutex()
 
 fun Route.githubWebhookRoute() {
     post("/webhook/github") { call.processGitHubWebhook(targetOverride = null) }
@@ -130,7 +131,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
 
-        val exit = webhookDeployMutex.withLock {
+        val exit = webhookSelfTestMutex.withLock {
             log("Running command for $matchedSlug: '$selfTestCmd'", deploymentLog)
             val commandExit = selfTestCmd.shell(
                 logFile = deploymentLog,
