@@ -5,6 +5,7 @@
 # Project files
 0_scripts/logs/**/*
 *.log
+*memory.md
 
 
 .gradle
