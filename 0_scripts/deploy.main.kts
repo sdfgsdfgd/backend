@@ -110,6 +110,14 @@ fun waitPort(seconds: Long = 30) {
     fail("$app did not open port $port within ${seconds}s")
 }
 
+fun smoke() {
+    log("◆", "smoke testing http://127.0.0.1:$port/test")
+    val result = run("curl -fsS --max-time 5 http://127.0.0.1:$port/test", check = false, quiet = true)
+    if (result.code != 0) fail("$app smoke failed: /test exit=${result.code}")
+    if ("[ OK ]" !in result.out) fail("$app smoke failed: unexpected /test response: ${result.out.trim().take(200)}")
+    log("✓", "smoke passed: /test")
+}
+
 fun stopPort() {
     val pid = portPid() ?: return log("⚠", "$app is not listening on port $port")
     log("◆", "stopping $app pid=$pid")
@@ -181,6 +189,8 @@ fun foreground(): Nothing {
     }
     val stopHook = Thread(::stopForeground)
     Runtime.getRuntime().addShutdownHook(stopHook)
+    waitPort()
+    smoke()
     val exit = process.waitFor()
     runCatching { Runtime.getRuntime().removeShutdownHook(stopHook) }
     stopForeground()
@@ -231,7 +241,7 @@ fun withLock(block: () -> Unit) {
 fun installAndForeground(): Nothing {
     log("◆", "using foreground process mode")
     stopPort()
-    gradle(":server:installDist")
+    gradle(":installServer")
     foreground()
 }
 
@@ -244,15 +254,16 @@ fun deploy() = withLock {
         "head" to q("git rev-parse --short HEAD 2>/dev/null || true"),
     ).forEach { (name, value) -> log(" ", "${name.padEnd(12)} $value") }
     syncGit()
-    gradle(":core:jvmTest :server:check")
+    gradle(":verifyServer")
 
     when (mode) {
         "runtime" -> {
             log("✓", "verification passed; runtime systemd unit detected")
             systemctl("stop")
-            gradle(":server:installDist")
+            gradle(":installServer")
             systemctl("start")
             waitPort()
+            smoke()
         }
         "legacy" -> {
             if (!insideBackendService()) {
@@ -283,7 +294,7 @@ fun dispatch(command: String) {
     when (command) {
         "deploy", "" -> deploy()
         "start" -> when (mode) {
-            "runtime" -> { systemctl("start"); waitPort() }
+            "runtime" -> { systemctl("start"); waitPort(); smoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> foreground()
         }
@@ -293,13 +304,14 @@ fun dispatch(command: String) {
             else -> { stopPort(); stopLocalDb() }
         }
         "restart" -> when (mode) {
-            "runtime" -> { systemctl("restart"); waitPort() }
+            "runtime" -> { systemctl("restart"); waitPort(); smoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> { stopPort(); stopLocalDb(); foreground() }
         }
         "status" -> status()
-        "verify" -> gradle("clean build installDist")
-        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|verify]")
+        "smoke" -> { waitPort(); smoke() }
+        "verify" -> gradle(":verifyServer :installServer")
+        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|smoke|verify]")
     }
 }
 

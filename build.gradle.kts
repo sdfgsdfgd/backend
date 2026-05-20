@@ -9,6 +9,20 @@ plugins {
 //    alias(libs.plugins.kotlinx.rpc.plugin) apply false
 }
 
+// Stable server lifecycle aliases for deploy scripts and future module orchestration.
+// Keep these server-scoped so backend deploy does not inherit app/web/desktop checks.
+tasks.register("verifyServer") {
+    group = "verification"
+    description = "Runs the production server verification set."
+    dependsOn(":core:jvmTest", ":server:check")
+}
+
+tasks.register("installServer") {
+    group = "distribution"
+    description = "Installs the runnable server distribution."
+    dependsOn(":server:installDist")
+}
+
 subprojects {
     repositories {
         mavenCentral()
