@@ -256,10 +256,21 @@ fun syncGit() = run(
     set -euo pipefail
     orig_head=${'$'}(git rev-parse HEAD)
     dirty=0
-    restore() {
+    autostashes() {
+      echo "Recoverable backend autostashes:"
+      git stash list --grep="autostash:$app" || true
+    }
+    restore_head() {
       git rebase --abort >/dev/null 2>&1 || true
       git reset --hard "${'$'}orig_head"
-      if [ "${'$'}dirty" -eq 1 ]; then git stash pop --index; fi
+    }
+    restore() {
+      restore_head
+      if [ "${'$'}dirty" -eq 1 ] && ! git stash pop --index; then
+        echo "Git sync: restore stash pop failed; local changes remain recoverable."
+        autostashes
+        return 1
+      fi
     }
     if [ -n "${'$'}(git status --porcelain)" ]; then dirty=1; fi
     if [ "${'$'}dirty" -eq 1 ]; then git stash push -u -m "autostash:$app ${'$'}(date +%s)"; fi
@@ -276,7 +287,12 @@ fun syncGit() = run(
     else
       echo "Git sync: already up to date; local ahead=${'$'}local_ahead."
     fi
-    if [ "${'$'}dirty" -eq 1 ] && ! git stash pop --index; then restore || true; exit 1; fi
+    if [ "${'$'}dirty" -eq 1 ] && ! git stash pop --index; then
+      echo "Git sync: stash pop failed; local changes remain recoverable."
+      autostashes
+      restore_head || true
+      exit 1
+    fi
     """.trimIndent(),
     buildLog,
 )
