@@ -221,6 +221,7 @@ fun localTests() {
 fun allTests() {
     localTests()
     publicSmoke()
+    arcanaSmoke()
 }
 
 fun appendDeployHistory(
