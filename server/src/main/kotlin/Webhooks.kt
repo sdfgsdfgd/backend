@@ -29,6 +29,7 @@ private val json = Json { ignoreUnknownKeys = true }
 private val arcanaSmokeWebhookSecret = System.getenv("ARCANA_SMOKE_WEBHOOK_SECRET")?.trim().takeIf { !it.isNullOrEmpty() }
 private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADER")?.trim()
     .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
+private const val SERVER_PY_READY_CMD = "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
 
 private data class DeploymentProfile(
     val commands: List<String>,
@@ -54,7 +55,7 @@ private val deploymentProfiles: Map<String, DeploymentProfile> = mapOf(
         repoFullName = "sdfgsdfgd/server_py",
         commands = listOf(
             "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart server_py.service",
-            "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
+            SERVER_PY_READY_CMD
         ),
     ),
     "server-py-selftest" to DeploymentProfile(
@@ -128,29 +129,31 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
         val quotedPayloadBody = "'${payloadBody.replace("'", "'\\''")}'"
         val selfTestCmd =
-            """curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d $quotedPayloadBody http://127.0.0.1/api/selftest/run"""
+            """$SERVER_PY_READY_CMD && curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d $quotedPayloadBody http://127.0.0.1/api/selftest/run"""
 
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
 
-        val exit = webhookSelfTestMutex.withLock {
-            log("Running command for $matchedSlug: '$selfTestCmd'", deploymentLog)
-            val commandExit = selfTestCmd.shell(
-                logFile = deploymentLog,
-                onLine = { line, isError ->
-                    if (isError) {
-                        stderrLines += line
-                    } else {
-                        stdoutLines += line
-                    }
-                },
-            )
-            if (commandExit == 0) {
-                log("✅ SUCCESS ($matchedSlug): '$selfTestCmd' executed (exit=$commandExit).", deploymentLog)
-            } else {
-                log("❌ FAILURE ($matchedSlug): '$selfTestCmd' failed (exit=$commandExit).", deploymentLog)
+        val exit = webhookDeployMutex.withLock {
+            webhookSelfTestMutex.withLock {
+                log("Running command for $matchedSlug: '$selfTestCmd'", deploymentLog)
+                val commandExit = selfTestCmd.shell(
+                    logFile = deploymentLog,
+                    onLine = { line, isError ->
+                        if (isError) {
+                            stderrLines += line
+                        } else {
+                            stdoutLines += line
+                        }
+                    },
+                )
+                if (commandExit == 0) {
+                    log("✅ SUCCESS ($matchedSlug): '$selfTestCmd' executed (exit=$commandExit).", deploymentLog)
+                } else {
+                    log("❌ FAILURE ($matchedSlug): '$selfTestCmd' failed (exit=$commandExit).", deploymentLog)
+                }
+                commandExit
             }
-            commandExit
         }
 
         val stdoutBody = stdoutLines.joinToString("\n").trim()

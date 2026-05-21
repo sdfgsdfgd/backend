@@ -27,7 +27,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -37,9 +39,11 @@ import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.encoding.Base64
+import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -83,6 +87,7 @@ private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
 private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
 private const val ASK_JOB_RESULT_TTL_MS = 24L * 60 * 60 * 1000
 private const val ASK_JOB_RUNNING_TTL_MS = 2L * 60 * 60 * 1000
+private const val ZEN_STATUS_ASSOCIATION_WINDOW_MS = 2L * 60 * 60 * 1000
 private const val ARCANA_RPC_ID_HEADER = "X-Arcana-Rpc-Id"
 
 private val askJobScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -417,7 +422,19 @@ private fun loadZenAutofixStatus(): JsonObject? = runCatching {
     }
 }.getOrNull()
 
+private fun JsonObject.zenTimestampMs(): Long? =
+    listOf("finished_at", "started_at").firstNotNullOfOrNull { key ->
+        get(key)?.jsonPrimitive?.contentOrNull?.let { value ->
+            runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+        }
+    }
+
+private fun JsonObject.belongsToSelfTest(timestampMs: Long): Boolean {
+    val zenMs = zenTimestampMs() ?: return true
+    return timestampMs <= 0L || abs(zenMs - timestampMs) <= ZEN_STATUS_ASSOCIATION_WINDOW_MS
+}
+
 private fun SelfTestResultDto.withZenStatus(): SelfTestResultDto {
-    val latestZen = loadZenAutofixStatus()
-    return if (latestZen == null) this else copy(zen = latestZen)
+    val latestZen = loadZenAutofixStatus()?.takeIf { it.belongsToSelfTest(timestampMs) }
+    return copy(zen = latestZen)
 }
