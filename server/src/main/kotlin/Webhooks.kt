@@ -29,7 +29,9 @@ private val json = Json { ignoreUnknownKeys = true }
 private val arcanaSmokeWebhookSecret = System.getenv("ARCANA_SMOKE_WEBHOOK_SECRET")?.trim().takeIf { !it.isNullOrEmpty() }
 private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADER")?.trim()
     .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
+private const val SERVER_PY_REPO_DIR = "/home/x/Desktop/py/server_py"
 private const val SERVER_PY_READY_CMD = "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
+private val gitShaRegex = Regex("[0-9a-f]{40}")
 
 private data class DeploymentProfile(
     val commands: List<String>,
@@ -122,9 +124,19 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         val selfTestPayload = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
         val newChatFlag = selfTestPayload?.get("new_chat")?.jsonPrimitive?.booleanOrNull
         val workflowUrl = selfTestPayload?.get("workflow_url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val headSha = selfTestPayload?.get("head_sha")?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }?.lowercase()
+        if (headSha != null && !gitShaRegex.matches(headSha)) {
+            respondText(
+                text = """{"ok":false,"raw_error":"invalid head_sha"}""",
+                contentType = ContentType.Application.Json,
+                status = HttpStatusCode.BadRequest,
+            )
+            return
+        }
         val payloadBody = buildString {
             append("""{"new_chat": ${newChatFlag ?: false}""")
             workflowUrl?.let { append(""", "workflow_url": "${it.escapeJson()}"""") }
+            headSha?.let { append(""", "head_sha": "$it"""") }
             append("}")
         }
         val quotedPayloadBody = "'${payloadBody.replace("'", "'\\''")}'"
@@ -133,27 +145,36 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
+        suspend fun runLogged(command: String): Int {
+            log("Running command for $matchedSlug: '$command'", deploymentLog)
+            val commandExit = command.shell(
+                logFile = deploymentLog,
+                onLine = { line, isError -> (if (isError) stderrLines else stdoutLines).add(line) },
+            )
+            val ok = commandExit == 0
+            log("${if (ok) "✅ SUCCESS" else "❌ FAILURE"} ($matchedSlug): '$command' ${if (ok) "executed" else "failed"} (exit=$commandExit).", deploymentLog)
+            return commandExit
+        }
 
-        val exit = webhookDeployMutex.withLock {
-            webhookSelfTestMutex.withLock {
-                log("Running command for $matchedSlug: '$selfTestCmd'", deploymentLog)
-                val commandExit = selfTestCmd.shell(
-                    logFile = deploymentLog,
-                    onLine = { line, isError ->
-                        if (isError) {
-                            stderrLines += line
-                        } else {
-                            stdoutLines += line
-                        }
-                    },
-                )
-                if (commandExit == 0) {
-                    log("✅ SUCCESS ($matchedSlug): '$selfTestCmd' executed (exit=$commandExit).", deploymentLog)
-                } else {
-                    log("❌ FAILURE ($matchedSlug): '$selfTestCmd' failed (exit=$commandExit).", deploymentLog)
+        var rawError = "selftest webhook command failed"
+        val exit = headSha?.let { sha ->
+            val waitExit = runLogged(serverPyHeadCmd(sha, wait = true))
+            if (waitExit != 0) {
+                rawError = "server_py checkout did not reach requested head"
+                waitExit
+            } else webhookDeployMutex.withLock {
+                webhookSelfTestMutex.withLock {
+                    val checkExit = runLogged(serverPyHeadCmd(sha, wait = false))
+                    if (checkExit != 0) {
+                        rawError = "server_py checkout changed before selftest"
+                        checkExit
+                    } else {
+                        runLogged(selfTestCmd)
+                    }
                 }
-                commandExit
             }
+        } ?: webhookDeployMutex.withLock {
+            webhookSelfTestMutex.withLock { runLogged(selfTestCmd) }
         }
 
         val stdoutBody = stdoutLines.joinToString("\n").trim()
@@ -178,10 +199,11 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
         val stderrBody = stderrLines.joinToString("\n").ifBlank { "(empty)" }.escapeJson()
         val stdoutPreview = stdoutBody.ifBlank { "(empty)" }.escapeJson()
+        val headShaField = headSha?.let { ",\"head_sha\":\"$it\"" } ?: ""
         respondText(
-            text = """{"ok":false,"raw_error":"selftest webhook command failed","exit_code":$exit,"stderr":"$stderrBody","stdout":"$stdoutPreview"}""",
+            text = """{"ok":false,"raw_error":"$rawError","exit_code":$exit$headShaField,"stderr":"$stderrBody","stdout":"$stdoutPreview"}""",
             contentType = ContentType.Application.Json,
-            status = HttpStatusCode.InternalServerError,
+            status = if (rawError == "server_py checkout did not reach requested head") HttpStatusCode.GatewayTimeout else HttpStatusCode.InternalServerError,
         )
         return
     }
@@ -264,3 +286,9 @@ private fun String.escapeJson(): String = buildString {
         }
     }
 }
+
+private fun serverPyHeadCmd(headSha: String, wait: Boolean): String =
+    if (wait)
+        """timeout 180 bash -c 'cd $SERVER_PY_REPO_DIR && until [ "${'$'}(git rev-parse HEAD 2>/dev/null)" = "$headSha" ]; do echo "waiting for server_py HEAD $headSha (current=${'$'}(git rev-parse HEAD 2>/dev/null || echo unknown))" >&2; sleep 3; done; echo "server_py HEAD ready: $headSha" >&2'"""
+    else
+        """cd $SERVER_PY_REPO_DIR && current=${'$'}(git rev-parse HEAD) && [ "${'$'}current" = "$headSha" ] || { echo "server_py HEAD mismatch: expected $headSha current=${'$'}current" >&2; exit 1; }"""

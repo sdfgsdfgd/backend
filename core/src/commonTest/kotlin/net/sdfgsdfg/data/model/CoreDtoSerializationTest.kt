@@ -40,15 +40,25 @@ class CoreDtoSerializationTest {
 
     @Test
     fun selfTestDtosKeepPublicWireNames() {
+        val headSha = "0123456789abcdef0123456789abcdef01234567"
         val request = json.parseToJsonElement(
-            json.encodeToString(SelfTestRequestDto(expectSubstr = "OK", newChat = true, workflowUrl = "https://github.com/x/backend/actions/runs/1")),
+            json.encodeToString(
+                SelfTestRequestDto(
+                    expectSubstr = "OK",
+                    newChat = true,
+                    workflowUrl = "https://github.com/x/backend/actions/runs/1",
+                    headSha = headSha,
+                ),
+            ),
         ).jsonObject
         assertEquals("OK", request.getValue("expect_substr").jsonPrimitive.content)
         assertEquals(true, request.getValue("new_chat").jsonPrimitive.boolean)
         assertEquals("https://github.com/x/backend/actions/runs/1", request.getValue("workflow_url").jsonPrimitive.content)
+        assertEquals(headSha, request.getValue("head_sha").jsonPrimitive.content)
         assertFalse("expectSubstr" in request)
         assertFalse("newChat" in request)
         assertFalse("workflowUrl" in request)
+        assertFalse("headSha" in request)
 
         val result = json.parseToJsonElement(
             json.encodeToString(
@@ -60,6 +70,7 @@ class CoreDtoSerializationTest {
                     auditLatencyMs = 3.0,
                     satisfiedExpectation = true,
                     workflowUrl = "https://github.com/x/backend/actions/runs/1",
+                    headSha = headSha,
                     timestampMs = 42L,
                 ),
             ),
@@ -67,9 +78,11 @@ class CoreDtoSerializationTest {
         assertEquals("healthy", result.getValue("text_excerpt").jsonPrimitive.content)
         assertEquals(true, result.getValue("satisfied_expectation").jsonPrimitive.boolean)
         assertEquals("https://github.com/x/backend/actions/runs/1", result.getValue("workflow_url").jsonPrimitive.content)
+        assertEquals(headSha, result.getValue("head_sha").jsonPrimitive.content)
         assertFalse("textExcerpt" in result)
         assertFalse("satisfiedExpectation" in result)
         assertFalse("workflowUrl" in result)
+        assertFalse("headSha" in result)
     }
 
     @Test

@@ -11,6 +11,7 @@ data class SelfTestRequestDto(
     val model: String? = null,
     @SerialName("new_chat") val newChat: Boolean = false,
     @SerialName("workflow_url") val workflowUrl: String? = null,
+    @SerialName("head_sha") val headSha: String? = null,
 )
 
 @Serializable
@@ -26,6 +27,7 @@ data class SelfTestResultDto(
     val cases: List<SelfTestCaseDto> = emptyList(),
     val zen: JsonObject? = null,
     @SerialName("workflow_url") val workflowUrl: String? = null,
+    @SerialName("head_sha") val headSha: String? = null,
     @SerialName("timestamp_ms") val timestampMs: Long = 0L,
 )
 
