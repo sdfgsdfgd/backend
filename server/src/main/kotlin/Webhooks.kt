@@ -121,6 +121,30 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
     )
 
     if (matchedSlug == "server-py-selftest") {
+        /*
+         * Exact-commit selftest gate
+         * --------------------------
+         * A push to server_py creates two independent webhook paths:
+         *
+         * 1. server-py deploy: restart server_py.service; its systemd pre-start
+         *    syncs /home/x/Desktop/py/server_py to origin/main, then the deploy
+         *    waits for /tmp/server_py/server_py.sock.
+         * 2. server-py-selftest: GitHub Actions asks this backend to run the
+         *    live browser/gRPC selftest.
+         *
+         * The selftest is only meaningful if it proves the exact commit that
+         * triggered the workflow. Reachability alone is too weak: a fast selftest
+         * can otherwise hit the previous Python process, or hit the new process
+         * before its Unix socket exists.
+         *
+         * Lock order is deliberate:
+         * - wait for the requested git HEAD before taking webhookDeployMutex, so
+         *   an early selftest cannot block the deploy that will produce that HEAD;
+         * - take webhookDeployMutex, which queues behind any in-flight deploy;
+         * - take webhookSelfTestMutex, so multiple live audits never overlap;
+         * - recheck HEAD under the lock, then wait for the UDS socket and call
+         *   /api/selftest/run.
+         */
         val selfTestPayload = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
         val newChatFlag = selfTestPayload?.get("new_chat")?.jsonPrimitive?.booleanOrNull
         val workflowUrl = selfTestPayload?.get("workflow_url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
@@ -145,36 +169,27 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
-        suspend fun runLogged(command: String): Int {
-            log("Running command for $matchedSlug: '$command'", deploymentLog)
-            val commandExit = command.shell(
-                logFile = deploymentLog,
-                onLine = { line, isError -> (if (isError) stderrLines else stdoutLines).add(line) },
-            )
-            val ok = commandExit == 0
-            log("${if (ok) "✅ SUCCESS" else "❌ FAILURE"} ($matchedSlug): '$command' ${if (ok) "executed" else "failed"} (exit=$commandExit).", deploymentLog)
-            return commandExit
-        }
+        suspend fun run(command: String) = runWebhookCommand(matchedSlug, command, deploymentLog, stdoutLines, stderrLines)
 
         var rawError = "selftest webhook command failed"
         val exit = headSha?.let { sha ->
-            val waitExit = runLogged(serverPyHeadCmd(sha, wait = true))
+            val waitExit = run(serverPyHeadCmd(sha, wait = true))
             if (waitExit != 0) {
                 rawError = "server_py checkout did not reach requested head"
                 waitExit
             } else webhookDeployMutex.withLock {
                 webhookSelfTestMutex.withLock {
-                    val checkExit = runLogged(serverPyHeadCmd(sha, wait = false))
+                    val checkExit = run(serverPyHeadCmd(sha, wait = false))
                     if (checkExit != 0) {
                         rawError = "server_py checkout changed before selftest"
                         checkExit
                     } else {
-                        runLogged(selfTestCmd)
+                        run(selfTestCmd)
                     }
                 }
             }
         } ?: webhookDeployMutex.withLock {
-            webhookSelfTestMutex.withLock { runLogged(selfTestCmd) }
+            webhookSelfTestMutex.withLock { run(selfTestCmd) }
         }
 
         val stdoutBody = stdoutLines.joinToString("\n").trim()
@@ -223,19 +238,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         val exit = webhookArcanaSmokeMutex.withLock {
-            log("Running command for $matchedSlug: '$command'", deploymentLog)
-            val commandExit = command.shell(
-                logFile = deploymentLog,
-                onLine = { line, isError ->
-                    if (isError) stderrLines += line else stdoutLines += line
-                },
-            )
-            if (commandExit == 0) {
-                log("✅ SUCCESS ($matchedSlug): '$command' executed (exit=$commandExit).", deploymentLog)
-            } else {
-                log("❌ FAILURE ($matchedSlug): '$command' failed (exit=$commandExit).", deploymentLog)
-            }
-            commandExit
+            runWebhookCommand(matchedSlug, command, deploymentLog, stdoutLines, stderrLines)
         }
         val stdoutPreview = stdoutLines.joinToString("\n").trim().take(4_000).escapeJson()
         val stderrPreview = stderrLines.joinToString("\n").trim().take(4_000).escapeJson()
@@ -254,15 +257,27 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
     webhookDeployMutex.withLock {
         for (command in profile.commands) {
-            log("Running command for $matchedSlug: '$command'", deploymentLog)
-            val exit = command.shell(logFile = deploymentLog)
-            if (exit == 0) {
-                log("✅ SUCCESS ($matchedSlug): '$command' executed (exit=$exit).", deploymentLog)
-            } else {
-                log("❌ FAILURE ($matchedSlug): '$command' failed (exit=$exit).", deploymentLog)
-            }
+            runWebhookCommand(matchedSlug, command, deploymentLog)
         }
     }
+}
+
+private suspend fun runWebhookCommand(
+    slug: String,
+    command: String,
+    logFile: File,
+    stdoutLines: MutableList<String>? = null,
+    stderrLines: MutableList<String>? = null,
+): Int {
+    val capture: (suspend (String, Boolean) -> Unit)? =
+        if (stdoutLines == null && stderrLines == null) null
+        else { line, isError -> (if (isError) stderrLines else stdoutLines)?.add(line) }
+
+    log("Running command for $slug: '$command'", logFile)
+    val exit = command.shell(logFile = logFile, onLine = capture)
+    val ok = exit == 0
+    log("${if (ok) "✅ SUCCESS" else "❌ FAILURE"} ($slug): '$command' ${if (ok) "executed" else "failed"} (exit=$exit).", logFile)
+    return exit
 }
 
 private fun extractRepoFullName(payload: String): String? = runCatching {
