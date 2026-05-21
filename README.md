@@ -1,7 +1,14 @@
-# Backend   ( *.net  &  *.ai domains )
+<div align="center">
 
-### API, gRPC & WebSockets & Containers, Middlewares, Remote clipboard across devices, priv cloud, custom agentic harnesses that slap codex
-### ...audio/text bidirectional streams incl STT/TTS, Clustering, Visualization w/ Vasturiano force-directed graph 
+${\color{Goldenrod}\Huge{\textsf{ Backend }}}$ ${\color{MediumPurple}\Huge{\textsf{ ( *.net }}}$ & ${\color{MediumPurple}\Huge{\textsf{ *.ai domains ) }}}$
+
+${\color{MediumSeaGreen}\Large{\textsf{ gRPC / WebSockets / Containers / reverse proxy / router }}}$
+
+${\color{LimeGreen}\large{\textsf{ remote clipboard / server\\_py bridge / private cloud / agentic harnesses }}}$
+
+${\color{MediumPurple}\large{\textsf{ STT-TTS streams / clustering / force-directed graph }}}$
+
+</div>
 
 ![0](https://github.com/user-attachments/assets/714a40ab-a78b-475c-b690-15363f83d68a)
 
