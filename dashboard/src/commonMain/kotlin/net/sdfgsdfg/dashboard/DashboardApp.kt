@@ -123,11 +123,10 @@ fun DashboardApp() {
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = background) {
             Box(Modifier.fillMaxSize()) {
-                OpsWallpaper()
+                OpsWallpaper(liquidState)
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .trueLiquidSource(liquidState)
                         .background(Brush.verticalGradient(listOf(Color(0x990A1117), Color(0xEE080B10), background))),
                 ) {
                     Header(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
@@ -166,25 +165,35 @@ fun DashboardApp() {
 }
 
 @Composable
-private fun OpsWallpaper() {
+private fun OpsWallpaper(liquidState: TrueLiquidState) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .trueLiquidSource(liquidState)
             .background(Color(0xFF04070B))
-            .background(Brush.radialGradient(listOf(Color(0x66233E68), Color.Transparent), center = Offset(260f, 40f), radius = 980f))
-            .background(Brush.radialGradient(listOf(Color(0x481D050B), Color.Transparent), center = Offset(1500f, 860f), radius = 1050f))
-            .background(Brush.linearGradient(listOf(Color(0x2205060A), Color(0x4410121A), Color(0x220B0307)))),
+            .background(Brush.linearGradient(listOf(Color(0x66101922), Color(0x33050C10), Color(0x55130A14)))),
     ) {
-        Canvas(Modifier.fillMaxSize().alpha(0.18f)) {
-            var y = -size.width
+        Canvas(Modifier.fillMaxSize().alpha(0.38f)) {
+            var y = -size.width * 0.2f
             while (y < size.height + size.width) {
                 drawLine(
-                    color = Color(0xFF416083).copy(alpha = 0.16f),
+                    color = Color(0xFF66D9FF).copy(alpha = 0.10f),
                     start = Offset(0f, y),
-                    end = Offset(size.width, y + size.width * 0.18f),
-                    strokeWidth = 0.7f,
+                    end = Offset(size.width, y + size.width * 0.14f),
+                    strokeWidth = 0.8f,
                 )
-                y += 32f
+                y += 42f
+            }
+            var x = 0f
+            while (x < size.width) {
+                val color = if ((x / 96f).toInt() % 2 == 0) Color(0xFF5AF28A) else Color(0xFFB48CFF)
+                drawLine(
+                    color = color.copy(alpha = 0.075f),
+                    start = Offset(x, 0f),
+                    end = Offset(x + size.height * 0.18f, size.height),
+                    strokeWidth = 1.0f,
+                )
+                x += 96f
             }
         }
     }
@@ -312,8 +321,8 @@ private fun RepoCard(repo: RepoHealthDto, liquidState: TrueLiquidState, modifier
         modifier = modifier
             .surfaceDepth(shape, repo.status.color(), glowAlpha = 0.11f)
             .clip(shape)
+            .background(panelRaised.copy(alpha = 0.36f))
             .trueLiquidSurface(liquidState, glassStyle(), shape)
-            .background(panelRaised.copy(alpha = 0.70f))
             .border(BorderStroke(1.dp, repo.status.color().copy(alpha = 0.28f)), shape)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -397,8 +406,8 @@ private fun MetricCard(metric: FieldSpec, liquidState: TrueLiquidState) {
             .fillMaxWidth()
             .surfaceDepth(shape, cyan, glowAlpha = 0.06f)
             .clip(shape)
+            .background(Color(0x66101720))
             .trueLiquidSurface(liquidState, glassStyle(), shape)
-            .background(Color(0xCC101720))
             .border(BorderStroke(1.dp, border), shape)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1328,7 +1337,22 @@ private fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
     }
     .joinToString(" · ")
 
-private fun glassStyle() = TrueLiquidDefaults.clearLensStyle(glassAlpha = 0.68f, tintAlpha = 0.10f, cornerRadius = 8f)
+private fun glassStyle() = TrueLiquidDefaults.prismStyle(
+    glassAlpha = 0.90f,
+    tintAlpha = 0.06f,
+    refraction = 0.62f,
+    curve = 0.78f,
+    dispersion = 0.22f,
+    frost = 0.05f,
+    blur = 0.012f,
+    saturation = 1.18f,
+    contrast = 0.07f,
+    luminanceClamp = 0.26f,
+    edge = 0.34f,
+    depth = 0.78f,
+    innerShadow = 0.46f,
+    cornerRadius = 8f,
+)
 
 private fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green
