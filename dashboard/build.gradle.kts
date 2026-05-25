@@ -23,9 +23,10 @@ kotlin {
             implementation(libs.compose.animation.core)
             implementation(libs.compose.material3)
             implementation(libs.compose.ui)
+            implementation(libs.compose.components.resources)
             implementation(libs.coroutines)
             implementation(libs.kotlinx.serialization.json)
-            implementation(libs.trueliquid)
+            implementation(libs.mckee.liquid)
         }
 
         commonTest.dependencies {

@@ -1,16 +1,22 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,9 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -51,24 +55,28 @@ import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.trueliquid.compose.TrueLiquidDefaults
-import io.github.trueliquid.compose.TrueLiquidState
-import io.github.trueliquid.compose.rememberTrueLiquidState
-import io.github.trueliquid.compose.trueLiquidSource
-import io.github.trueliquid.compose.trueLiquidSurface
+import io.github.fletchmckee.liquid.LiquidState
+import io.github.fletchmckee.liquid.liquefiable
+import io.github.fletchmckee.liquid.liquid
+import io.github.fletchmckee.liquid.rememberLiquidState
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.dashboard.generated.resources.Res
+import net.sdfgsdfg.dashboard.generated.resources.wallpaper_winter_river
+import org.jetbrains.compose.resources.painterResource
 import kotlin.math.roundToInt
 
 private val background = Color(0xFF090C10)
@@ -102,7 +110,7 @@ private data class IssueLaneSpec(val label: String, val color: Color, val count:
 fun DashboardApp() {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
-    val liquidState = rememberTrueLiquidState()
+    val liquidState = rememberLiquidState()
 
     DisposableEffect(Unit) {
         var active = true
@@ -122,42 +130,43 @@ fun DashboardApp() {
         ),
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = background) {
-            Box(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val pageBottomGutter = maxHeight * 0.28f
                 OpsWallpaper(liquidState)
+                val scrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Brush.verticalGradient(listOf(Color(0x990A1117), Color(0xEE080B10), background))),
+                        .verticalScroll(scrollState),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Header(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
+                    Header(
+                        selectedTab = selectedTab,
+                        liquidState = liquidState,
+                        onTabSelected = { selectedTab = it },
+                    )
                     if (loadState is OpsLoadState.Loading) {
                         TopLoadTrace()
                     }
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .widthIn(max = 1480.dp)
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
-                        contentAlignment = Alignment.TopCenter,
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .widthIn(max = 1480.dp)
-                                .fillMaxWidth()
-                                .padding(horizontal = 18.dp, vertical = 16.dp),
-                        ) {
-                            when (selectedTab) {
-                                DashboardTab.Home -> Home(loadState, liquidState)
-                                DashboardTab.Ci -> CiResults(loadState)
-                                DashboardTab.Issues -> Issues(loadState)
-                                DashboardTab.Arcana -> WorkSurface(
-                                    title = "Arcana Sessions",
-                                    detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
-                                    items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
-                                )
-                            }
+                        when (selectedTab) {
+                            DashboardTab.Home -> Home(loadState, liquidState)
+                            DashboardTab.Ci -> CiResults(loadState, liquidState)
+                            DashboardTab.Issues -> Issues(loadState, liquidState)
+                            DashboardTab.Arcana -> WorkSurface(
+                                title = "Arcana Sessions",
+                                detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
+                                items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
+                                liquidState = liquidState,
+                            )
                         }
                     }
+                    Spacer(Modifier.height(pageBottomGutter))
                 }
             }
         }
@@ -165,98 +174,186 @@ fun DashboardApp() {
 }
 
 @Composable
-private fun OpsWallpaper(liquidState: TrueLiquidState) {
+private fun OpsWallpaper(liquidState: LiquidState) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .trueLiquidSource(liquidState)
-            .background(Color(0xFF04070B))
-            .background(Brush.linearGradient(listOf(Color(0x66101922), Color(0x33050C10), Color(0x55130A14)))),
+            .liquefiable(liquidState)
+            .background(Color(0xFF02060B)),
     ) {
-        Canvas(Modifier.fillMaxSize().alpha(0.38f)) {
-            var y = -size.width * 0.2f
-            while (y < size.height + size.width) {
-                drawLine(
-                    color = Color(0xFF66D9FF).copy(alpha = 0.10f),
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y + size.width * 0.14f),
-                    strokeWidth = 0.8f,
-                )
-                y += 42f
+        Image(
+            painter = painterResource(Res.drawable.wallpaper_winter_river),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.20f)))
+    }
+}
+
+@Composable
+private fun Header(
+    selectedTab: DashboardTab,
+    liquidState: LiquidState,
+    onTabSelected: (DashboardTab) -> Unit,
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 88.dp)
+            .background(Color(0xF8050A11))
+            .background(Brush.linearGradient(listOf(Color(0x99112844), Color(0x5A060A10), Color(0x78160613))))
+            .border(BorderStroke(1.dp, Color(0x283A5876)))
+            .padding(horizontal = 18.dp, vertical = 13.dp),
+    ) {
+        Image(
+            painter = painterResource(Res.drawable.wallpaper_winter_river),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.matchParentSize().alpha(0.24f),
+        )
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(Brush.linearGradient(listOf(Color(0xEE06111E), Color(0xE904080D), Color(0xD8170710)))),
+        )
+        ToolbarTexture(Modifier.matchParentSize())
+        val compactTabs = maxWidth < 520.dp
+        if (maxWidth < 900.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HeaderTitle()
+                TabSwitcher(selectedTab, liquidState, compact = compactTabs, onTabSelected)
             }
-            var x = 0f
-            while (x < size.width) {
-                val color = if ((x / 96f).toInt() % 2 == 0) Color(0xFF5AF28A) else Color(0xFFB48CFF)
-                drawLine(
-                    color = color.copy(alpha = 0.075f),
-                    start = Offset(x, 0f),
-                    end = Offset(x + size.height * 0.18f, size.height),
-                    strokeWidth = 1.0f,
-                )
-                x += 96f
+        } else {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                HeaderTitle(modifier = Modifier.align(Alignment.CenterStart))
+                TabSwitcher(selectedTab, liquidState, compact = false, onTabSelected, modifier = Modifier.align(Alignment.Center))
+                HeaderRuntimeBadge(modifier = Modifier.align(Alignment.CenterEnd))
             }
         }
     }
 }
 
 @Composable
-private fun Header(selectedTab: DashboardTab, onTabSelected: (DashboardTab) -> Unit) {
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xCC0A0F14))
-            .border(BorderStroke(1.dp, Color(0x181FFFFFF)))
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-    ) {
-        if (maxWidth < 900.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                HeaderTitle()
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DashboardTab.entries.forEach { tab ->
-                        TabChip(tab.label, selected = selectedTab == tab) { onTabSelected(tab) }
-                    }
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                HeaderTitle(modifier = Modifier.weight(0.85f))
-                Row(
-                    modifier = Modifier.weight(1.45f),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    DashboardTab.entries.forEach { tab ->
-                        TabChip(tab.label, selected = selectedTab == tab) { onTabSelected(tab) }
-                        Spacer(Modifier.width(8.dp))
-                    }
-                }
-                StatusPill("Compose 1.11 / hotRunJvm", cyan)
-            }
+private fun ToolbarTexture(modifier: Modifier = Modifier) {
+    Canvas(modifier.alpha(0.86f)) {
+        drawCircle(
+            color = Color(0xFF164B7C).copy(alpha = 0.18f),
+            radius = size.width * 0.26f,
+            center = Offset(size.width * 0.12f, size.height * 1.80f),
+        )
+        drawCircle(
+            color = Color(0xFF6C0719).copy(alpha = 0.18f),
+            radius = size.width * 0.24f,
+            center = Offset(size.width * 0.88f, size.height * 2.15f),
+        )
+        var radius = size.height * 1.65f
+        while (radius < size.width * 0.36f) {
+            drawCircle(
+                color = Color(0xFF4F83B6).copy(alpha = 0.018f),
+                radius = radius,
+                center = Offset(size.width * 0.11f, size.height * 2.35f),
+                style = Stroke(width = 0.8f),
+            )
+            radius += size.height * 0.70f
+        }
+        var meridian = -size.width * 0.08f
+        while (meridian < size.width * 0.58f) {
+            drawLine(
+                color = Color(0xFF6EA2D2).copy(alpha = 0.026f),
+                start = Offset(meridian, size.height),
+                end = Offset(meridian + size.height * 2.9f, 0f),
+                strokeWidth = 0.8f,
+            )
+            meridian += 86f
+        }
+        var fault = size.width * 0.64f
+        while (fault < size.width) {
+            drawLine(
+                color = Color(0xFFC51F3C).copy(alpha = 0.024f),
+                start = Offset(fault, 0f),
+                end = Offset(fault + size.height * 2.5f, size.height),
+                strokeWidth = 0.8f,
+            )
+            fault += 112f
+        }
+        drawLine(
+            color = Color(0xFF6ECFFF).copy(alpha = 0.14f),
+            start = Offset(0f, size.height - 1f),
+            end = Offset(size.width * 0.50f, size.height - 1f),
+            strokeWidth = 1f,
+        )
+        drawLine(
+            color = Color(0xFFA9142C).copy(alpha = 0.17f),
+            start = Offset(size.width * 0.66f, size.height - 1f),
+            end = Offset(size.width, size.height - 1f),
+            strokeWidth = 1f,
+        )
+        var dot = 0
+        while (dot < 34) {
+            val px = ((dot * 233) % 1900).toFloat() / 1900f * size.width
+            val py = 8f + (((dot * 89) % 68).toFloat() / 68f * (size.height - 16f)).coerceAtLeast(0f)
+            drawCircle(
+                color = (if (dot % 7 == 0) rose else cyan).copy(alpha = if (dot % 7 == 0) 0.075f else 0.055f),
+                radius = if (dot % 7 == 0) 1.2f else 0.8f,
+                center = Offset(px, py),
+            )
+            dot += 1
         }
     }
 }
 
 @Composable
 private fun HeaderTitle(modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text("Trio Ops Cockpit", color = text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("backend / server_py / arcana", color = muted, fontSize = 13.sp)
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(11.dp), verticalAlignment = Alignment.CenterVertically) {
+        HeaderGlyph()
+        Column {
+            Text("Trio Ops Cockpit", color = text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text("backend / server_py / arcana", color = Color(0xFFB5C1D0), fontSize = 13.sp)
+        }
     }
 }
 
 @Composable
-private fun Home(loadState: OpsLoadState, liquidState: TrueLiquidState) {
+private fun HeaderGlyph() {
+    Canvas(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(Brush.linearGradient(listOf(cyan.copy(alpha = 0.20f), Color(0xFF0A1320), rose.copy(alpha = 0.15f))))
+            .border(BorderStroke(1.dp, cyan.copy(alpha = 0.32f)), RoundedCornerShape(11.dp)),
+    ) {
+        val a = Offset(size.width * 0.34f, size.height * 0.34f)
+        val b = Offset(size.width * 0.66f, size.height * 0.40f)
+        val c = Offset(size.width * 0.50f, size.height * 0.68f)
+        drawLine(cyan.copy(alpha = 0.35f), a, b, strokeWidth = 1.1f)
+        drawLine(cyan.copy(alpha = 0.28f), b, c, strokeWidth = 1.1f)
+        drawLine(rose.copy(alpha = 0.22f), c, a, strokeWidth = 1.1f)
+        listOf(a, b, c).forEachIndexed { index, point ->
+            drawCircle(
+                color = if (index == 2) green else cyan,
+                radius = 3.2f,
+                center = point,
+            )
+            drawCircle(
+                color = (if (index == 2) green else cyan).copy(alpha = 0.18f),
+                radius = 6.4f,
+                center = point,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Home(loadState: OpsLoadState, liquidState: LiquidState) {
     when (loadState) {
         OpsLoadState.Loading -> LoadingPanel()
         is OpsLoadState.Failed -> WorkSurface(
             title = "Ops Summary Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "backend service", "local preview route"),
+            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             SummaryStrip(loadState.summary, liquidState)
@@ -266,7 +363,7 @@ private fun Home(loadState: OpsLoadState, liquidState: TrueLiquidState) {
 }
 
 @Composable
-private fun SummaryStrip(summary: OpsSummaryDto, liquidState: TrueLiquidState) {
+private fun SummaryStrip(summary: OpsSummaryDto, liquidState: LiquidState) {
     val ok = summary.repos.count { it.status == OpsStatusDto.OK }
     val activeIssues = summary.repos.sumOf { it.issues.active }
     val alerts = summary.repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
@@ -298,7 +395,7 @@ private fun SummaryStrip(summary: OpsSummaryDto, liquidState: TrueLiquidState) {
 }
 
 @Composable
-private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: TrueLiquidState) {
+private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: LiquidState) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -315,37 +412,59 @@ private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: TrueLiquidState) {
 }
 
 @Composable
-private fun RepoCard(repo: RepoHealthDto, liquidState: TrueLiquidState, modifier: Modifier = Modifier) {
+private fun RepoCard(repo: RepoHealthDto, liquidState: LiquidState, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .surfaceDepth(shape, repo.status.color(), glowAlpha = 0.11f)
-            .clip(shape)
-            .background(panelRaised.copy(alpha = 0.36f))
-            .trueLiquidSurface(liquidState, glassStyle(), shape)
-            .border(BorderStroke(1.dp, repo.status.color().copy(alpha = 0.28f)), shape)
+            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.11f, borderAlpha = 0.42f)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatusDot(repo.status)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                Text(repo.role, color = muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            StatusPill(repo.status.name, repo.status.color())
+        RepoCardContent(repo)
+    }
+}
+
+@Composable
+private fun LiquidRunSignal(run: TestRunSummaryDto) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color.White.copy(alpha = 0.045f))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)), RoundedCornerShape(7.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text(run.label, color = text, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(run.status.name, color = run.status.color(), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
-        FieldGrid(
-            listOf(
-                FieldSpec("service", repo.serviceName ?: "-"),
-                FieldSpec("issues", repo.issues.active.toString(), issueSourceBreakdown(listOf(repo))),
-                FieldSpec("location", repo.location),
-            ),
-        )
-        repo.latestRun?.let { RunPanel(it) }
-        repo.note?.let {
-            Text(it, color = Color(0xFFC9D3DF), fontSize = 13.sp, lineHeight = 18.sp)
+        run.detail?.let {
+            Text(it, color = Color(0xFFC2CCDA), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+@Composable
+private fun RepoCardContent(repo: RepoHealthDto) {
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        StatusDot(repo.status)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+            Text(repo.role, color = Color(0xFFC2CCDA), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        StatusPill(repo.status.name, repo.status.color())
+    }
+    FieldGrid(
+        listOf(
+            FieldSpec("service", repo.serviceName ?: "-"),
+            FieldSpec("issues", repo.issues.active.toString(), issueSourceBreakdown(listOf(repo))),
+            FieldSpec("location", repo.location),
+        ),
+    )
+    repo.latestRun?.let { LiquidRunSignal(it) }
+    repo.note?.let {
+        Text(it, color = Color(0xFFDCE4EE), fontSize = 13.sp, lineHeight = 18.sp)
     }
 }
 
@@ -399,16 +518,12 @@ private fun Field(field: FieldSpec) {
 }
 
 @Composable
-private fun MetricCard(metric: FieldSpec, liquidState: TrueLiquidState) {
+private fun MetricCard(metric: FieldSpec, liquidState: LiquidState) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .surfaceDepth(shape, cyan, glowAlpha = 0.06f)
-            .clip(shape)
-            .background(Color(0x66101720))
-            .trueLiquidSurface(liquidState, glassStyle(), shape)
-            .border(BorderStroke(1.dp, border), shape)
+            .glassSurface(liquidState, shape, Color(0xFF7BA9C8), glowAlpha = 0.06f, borderAlpha = 0.30f)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -521,64 +636,69 @@ private fun LoadingBar(width: Float, height: Dp, pulse: Float) {
 }
 
 @Composable
-private fun CiResults(loadState: OpsLoadState) {
+private fun CiResults(loadState: OpsLoadState, liquidState: LiquidState) {
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "CI Results",
             detail = "Waiting for the ops summary before shaping the pyramid lanes.",
             items = listOf("backend-local", "server_py live selftest", "dashboard web / desktop", "arcana-smoke"),
+            liquidState = liquidState,
         )
         is OpsLoadState.Failed -> WorkSurface(
             title = "CI Results Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "backend control plane", "dashboard API"),
+            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            PyramidHeader(loadState.summary)
-            PipelineGrid(loadState.summary)
-            RunHistoryPanel(loadState.summary)
-            ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest)
+            PyramidHeader(loadState.summary, liquidState)
+            PipelineGrid(loadState.summary, liquidState)
+            RunHistoryPanel(loadState.summary, liquidState)
+            ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest, liquidState)
         }
     }
 }
 
 @Composable
-private fun Issues(loadState: OpsLoadState) {
+private fun Issues(loadState: OpsLoadState, liquidState: LiquidState) {
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "Issues",
             detail = "Waiting for local .arcana/issues.json summaries before shaping lanes.",
             items = issueLanes.map { it.label },
+            liquidState = liquidState,
         )
         is OpsLoadState.Failed -> WorkSurface(
             title = "Issues Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
+            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            IssuesHeader(loadState.summary)
-            IssueRepoStrip(loadState.summary.repos)
-            IssueBoard(loadState.summary.repos)
+            IssuesHeader(loadState.summary, liquidState)
+            IssueRepoStrip(loadState.summary.repos, liquidState)
+            IssueBoard(loadState.summary.repos, liquidState)
             WorkSurface(
                 title = "Issue Detail Contract",
                 detail = "The board reads repo-local Arcana issue summaries now; detail events, artifacts, diffs, and feedback attach after the issue DTO grows.",
                 items = listOf(".arcana/issues.json", "events", "artifacts", "feedback"),
+                liquidState = liquidState,
             )
         }
     }
 }
 
 @Composable
-private fun IssueRepoStrip(repos: List<RepoHealthDto>) {
+private fun IssueRepoStrip(repos: List<RepoHealthDto>, liquidState: LiquidState) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                repos.forEach { IssueRepoTile(it, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { IssueRepoTile(it, liquidState, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 repos.forEach { repo ->
-                    IssueRepoTile(repo, modifier = Modifier.weight(1f))
+                    IssueRepoTile(repo, liquidState, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -586,15 +706,12 @@ private fun IssueRepoStrip(repos: List<RepoHealthDto>) {
 }
 
 @Composable
-private fun IssueRepoTile(repo: RepoHealthDto, modifier: Modifier = Modifier) {
+private fun IssueRepoTile(repo: RepoHealthDto, liquidState: LiquidState, modifier: Modifier = Modifier) {
     val active = repo.issues.active
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .surfaceDepth(shape, repo.status.color(), glowAlpha = 0.05f)
-            .clip(shape)
-            .background(Color(0xFF101720))
-            .border(BorderStroke(1.dp, border), shape)
+            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.05f, borderAlpha = 0.28f)
             .padding(13.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -613,45 +730,40 @@ private fun IssueRepoTile(repo: RepoHealthDto, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun IssuesHeader(summary: OpsSummaryDto) {
+private fun IssuesHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
     val active = summary.repos.sumOf { it.issues.active }
     val done = summary.repos.sumOf { it.issues.done }
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, amber, glowAlpha = 0.08f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(liquidState, shape, amber, glowAlpha = 0.08f, borderAlpha = 0.26f)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Issue Command Board", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("Arcana local issue files and GitHub Issues are counted together, with source splits kept visible.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusPill("$active active", if (active > 0) amber else green)
-                StatusPill("$done done", muted)
-            }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Issue Command Board", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Arcana local issue files and GitHub Issues are counted together, with source splits kept visible.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusPill("$active active", if (active > 0) amber else green)
+            StatusPill("$done done", muted)
         }
     }
 }
 
 @Composable
-private fun IssueBoard(repos: List<RepoHealthDto>) {
+private fun IssueBoard(repos: List<RepoHealthDto>, liquidState: LiquidState) {
     BoxWithConstraints {
         if (maxWidth < 1180.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                issueLanes.forEach { lane -> IssueLane(lane, repos, modifier = Modifier.fillMaxWidth()) }
+                issueLanes.forEach { lane -> IssueLane(lane, repos, liquidState, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 issueLanes.forEach { lane ->
-                    IssueLane(lane, repos, modifier = Modifier.weight(1f))
+                    IssueLane(lane, repos, liquidState, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -659,26 +771,23 @@ private fun IssueBoard(repos: List<RepoHealthDto>) {
 }
 
 @Composable
-private fun IssueLane(lane: IssueLaneSpec, repos: List<RepoHealthDto>, modifier: Modifier = Modifier) {
+private fun IssueLane(lane: IssueLaneSpec, repos: List<RepoHealthDto>, liquidState: LiquidState, modifier: Modifier = Modifier) {
     val tickets = repos.mapNotNull { repo -> lane.count(repo).takeIf { it > 0 }?.let { repo to it } }
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = modifier.surfaceDepth(shape, lane.color, glowAlpha = 0.07f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF101720)),
-        border = BorderStroke(1.dp, lane.color.copy(alpha = 0.22f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    Column(
+        modifier = modifier
+            .glassSurface(liquidState, shape, lane.color, glowAlpha = 0.07f, borderAlpha = 0.26f)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(lane.label, color = lane.color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                StatusPill(tickets.sumOf { it.second }.toString(), lane.color)
-            }
-            if (tickets.isEmpty()) {
-                EmptyLane(lane)
-            } else {
-                tickets.forEach { (repo, count) -> IssueTicket(lane, repo, count) }
-            }
+        Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(lane.label, color = lane.color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            StatusPill(tickets.sumOf { it.second }.toString(), lane.color)
+        }
+        if (tickets.isEmpty()) {
+            EmptyLane(lane)
+        } else {
+            tickets.forEach { (repo, count) -> IssueTicket(lane, repo, count) }
         }
     }
 }
@@ -722,41 +831,36 @@ private fun IssueTicket(lane: IssueLaneSpec, repo: RepoHealthDto, count: Int) {
 }
 
 @Composable
-private fun PyramidHeader(summary: OpsSummaryDto) {
+private fun PyramidHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, cyan, glowAlpha = 0.08f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(liquidState, shape, cyan, glowAlpha = 0.08f, borderAlpha = 0.28f)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Big CI Pyramid", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("GitHub Actions, deploy smoke, server_py live selftest, and Arcana pytest smoke converge here.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
-            }
-            StatusPill("${summary.repos.size} repos", cyan)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Big CI Pyramid", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("GitHub Actions, deploy smoke, server_py live selftest, and Arcana pytest smoke converge here.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
         }
+        StatusPill("${summary.repos.size} repos", cyan)
     }
 }
 
 @Composable
-private fun PipelineGrid(summary: OpsSummaryDto) {
+private fun PipelineGrid(summary: OpsSummaryDto, liquidState: LiquidState) {
     val repos = summary.repos
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { PipelineLane(it, summary.generatedAtMs, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { PipelineLane(it, summary.generatedAtMs, liquidState, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    PipelineLane(repo, summary.generatedAtMs, modifier = Modifier.weight(1f))
+                    PipelineLane(repo, summary.generatedAtMs, liquidState, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -764,29 +868,26 @@ private fun PipelineGrid(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
+private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, liquidState: LiquidState, modifier: Modifier = Modifier) {
     val steps = pipelineSteps(repo)
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = modifier.surfaceDepth(shape, repo.status.color(), glowAlpha = 0.09f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, repo.status.color().copy(alpha = 0.24f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Column(
+        modifier = modifier
+            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.09f, borderAlpha = 0.32f)
+            .padding(15.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatusDot(repo.status)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(repo.name, color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text(repo.role, color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatusDot(repo.status)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(repo.name, color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(repo.role, color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            steps.forEachIndexed { index, step ->
-                PipelineStep(index + 1, step)
-            }
-            if (repo.id == "arcana") ArcanaOperatorTile(repo.latestRun, generatedAtMs)
         }
+        steps.forEachIndexed { index, step ->
+            PipelineStep(index + 1, step)
+        }
+        if (repo.id == "arcana") ArcanaOperatorTile(repo.latestRun, generatedAtMs)
     }
 }
 
@@ -873,7 +974,7 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
 }
 
 @Composable
-private fun RunHistoryPanel(summary: OpsSummaryDto) {
+private fun RunHistoryPanel(summary: OpsSummaryDto, liquidState: LiquidState) {
     val events = summary.repos
         .flatMap { repo -> repo.history.map { repo to it } }
         .sortedByDescending { it.second.timestampMs ?: 0L }
@@ -881,23 +982,21 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
     if (events.isEmpty()) return
 
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, green, glowAlpha = 0.06f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(liquidState, shape, green, glowAlpha = 0.06f, borderAlpha = 0.26f)
+            .padding(15.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Successful deploy-gated runs emitted by the backend control plane.", color = muted, fontSize = 12.sp)
-                }
-                StatusPill("${events.size} events", green)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Successful deploy-gated runs emitted by the backend control plane.", color = muted, fontSize = 12.sp)
             }
-            events.forEach { (repo, run) -> RunHistoryRow(repo, run) }
+            StatusPill("${events.size} events", green)
         }
+        events.forEach { (repo, run) -> RunHistoryRow(repo, run) }
     }
 }
 
@@ -927,36 +1026,34 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto) {
 }
 
 @Composable
-private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?) {
+private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?, liquidState: LiquidState) {
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, selfTest?.status?.color() ?: cyan, glowAlpha = 0.07f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(liquidState, shape, selfTest?.status?.color() ?: cyan, glowAlpha = 0.07f, borderAlpha = 0.28f)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(13.dp),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("server_py Live Selftest", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("Dashboard-owned renderer for selftest JSON, workflow artifacts, model matrix, Zen state, and conversation signal.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
-                }
-                StatusPill(selfTest?.status?.name ?: "WAITING", selfTest?.status?.color() ?: Color(0xFF8D98A9))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("server_py Live Selftest", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Dashboard-owned renderer for selftest JSON, workflow artifacts, model matrix, Zen state, and conversation signal.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
             }
-            if (selfTest == null) {
-                SelfTestWaitingPanel()
-            } else {
-                SelfTestStats(selfTest)
-                SelfTestZenPanel(selfTest)
-                SelfTestExcerpt(selfTest)
-                SelfTestArtifacts(selfTest)
-                SelfTestCases(selfTest)
-            }
+            StatusPill(selfTest?.status?.name ?: "WAITING", selfTest?.status?.color() ?: Color(0xFF8D98A9))
+        }
+        if (selfTest == null) {
+            SelfTestWaitingPanel()
+        } else {
+            SelfTestStats(selfTest)
+            SelfTestZenPanel(selfTest)
+            SelfTestExcerpt(selfTest)
+            SelfTestArtifacts(selfTest)
+            SelfTestCases(selfTest)
         }
     }
 }
@@ -1190,32 +1287,27 @@ private fun SelfTestCaseRow(name: String, status: OpsStatusDto, latencyMs: Doubl
 }
 
 @Composable
-private fun WorkSurface(title: String, detail: String, items: List<String>) {
+private fun WorkSurface(title: String, detail: String, items: List<String>, liquidState: LiquidState) {
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, cyan, glowAlpha = 0.06f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(liquidState, shape, cyan, glowAlpha = 0.06f, borderAlpha = 0.28f)
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(title, color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(detail, color = muted, fontSize = 13.sp, lineHeight = 19.sp)
-            BoxWithConstraints {
-                if (maxWidth < 720.dp) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items.forEach { PlaceholderTile(it) }
-                    }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items.forEach { item ->
-                            Box(modifier = Modifier.weight(1f)) {
-                                PlaceholderTile(item)
-                            }
+        Text(title, color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(detail, color = muted, fontSize = 13.sp, lineHeight = 19.sp)
+        BoxWithConstraints {
+            if (maxWidth < 720.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items.forEach { PlaceholderTile(it) }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items.forEach { item ->
+                        Box(modifier = Modifier.weight(1f)) {
+                            PlaceholderTile(item)
                         }
                     }
                 }
@@ -1239,19 +1331,107 @@ private fun PlaceholderTile(label: String) {
 }
 
 @Composable
-private fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val color = if (selected) cyan else Color(0xFF6D7889)
+private fun TabSwitcher(
+    selectedTab: DashboardTab,
+    liquidState: LiquidState,
+    compact: Boolean,
+    onTabSelected: (DashboardTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tabs = DashboardTab.entries
+    val gap = 4.dp
     val shape = RoundedCornerShape(999.dp)
+    val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+    val widths = tabs.map { it.navWidth(compact) }
+    val selectedOffset by animateDpAsState(
+        targetValue = widths.take(selectedIndex).fold(0.dp) { acc, width -> acc + width + gap },
+        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+        label = "tab-switcher-offset",
+    )
+    val selectedWidth by animateDpAsState(
+        targetValue = widths[selectedIndex],
+        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+        label = "tab-switcher-width",
+    )
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(Color(0x84070C13))
+            .border(BorderStroke(1.dp, Color(0x33466685)), shape)
+            .padding(5.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = selectedOffset)
+                .width(selectedWidth)
+                .height(42.dp)
+                .glassSurface(liquidState, shape, cyan, glowAlpha = 0.20f, borderAlpha = 0.56f),
+        ) {
+            Canvas(Modifier.matchParentSize()) {
+                drawLine(
+                    color = Color.White.copy(alpha = 0.18f),
+                    start = Offset(size.width * 0.18f, 1.2f),
+                    end = Offset(size.width * 0.82f, 1.2f),
+                    strokeWidth = 1.0f,
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) {
+            tabs.forEachIndexed { index, tab ->
+                TabLabel(tab, selected = index == selectedIndex, width = widths[index]) { onTabSelected(tab) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabLabel(tab: DashboardTab, selected: Boolean, width: Dp, onClick: () -> Unit) {
+    val color by animateColorAsState(
+        targetValue = if (selected) Color(0xFFEAF7FF) else Color(0xFF8793A4),
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "tab-label-color",
+    )
     Box(
         modifier = Modifier
-            .then(if (selected) Modifier.surfaceDepth(shape, cyan, glowAlpha = 0.14f) else Modifier)
-            .clip(shape)
-            .background(if (selected) Color(0xFF12303E) else Color.Transparent)
-            .border(BorderStroke(1.dp, if (selected) cyan.copy(alpha = 0.45f) else Color(0xFF25313E)), shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 8.dp),
+            .width(width)
+            .height(42.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(tab.label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+private fun DashboardTab.navWidth(compact: Boolean): Dp = when (this) {
+    DashboardTab.Home -> if (compact) 70.dp else 80.dp
+    DashboardTab.Ci -> if (compact) 96.dp else 110.dp
+    DashboardTab.Issues -> if (compact) 78.dp else 90.dp
+    DashboardTab.Arcana -> if (compact) 130.dp else 154.dp
+}
+
+@Composable
+private fun HeaderRuntimeBadge(modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(999.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color(0xFF0A1724), Color(0xFF10101A))))
+            .border(BorderStroke(1.dp, cyan.copy(alpha = 0.34f)), shape)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(green),
+        )
+        Text("Compose 1.11", color = Color(0xFFDFF5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text("/", color = Color(0xFF516075), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text("hotRunJvm", color = cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1337,22 +1517,26 @@ private fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
     }
     .joinToString(" · ")
 
-private fun glassStyle() = TrueLiquidDefaults.prismStyle(
-    glassAlpha = 0.90f,
-    tintAlpha = 0.06f,
-    refraction = 0.62f,
-    curve = 0.78f,
-    dispersion = 0.22f,
-    frost = 0.05f,
-    blur = 0.012f,
-    saturation = 1.18f,
-    contrast = 0.07f,
-    luminanceClamp = 0.26f,
-    edge = 0.34f,
-    depth = 0.78f,
-    innerShadow = 0.46f,
-    cornerRadius = 8f,
-)
+private fun Modifier.glassSurface(
+    liquidState: LiquidState,
+    shape: RoundedCornerShape,
+    accent: Color,
+    glowAlpha: Float,
+    borderAlpha: Float,
+): Modifier = this
+    .surfaceDepth(shape, accent, glowAlpha)
+    .liquid(liquidState) {
+        this.shape = shape
+        frost = 2.dp
+        refraction = 0.20f
+        curve = 0.10f
+        edge = 0.025f
+        tint = Color.Black.copy(alpha = 0.62f)
+        saturation = 1.25f
+        contrast = 1.08f
+        dispersion = 0.05f
+    }
+    .border(BorderStroke(1.dp, accent.copy(alpha = borderAlpha)), shape)
 
 private fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green
@@ -1382,7 +1566,7 @@ private fun Modifier.surfaceDepth(shape: RoundedCornerShape, accent: Color, glow
             spread = (-4).dp,
             offset = DpOffset(0.dp, 8.dp),
             color = Color.Black,
-            alpha = 0.44f,
+            alpha = 0.22f,
         ),
     )
     .dropShadow(
@@ -1392,7 +1576,7 @@ private fun Modifier.surfaceDepth(shape: RoundedCornerShape, accent: Color, glow
             spread = (-12).dp,
             offset = DpOffset.Zero,
             color = accent,
-            alpha = glowAlpha,
+            alpha = glowAlpha * 0.5f,
         ),
     )
     .innerShadow(
@@ -1401,10 +1585,10 @@ private fun Modifier.surfaceDepth(shape: RoundedCornerShape, accent: Color, glow
             radius = 8.dp,
             offset = DpOffset(0.dp, 1.dp),
             color = Color.White,
-            alpha = 0.035f,
+            alpha = 0.0175f,
         ),
     )
-    .border(BorderStroke(1.dp, accent.copy(alpha = glowAlpha)), shape)
+    .border(BorderStroke(1.dp, accent.copy(alpha = glowAlpha * 0.5f)), shape)
 
 private val issueLanes = listOf(
     IssueLaneSpec("TODO", Color(0xFF8EA0B8)) { it.issues.todo },
