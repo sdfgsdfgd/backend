@@ -21,11 +21,13 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import net.sdfgsdfg.data.model.ArcanaIngestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -35,8 +37,13 @@ import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.file.Paths
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -63,11 +70,17 @@ private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/ac
 private val publicIngressUrl = "https://sdfgsdfg.net/test"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
+private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
+private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
+private const val githubIssueCacheMs = 5 * 60 * 1_000L
+
+private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
 
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestTargetFile: File = defaultArcanaIngestFile,
     selfTestArtifactFile: File = serverPySelfTestFile,
+    githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
 ) {
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
@@ -94,7 +107,7 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(arcanaIngestTargetFile))
+        call.respond(opsSummary(arcanaIngestTargetFile, githubIssues))
     }
 
     post("/api/ops/ingest/arcana") {
@@ -200,10 +213,15 @@ private fun File.dashboardContentType() = when (extension.lowercase()) {
     else -> ContentType.Application.OctetStream
 }
 
-private fun opsSummary(arcanaIngestFile: File = defaultArcanaIngestFile): OpsSummaryDto {
+private fun opsSummary(
+    arcanaIngestFile: File = defaultArcanaIngestFile,
+    githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
+): OpsSummaryDto {
     val serverPySelfTest = latestServerPySelfTest()
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
     val backendHistory = deployHistory()
+    val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
+    val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
     val backendLatestRun = backendHistory.firstOrNull() ?: TestRunSummaryDto(
         label = "local smoke",
         status = OpsStatusDto.OK,
@@ -214,7 +232,8 @@ private fun opsSummary(arcanaIngestFile: File = defaultArcanaIngestFile): OpsSum
         status = OpsStatusDto.WIP,
         detail = ".arcana/issues.json and run ingestion stay local-first.",
     )
-    val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() } ?: localArcanaIssues(arcanaRepo)
+    val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
+        ?: localArcanaIssues(arcanaRepo)
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -229,7 +248,7 @@ private fun opsSummary(arcanaIngestFile: File = defaultArcanaIngestFile): OpsSum
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
-                issues = localArcanaIssues(backendRepo),
+                issues = backendIssues,
                 note = "Production deploy verifies before restart.",
             ),
             RepoHealthDto(
@@ -242,7 +261,7 @@ private fun opsSummary(arcanaIngestFile: File = defaultArcanaIngestFile): OpsSum
                 latestRun = serverPySelfTest?.toRunSummary(),
                 runs = serverPyRuns(serverPySelfTest),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
-                issues = localArcanaIssues(serverPyRepo),
+                issues = serverPyIssues,
                 note = "Live selftest JSON is rendered by the dashboard and preserved as a workflow artifact.",
             ),
             RepoHealthDto(
@@ -324,11 +343,62 @@ private fun arcanaRuns(latestRun: TestRunSummaryDto, ingest: ArcanaIngestDto?) =
 }
 
 internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
-    val file = repoRoot.resolve(".arcana/issues.json").takeIf { it.isFile } ?: return IssueSummaryDto()
-    issueObjects(opsJson.parseToJsonElement(file.readText()))
-        .mapNotNull { issue -> issue.statusText() }
-        .fold(IssueSummaryDto()) { summary, status -> summary.with(status) }
-}.getOrDefault(IssueSummaryDto())
+    val file = repoRoot.resolve(".arcana/issues.json")
+    if (file.isFile) {
+        issueObjects(opsJson.parseToJsonElement(file.readText()))
+            .mapNotNull { issue -> issue.statusText() }
+            .fold(IssueSummaryDto()) { summary, status -> summary.with(status) }
+    } else {
+        IssueSummaryDto()
+    }
+}.getOrDefault(IssueSummaryDto()).withSource("arcana", "Arcana issues")
+
+private fun repoIssues(repoRoot: File, githubRepo: String, githubIssues: (String) -> IssueSummaryDto) =
+    localArcanaIssues(repoRoot) + githubIssues(githubRepo)
+
+private fun githubIssues(repo: String): IssueSummaryDto {
+    val now = System.currentTimeMillis()
+    synchronized(githubIssueCache) {
+        githubIssueCache[repo]?.takeIf { it.expiresAtMs > now }?.summary
+    }?.let { return it }
+
+    val summary = fetchGithubIssues(repo)
+        .getOrDefault(IssueSummaryDto())
+        .withSource("github", "GitHub Issues", "https://github.com/sdfgsdfgd/$repo/issues")
+    synchronized(githubIssueCache) {
+        githubIssueCache[repo] = CachedIssueSummary(now + githubIssueCacheMs, summary)
+    }
+    return summary
+}
+
+private fun fetchGithubIssues(repo: String) = runCatching {
+    val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/$repo/issues?state=open&per_page=100"))
+        .timeout(Duration.ofSeconds(2))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "sdfgsdfg-backend-ops")
+        .build()
+    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() !in 200..299) error("GitHub issues HTTP ${response.statusCode()}")
+    githubIssueSummary(opsJson.parseToJsonElement(response.body()))
+}
+
+internal fun githubIssueSummary(element: JsonElement): IssueSummaryDto = (element as? JsonArray)
+    ?.filterIsInstance<JsonObject>()
+    ?.filter { "pull_request" !in it }
+    ?.fold(IssueSummaryDto()) { summary, issue -> summary.with(githubIssueStatus(issue)) }
+    ?: IssueSummaryDto()
+
+private fun githubIssueStatus(issue: JsonObject): String {
+    val labels = (issue["labels"] as? JsonArray)
+        ?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull?.lowercase() }
+        .orEmpty()
+    return when {
+        labels.any { "block" in it } -> "blocked"
+        labels.any { "review" in it } -> "review"
+        labels.any { it == "wip" || "progress" in it || "doing" in it } -> "wip"
+        else -> "todo"
+    }
+}
 
 private fun issueObjects(element: JsonElement): List<JsonObject> = when (element) {
     is JsonArray -> element.filterIsInstance<JsonObject>()
@@ -351,6 +421,30 @@ private fun IssueSummaryDto.with(status: String): IssueSummaryDto = when (status
 }
 
 private fun IssueSummaryDto.hasAny(): Boolean = active + done > 0
+
+private fun IssueSummaryDto.withSource(id: String, label: String, url: String? = null) = copy(
+    sources = listOf(
+        IssueSourceSummaryDto(
+            id = id,
+            label = label,
+            url = url,
+            todo = todo,
+            wip = wip,
+            blocked = blocked,
+            review = review,
+            done = done,
+        ),
+    ),
+)
+
+private operator fun IssueSummaryDto.plus(other: IssueSummaryDto) = IssueSummaryDto(
+    todo = todo + other.todo,
+    wip = wip + other.wip,
+    blocked = blocked + other.blocked,
+    review = review + other.review,
+    done = done + other.done,
+    sources = sources + other.sources,
+)
 
 private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
     label = label,

@@ -25,6 +25,7 @@ kotlin {
             implementation(libs.compose.ui)
             implementation(libs.coroutines)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.trueliquid)
         }
 
         commonTest.dependencies {

@@ -36,6 +36,7 @@ compose-foundation                      = { module = "org.jetbrains.compose.foun
 compose-animation-core                  = { module = "org.jetbrains.compose.animation:animation-core", version.ref = "compose-version" }
 compose-material3                       = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3-version" }
 compose-ui                              = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose-version" }
+trueliquid                              = { module = "io.github.sdfgsdfgd:true-liquid", version = "0.1.0-alpha02" }
 kotlinx-atomicfu                        = { module = "org.jetbrains.kotlinx:atomicfu", version = "0.21.0" }
 ktor-server-metrics-micrometer          = { module = "io.ktor:ktor-server-metrics-micrometer", version.ref = "ktor-version" }
 micrometer-registry-prometheus          = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "prometheus-version" }

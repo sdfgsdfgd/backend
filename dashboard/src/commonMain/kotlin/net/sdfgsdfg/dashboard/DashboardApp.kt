@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
@@ -56,6 +58,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.trueliquid.compose.TrueLiquidDefaults
+import io.github.trueliquid.compose.TrueLiquidState
+import io.github.trueliquid.compose.rememberTrueLiquidState
+import io.github.trueliquid.compose.trueLiquidSource
+import io.github.trueliquid.compose.trueLiquidSurface
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -88,13 +95,14 @@ private sealed interface OpsLoadState {
     data class Failed(val message: String) : OpsLoadState
 }
 
-private data class FieldSpec(val name: String, val value: String)
+private data class FieldSpec(val name: String, val value: String, val detail: String? = null)
 private data class IssueLaneSpec(val label: String, val color: Color, val count: (RepoHealthDto) -> Int)
 
 @Composable
 fun DashboardApp() {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
+    val liquidState = rememberTrueLiquidState()
 
     DisposableEffect(Unit) {
         var active = true
@@ -114,40 +122,69 @@ fun DashboardApp() {
         ),
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = background) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(Color(0xFF0A1117), background))),
-            ) {
-                Header(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
-                if (loadState is OpsLoadState.Loading) {
-                    TopLoadTrace()
-                }
-                Box(
+            Box(Modifier.fillMaxSize()) {
+                OpsWallpaper()
+                Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    contentAlignment = Alignment.TopCenter,
+                        .fillMaxSize()
+                        .trueLiquidSource(liquidState)
+                        .background(Brush.verticalGradient(listOf(Color(0x990A1117), Color(0xEE080B10), background))),
                 ) {
+                    Header(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
+                    if (loadState is OpsLoadState.Loading) {
+                        TopLoadTrace()
+                    }
                     Box(
                         modifier = Modifier
-                            .widthIn(max = 1480.dp)
+                            .weight(1f)
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.TopCenter,
                     ) {
-                        when (selectedTab) {
-                            DashboardTab.Home -> Home(loadState)
-                            DashboardTab.Ci -> CiResults(loadState)
-                            DashboardTab.Issues -> Issues(loadState)
-                            DashboardTab.Arcana -> WorkSurface(
-                                title = "Arcana Sessions",
-                                detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
-                                items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
-                            )
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = 1480.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 16.dp),
+                        ) {
+                            when (selectedTab) {
+                                DashboardTab.Home -> Home(loadState, liquidState)
+                                DashboardTab.Ci -> CiResults(loadState)
+                                DashboardTab.Issues -> Issues(loadState)
+                                DashboardTab.Arcana -> WorkSurface(
+                                    title = "Arcana Sessions",
+                                    detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
+                                    items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
+                                )
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpsWallpaper() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF04070B))
+            .background(Brush.radialGradient(listOf(Color(0x66233E68), Color.Transparent), center = Offset(260f, 40f), radius = 980f))
+            .background(Brush.radialGradient(listOf(Color(0x481D050B), Color.Transparent), center = Offset(1500f, 860f), radius = 1050f))
+            .background(Brush.linearGradient(listOf(Color(0x2205060A), Color(0x4410121A), Color(0x220B0307)))),
+    ) {
+        Canvas(Modifier.fillMaxSize().alpha(0.18f)) {
+            var y = -size.width
+            while (y < size.height + size.width) {
+                drawLine(
+                    color = Color(0xFF416083).copy(alpha = 0.16f),
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y + size.width * 0.18f),
+                    strokeWidth = 0.7f,
+                )
+                y += 32f
             }
         }
     }
@@ -204,7 +241,7 @@ private fun HeaderTitle(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Home(loadState: OpsLoadState) {
+private fun Home(loadState: OpsLoadState, liquidState: TrueLiquidState) {
     when (loadState) {
         OpsLoadState.Loading -> LoadingPanel()
         is OpsLoadState.Failed -> WorkSurface(
@@ -213,18 +250,17 @@ private fun Home(loadState: OpsLoadState) {
             items = listOf("/api/ops/summary", "backend service", "local preview route"),
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            SummaryStrip(loadState.summary)
-            RepoGrid(loadState.summary.repos)
-            HomeSignalGrid(loadState.summary)
+            SummaryStrip(loadState.summary, liquidState)
+            RepoGrid(loadState.summary.repos, liquidState)
         }
     }
 }
 
 @Composable
-private fun SummaryStrip(summary: OpsSummaryDto) {
+private fun SummaryStrip(summary: OpsSummaryDto, liquidState: TrueLiquidState) {
     val ok = summary.repos.count { it.status == OpsStatusDto.OK }
     val activeIssues = summary.repos.sumOf { it.issues.active }
-    val attention = summary.repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
+    val alerts = summary.repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
     val wip = summary.repos.count { it.status == OpsStatusDto.WIP }
 
     BoxWithConstraints {
@@ -232,19 +268,19 @@ private fun SummaryStrip(summary: OpsSummaryDto) {
         val metrics = listOf(
             FieldSpec("repos", summary.repos.size.toString()),
             FieldSpec("healthy", ok.toString()),
-            FieldSpec("attention", attention.toString()),
+            FieldSpec("alerts", alerts.toString()),
             FieldSpec("wip", wip.toString()),
-            FieldSpec("active issues", activeIssues.toString()),
+            FieldSpec("active issues", activeIssues.toString(), issueSourceBreakdown(summary.repos)),
         )
         if (vertical) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                metrics.forEach { MetricCard(it) }
+                metrics.forEach { MetricCard(it, liquidState) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 metrics.forEach { metric ->
                     Box(modifier = Modifier.weight(1f)) {
-                        MetricCard(metric)
+                        MetricCard(metric, liquidState)
                     }
                 }
             }
@@ -253,16 +289,16 @@ private fun SummaryStrip(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun RepoGrid(repos: List<RepoHealthDto>) {
+private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: TrueLiquidState) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { RepoCard(it, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { RepoCard(it, liquidState, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    RepoCard(repo, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
+                    RepoCard(repo, liquidState, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
                 }
             }
         }
@@ -270,121 +306,36 @@ private fun RepoGrid(repos: List<RepoHealthDto>) {
 }
 
 @Composable
-private fun HomeSignalGrid(summary: OpsSummaryDto) {
-    BoxWithConstraints {
-        if (maxWidth < 1040.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SignalStack(summary.repos)
-                WorkSurface(
-                    title = "Action Boundary",
-                    detail = "Public web stays typed and request-only; desktop becomes the privileged local operator when admin actions arrive.",
-                    items = listOf("view", "request", "desktop execute"),
-                )
-                WorkSurface(
-                    title = "Next Landing Zones",
-                    detail = "Collectors should feed real DTOs before the UI pretends to know more than the control plane knows.",
-                    items = listOf("selftest parity", ".arcana schema", "CI history"),
-                )
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(modifier = Modifier.weight(1.35f)) {
-                    SignalStack(summary.repos)
-                }
-                Box(modifier = Modifier.weight(1f)) {
-                    WorkSurface(
-                        title = "Action Boundary",
-                        detail = "Public web stays typed and request-only; desktop becomes the privileged local operator when admin actions arrive.",
-                        items = listOf("view", "request", "desktop execute"),
-                    )
-                }
-                Box(modifier = Modifier.weight(1f)) {
-                    WorkSurface(
-                        title = "Next Landing Zones",
-                        detail = "Collectors should feed real DTOs before the UI pretends to know more than the control plane knows.",
-                        items = listOf("selftest parity", ".arcana schema", "CI history"),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SignalStack(repos: List<RepoHealthDto>) {
+private fun RepoCard(repo: RepoHealthDto, liquidState: TrueLiquidState, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = Modifier.fillMaxWidth().surfaceDepth(shape, green, glowAlpha = 0.07f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Column(
+        modifier = modifier
+            .surfaceDepth(shape, repo.status.color(), glowAlpha = 0.11f)
+            .clip(shape)
+            .trueLiquidSurface(liquidState, glassStyle(), shape)
+            .background(panelRaised.copy(alpha = 0.70f))
+            .border(BorderStroke(1.dp, repo.status.color().copy(alpha = 0.28f)), shape)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Live Signal Stack", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            repos.forEach { SignalRow(it) }
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatusDot(repo.status)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                Text(repo.role, color = muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            StatusPill(repo.status.name, repo.status.color())
         }
-    }
-}
-
-@Composable
-private fun SignalRow(repo: RepoHealthDto) {
-    val run = repo.latestRun
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(7.dp))
-            .background(Color(0xFF0D141B))
-            .border(BorderStroke(1.dp, repo.status.color().copy(alpha = 0.22f)), RoundedCornerShape(7.dp))
-            .padding(11.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        StatusDot(repo.status)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(repo.name, color = text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(run?.label ?: repo.note ?: "waiting for first collector", color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            run?.detail?.let {
-                Text(it, color = Color(0xFFB9C5D2), fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        StatusPill(run?.status?.name ?: repo.status.name, (run?.status ?: repo.status).color())
-    }
-}
-
-@Composable
-private fun RepoCard(repo: RepoHealthDto, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(8.dp)
-    Card(
-        modifier = modifier.surfaceDepth(shape, repo.status.color(), glowAlpha = 0.11f),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = panelRaised),
-        border = BorderStroke(1.dp, repo.status.color().copy(alpha = 0.28f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatusDot(repo.status)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                    Text(repo.role, color = muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-                StatusPill(repo.status.name, repo.status.color())
-            }
-            FieldGrid(
-                listOf(
-                    FieldSpec("service", repo.serviceName ?: "-"),
-                    FieldSpec("issues", repo.issues.active.toString()),
-                    FieldSpec("location", repo.location),
-                ),
-            )
-            repo.latestRun?.let { RunPanel(it) }
-            repo.note?.let {
-                Text(it, color = Color(0xFFC9D3DF), fontSize = 13.sp, lineHeight = 18.sp)
-            }
+        FieldGrid(
+            listOf(
+                FieldSpec("service", repo.serviceName ?: "-"),
+                FieldSpec("issues", repo.issues.active.toString(), issueSourceBreakdown(listOf(repo))),
+                FieldSpec("location", repo.location),
+            ),
+        )
+        repo.latestRun?.let { RunPanel(it) }
+        repo.note?.let {
+            Text(it, color = Color(0xFFC9D3DF), fontSize = 13.sp, lineHeight = 18.sp)
         }
     }
 }
@@ -423,33 +374,40 @@ private fun RunPanel(run: TestRunSummaryDto) {
 @Composable
 private fun FieldGrid(fields: List<FieldSpec>) {
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        fields.forEach { Field(it.name, it.value) }
+        fields.forEach { Field(it) }
     }
 }
 
 @Composable
-private fun Field(name: String, value: String) {
+private fun Field(field: FieldSpec) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(name.uppercase(), color = Color(0xFF748195), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = Color(0xFFDCE4EE), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(field.name.uppercase(), color = Color(0xFF748195), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(field.value, color = Color(0xFFDCE4EE), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        field.detail?.takeIf { it.isNotBlank() }?.let {
+            Text(it, color = muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
 @Composable
-private fun MetricCard(metric: FieldSpec) {
+private fun MetricCard(metric: FieldSpec, liquidState: TrueLiquidState) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .surfaceDepth(shape, cyan, glowAlpha = 0.06f)
             .clip(shape)
-            .background(Color(0xFF101720))
+            .trueLiquidSurface(liquidState, glassStyle(), shape)
+            .background(Color(0xCC101720))
             .border(BorderStroke(1.dp, border), shape)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(metric.name.uppercase(), color = muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Text(metric.value, color = text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        metric.detail?.takeIf { it.isNotBlank() }?.let {
+            Text(it, color = muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -635,7 +593,7 @@ private fun IssueRepoTile(repo: RepoHealthDto, modifier: Modifier = Modifier) {
             Text(repo.name, color = text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
         }
-        Text(".arcana/issues.json", color = muted, fontSize = 11.sp)
+        Text(issueSourceBreakdown(listOf(repo)).ifBlank { "Arcana 0" }, color = muted, fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("todo ${repo.issues.todo}", color = Color(0xFF8EA0B8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text("wip ${repo.issues.wip}", color = cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -664,7 +622,7 @@ private fun IssuesHeader(summary: OpsSummaryDto) {
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Issue Command Board", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("Local Arcana issue files across backend, server_py, and arcana; agent-managed lanes, linked runs, and review artifacts next.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
+                Text("Arcana local issue files and GitHub Issues are counted together, with source splits kept visible.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatusPill("$active active", if (active > 0) amber else green)
@@ -1097,12 +1055,12 @@ private fun SelfTestZenPanel(selfTest: SelfTestSummaryDto) {
         BoxWithConstraints {
             if (maxWidth < 780.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    fields.forEach { Field(it.name, it.value) }
+                    fields.forEach { Field(it) }
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     fields.forEach { field ->
-                        Box(modifier = Modifier.weight(1f)) { Field(field.name, field.value) }
+                        Box(modifier = Modifier.weight(1f)) { Field(field) }
                     }
                 }
             }
@@ -1356,6 +1314,21 @@ private fun TopLoadTrace() {
         )
     }
 }
+
+private fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
+    .flatMap { it.issues.sources }
+    .groupBy { it.id }
+    .map { (id, sources) ->
+        val label = when (id) {
+            "arcana" -> "Arcana"
+            "github" -> "GitHub"
+            else -> sources.firstOrNull()?.label ?: id
+        }
+        "$label ${sources.sumOf { it.active }}"
+    }
+    .joinToString(" · ")
+
+private fun glassStyle() = TrueLiquidDefaults.clearLensStyle(glassAlpha = 0.68f, tintAlpha = 0.10f, cornerRadius = 8f)
 
 private fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green

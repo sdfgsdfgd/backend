@@ -19,6 +19,8 @@ import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.sdfgsdfg.data.model.IssueSourceSummaryDto
+import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -35,12 +37,15 @@ import kotlin.io.path.createTempDirectory
 // those contracts feed the dashboard; replace them when ownership moves.
 class OpsRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
+    private val noGithubIssues: (String) -> IssueSummaryDto = { repo ->
+        IssueSummaryDto(sources = listOf(IssueSourceSummaryDto("github", "GitHub Issues", "https://github.com/sdfgsdfgd/$repo/issues")))
+    }
 
     @Test
     fun opsSummaryExposesGrandTrio() = testApplication {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            routing { opsRoutes() }
+            routing { opsRoutes(githubIssues = noGithubIssues) }
         }
 
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
@@ -89,7 +94,7 @@ class OpsRoutesTest {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             routing {
-                opsRoutes()
+                opsRoutes(githubIssues = noGithubIssues)
                 host("ops.sdfgsdfg.net") {
                     route("/{...}") {
                         handle {
@@ -113,7 +118,7 @@ class OpsRoutesTest {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             routing {
-                opsRoutes()
+                opsRoutes(githubIssues = noGithubIssues)
                 host("ops.sdfgsdfg.net") {
                     route("/{...}") {
                         handle {
@@ -143,7 +148,7 @@ class OpsRoutesTest {
 
         application {
             routing {
-                opsRoutes(selfTestArtifactFile = artifact)
+                opsRoutes(selfTestArtifactFile = artifact, githubIssues = noGithubIssues)
             }
         }
 
@@ -163,7 +168,7 @@ class OpsRoutesTest {
 
         application {
             routing {
-                opsRoutes(arcanaIngestTargetFile = artifact)
+                opsRoutes(arcanaIngestTargetFile = artifact, githubIssues = noGithubIssues)
             }
         }
 
@@ -181,7 +186,7 @@ class OpsRoutesTest {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             routing {
-                opsRoutes(localPreview = true)
+                opsRoutes(localPreview = true, githubIssues = noGithubIssues)
                 route("/{...}") {
                     handle {
                         call.respondText("proxy")
@@ -314,6 +319,7 @@ class OpsRoutesTest {
         File(arcanaDir, "issues.json").writeText(
             """
             {
+              "version": 1,
               "issues": [
                 { "id": "backend-1", "status": "todo" },
                 { "id": "backend-2", "status": "WIP" },
@@ -332,6 +338,29 @@ class OpsRoutesTest {
         assertEquals(1, issues.review)
         assertEquals(1, issues.done)
         assertEquals(4, issues.active)
+        assertEquals("arcana", issues.sources.single().id)
+        assertEquals(4, issues.sources.single().active)
+    }
+
+    @Test
+    fun githubIssueSummarySkipsPullRequestsAndMapsLabels() {
+        val issues = githubIssueSummary(json.parseToJsonElement(
+            """
+            [
+              { "number": 1, "labels": [] },
+              { "number": 2, "labels": [{ "name": "blocked" }] },
+              { "number": 3, "labels": [{ "name": "in progress" }] },
+              { "number": 4, "labels": [{ "name": "review" }] },
+              { "number": 5, "pull_request": {}, "labels": [{ "name": "blocked" }] }
+            ]
+            """.trimIndent(),
+        ))
+
+        assertEquals(1, issues.todo)
+        assertEquals(1, issues.wip)
+        assertEquals(1, issues.blocked)
+        assertEquals(1, issues.review)
+        assertEquals(4, issues.active)
     }
 
     @Test
@@ -341,7 +370,7 @@ class OpsRoutesTest {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             routing {
-                opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile)
+                opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, githubIssues = noGithubIssues)
             }
         }
 

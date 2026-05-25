@@ -103,6 +103,22 @@ data class IssueSummaryDto(
     val blocked: Int = 0,
     val review: Int = 0,
     val done: Int = 0,
+    val sources: List<IssueSourceSummaryDto> = emptyList(),
+) {
+    val active: Int
+        get() = todo + wip + blocked + review
+}
+
+@Serializable
+data class IssueSourceSummaryDto(
+    val id: String,
+    val label: String,
+    val url: String? = null,
+    val todo: Int = 0,
+    val wip: Int = 0,
+    val blocked: Int = 0,
+    val review: Int = 0,
+    val done: Int = 0,
 ) {
     val active: Int
         get() = todo + wip + blocked + review
