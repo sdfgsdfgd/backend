@@ -343,6 +343,8 @@ fun Route.grpc() {
             .setExpectSubstr(body?.expectSubstr?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_EXPECT)
             .setModel(body?.model.orEmpty())
             .setNewChat(body?.newChat ?: false)
+            .setWorkflowUrl(workflowUrl.orEmpty())
+            .setHeadSha(headSha.orEmpty())
             .build()
 
         val result = runCatching { botStub.selfTest(req) }

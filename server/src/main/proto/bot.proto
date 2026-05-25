@@ -98,6 +98,8 @@ message SelfTestRequest {
     string expect_substr = 2;
     string model = 3;
     bool new_chat = 4;
+    string workflow_url = 5;
+    string head_sha = 6;
 }
 
 message SelfTestReply {
