@@ -552,11 +552,6 @@ fun dispatch(command: String) {
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
             else -> { stopPort(); stopLocalDb() }
         }
-        "restart" -> when (mode) {
-            "runtime" -> { systemctl("reset-failed"); systemctl("restart"); localSmoke() }
-            "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> { stopPort(); stopLocalDb(); foreground(System.nanoTime(), mode) }
-        }
         "status" -> status()
         "smoke", "local-smoke" -> localSmoke()
         "public-smoke" -> publicSmoke()
@@ -564,7 +559,7 @@ fun dispatch(command: String) {
         "local-tests" -> localTests()
         "all-tests" -> allTests()
         "verify" -> gradle(":verifyServer :installServer")
-        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|restart|status|verify|local-smoke|public-smoke|arcana-smoke|local-tests|all-tests]")
+        else -> fail("Usage: ./0_scripts/deploy.main.kts [deploy|start|stop|status|verify|local-smoke|public-smoke|arcana-smoke|local-tests|all-tests]")
     }
 }
 
