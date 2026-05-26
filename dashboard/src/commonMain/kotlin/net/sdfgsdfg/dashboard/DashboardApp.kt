@@ -15,6 +15,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,9 +55,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.innerShadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +115,7 @@ private data class IssueLaneSpec(val label: String, val color: Color, val count:
 fun DashboardApp() {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
+    val focusRequester = remember { FocusRequester() }
 
     DisposableEffect(Unit) {
         var active = true
@@ -114,6 +124,9 @@ fun DashboardApp() {
             onFailed = { if (active) loadState = OpsLoadState.Failed(it.ifBlank { "Failed to load ops summary" }) },
         )
         onDispose { active = false }
+    }
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
     }
 
     MaterialTheme(
@@ -124,7 +137,21 @@ fun DashboardApp() {
             background = background,
         ),
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = background) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent {
+                    if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (it.key) {
+                        Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); true }
+                        Key.DirectionRight -> { selectedTab = selectedTab.shift(1); true }
+                        else -> false
+                    }
+                },
+            color = background,
+        ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val pageBottomGutter = maxHeight * 0.28f
                 OpsWallpaper()
@@ -1398,6 +1425,12 @@ private fun DashboardTab.navWidth(compact: Boolean): Dp = when (this) {
     DashboardTab.Ci -> if (compact) 96.dp else 110.dp
     DashboardTab.Issues -> if (compact) 78.dp else 90.dp
     DashboardTab.Arcana -> if (compact) 130.dp else 154.dp
+}
+
+private fun DashboardTab.shift(delta: Int): DashboardTab {
+    val tabs = DashboardTab.entries
+    val next = (tabs.indexOf(this) + delta).mod(tabs.size)
+    return tabs[next]
 }
 
 @Composable
