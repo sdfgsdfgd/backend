@@ -16,6 +16,7 @@ data class RepoHealthDto(
     val role: String,
     val status: OpsStatusDto,
     val location: String,
+    @SerialName("runtime_label") val runtimeLabel: String? = null,
     @SerialName("service_name") val serviceName: String? = null,
     @SerialName("latest_run") val latestRun: TestRunSummaryDto? = null,
     val runs: List<TestRunSummaryDto> = emptyList(),

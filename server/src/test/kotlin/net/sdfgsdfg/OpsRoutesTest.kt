@@ -200,6 +200,28 @@ class OpsRoutesTest {
         assertEquals(listOf("backend", "server_py", "arcana"), json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.map { it.id })
     }
 
+    @Test
+    fun localPreviewShowsCurrentRuntimeInsteadOfStaleFailedDeployHistory() = testApplication {
+        val historyFile = File(createTempDirectory().toFile(), "deploy-history.jsonl").apply {
+            writeText("""{"label":"deploy failed","status":"FAIL","timestamp_ms":2,"duration_ms":22,"detail":"docker daemon was down"}""")
+        }
+
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing { opsRoutes(localPreview = true, deployHistorySourceFile = historyFile, githubIssues = noGithubIssues) }
+        }
+
+        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val backend = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "backend" }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("local preview", backend.runtimeLabel)
+        assertEquals("local preview", backend.latestRun?.label)
+        assertEquals(OpsStatusDto.OK, backend.latestRun?.status)
+        assertEquals("deploy failed", backend.history.first().label)
+        assertEquals(OpsStatusDto.FAIL, backend.history.first().status)
+    }
+
     // Static asset tests are intentionally kept together: they protect the
     // public Compose/Wasm shell, not generic file-serving trivia.
     @Test

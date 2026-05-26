@@ -15,12 +15,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -64,10 +64,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.fletchmckee.liquid.LiquidState
-import io.github.fletchmckee.liquid.liquefiable
-import io.github.fletchmckee.liquid.liquid
-import io.github.fletchmckee.liquid.rememberLiquidState
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -110,7 +106,6 @@ private data class IssueLaneSpec(val label: String, val color: Color, val count:
 fun DashboardApp() {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
-    val liquidState = rememberLiquidState()
 
     DisposableEffect(Unit) {
         var active = true
@@ -132,41 +127,41 @@ fun DashboardApp() {
         Surface(modifier = Modifier.fillMaxSize(), color = background) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val pageBottomGutter = maxHeight * 0.28f
-                OpsWallpaper(liquidState)
-                val scrollState = rememberScrollState()
-                Column(
+                OpsWallpaper()
+                LazyColumn(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState),
+                        .fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
+                    contentPadding = PaddingValues(bottom = pageBottomGutter),
                 ) {
-                    Header(
-                        selectedTab = selectedTab,
-                        liquidState = liquidState,
-                        onTabSelected = { selectedTab = it },
-                    )
-                    if (loadState is OpsLoadState.Loading) {
-                        TopLoadTrace()
-                    }
-                    Box(
-                        modifier = Modifier
-                            .widthIn(max = 1480.dp)
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                    ) {
-                        when (selectedTab) {
-                            DashboardTab.Home -> Home(loadState, liquidState)
-                            DashboardTab.Ci -> CiResults(loadState, liquidState)
-                            DashboardTab.Issues -> Issues(loadState, liquidState)
-                            DashboardTab.Arcana -> WorkSurface(
-                                title = "Arcana Sessions",
-                                detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
-                                items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
-                                liquidState = liquidState,
-                            )
+                    item {
+                        Header(
+                            selectedTab = selectedTab,
+                            onTabSelected = { selectedTab = it },
+                        )
+                        if (loadState is OpsLoadState.Loading) {
+                            TopLoadTrace()
                         }
                     }
-                    Spacer(Modifier.height(pageBottomGutter))
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = 1480.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 16.dp),
+                        ) {
+                            when (selectedTab) {
+                                DashboardTab.Home -> Home(loadState)
+                                DashboardTab.Ci -> CiResults(loadState)
+                                DashboardTab.Issues -> Issues(loadState)
+                                DashboardTab.Arcana -> WorkSurface(
+                                    title = "Arcana Sessions",
+                                    detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
+                                    items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -174,11 +169,10 @@ fun DashboardApp() {
 }
 
 @Composable
-private fun OpsWallpaper(liquidState: LiquidState) {
+private fun OpsWallpaper() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .liquefiable(liquidState)
             .background(Color(0xFF02060B)),
     ) {
         Image(
@@ -194,7 +188,6 @@ private fun OpsWallpaper(liquidState: LiquidState) {
 @Composable
 private fun Header(
     selectedTab: DashboardTab,
-    liquidState: LiquidState,
     onTabSelected: (DashboardTab) -> Unit,
 ) {
     BoxWithConstraints(
@@ -222,12 +215,12 @@ private fun Header(
         if (maxWidth < 900.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HeaderTitle()
-                TabSwitcher(selectedTab, liquidState, compact = compactTabs, onTabSelected)
+                TabSwitcher(selectedTab, compact = compactTabs, onTabSelected)
             }
         } else {
             Box(modifier = Modifier.fillMaxWidth()) {
                 HeaderTitle(modifier = Modifier.align(Alignment.CenterStart))
-                TabSwitcher(selectedTab, liquidState, compact = false, onTabSelected, modifier = Modifier.align(Alignment.Center))
+                TabSwitcher(selectedTab, compact = false, onTabSelected, modifier = Modifier.align(Alignment.Center))
                 HeaderRuntimeBadge(modifier = Modifier.align(Alignment.CenterEnd))
             }
         }
@@ -346,24 +339,23 @@ private fun HeaderGlyph() {
 }
 
 @Composable
-private fun Home(loadState: OpsLoadState, liquidState: LiquidState) {
+private fun Home(loadState: OpsLoadState) {
     when (loadState) {
         OpsLoadState.Loading -> LoadingPanel()
         is OpsLoadState.Failed -> WorkSurface(
             title = "Ops Summary Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "backend service", "local preview route"),
-            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            SummaryStrip(loadState.summary, liquidState)
-            RepoGrid(loadState.summary.repos, liquidState)
+            SummaryStrip(loadState.summary)
+            RepoGrid(loadState.summary.repos)
         }
     }
 }
 
 @Composable
-private fun SummaryStrip(summary: OpsSummaryDto, liquidState: LiquidState) {
+private fun SummaryStrip(summary: OpsSummaryDto) {
     val ok = summary.repos.count { it.status == OpsStatusDto.OK }
     val activeIssues = summary.repos.sumOf { it.issues.active }
     val alerts = summary.repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
@@ -380,13 +372,13 @@ private fun SummaryStrip(summary: OpsSummaryDto, liquidState: LiquidState) {
         )
         if (vertical) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                metrics.forEach { MetricCard(it, liquidState) }
+                metrics.forEach { MetricCard(it) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 metrics.forEach { metric ->
                     Box(modifier = Modifier.weight(1f)) {
-                        MetricCard(metric, liquidState)
+                        MetricCard(metric)
                     }
                 }
             }
@@ -395,16 +387,16 @@ private fun SummaryStrip(summary: OpsSummaryDto, liquidState: LiquidState) {
 }
 
 @Composable
-private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: LiquidState) {
+private fun RepoGrid(repos: List<RepoHealthDto>) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { RepoCard(it, liquidState, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { RepoCard(it, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    RepoCard(repo, liquidState, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
+                    RepoCard(repo, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
                 }
             }
         }
@@ -412,11 +404,11 @@ private fun RepoGrid(repos: List<RepoHealthDto>, liquidState: LiquidState) {
 }
 
 @Composable
-private fun RepoCard(repo: RepoHealthDto, liquidState: LiquidState, modifier: Modifier = Modifier) {
+private fun RepoCard(repo: RepoHealthDto, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.11f, borderAlpha = 0.42f)
+            .glassSurface(shape, repo.status.color(), glowAlpha = 0.11f, borderAlpha = 0.42f)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -425,7 +417,7 @@ private fun RepoCard(repo: RepoHealthDto, liquidState: LiquidState, modifier: Mo
 }
 
 @Composable
-private fun LiquidRunSignal(run: TestRunSummaryDto) {
+private fun RunSignal(run: TestRunSummaryDto) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -450,7 +442,10 @@ private fun RepoCardContent(repo: RepoHealthDto) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         StatusDot(repo.status)
         Column(modifier = Modifier.weight(1f)) {
-            Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                repo.runtimeLabel?.let { StatusPill(it, cyan) }
+            }
             Text(repo.role, color = Color(0xFFC2CCDA), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         StatusPill(repo.status.name, repo.status.color())
@@ -462,7 +457,7 @@ private fun RepoCardContent(repo: RepoHealthDto) {
             FieldSpec("location", repo.location),
         ),
     )
-    repo.latestRun?.let { LiquidRunSignal(it) }
+    repo.latestRun?.let { RunSignal(it) }
     repo.note?.let {
         Text(it, color = Color(0xFFDCE4EE), fontSize = 13.sp, lineHeight = 18.sp)
     }
@@ -518,12 +513,12 @@ private fun Field(field: FieldSpec) {
 }
 
 @Composable
-private fun MetricCard(metric: FieldSpec, liquidState: LiquidState) {
+private fun MetricCard(metric: FieldSpec) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, Color(0xFF7BA9C8), glowAlpha = 0.06f, borderAlpha = 0.30f)
+            .glassSurface(shape, Color(0xFF7BA9C8), glowAlpha = 0.06f, borderAlpha = 0.30f)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -636,69 +631,64 @@ private fun LoadingBar(width: Float, height: Dp, pulse: Float) {
 }
 
 @Composable
-private fun CiResults(loadState: OpsLoadState, liquidState: LiquidState) {
+private fun CiResults(loadState: OpsLoadState) {
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "CI Results",
             detail = "Waiting for the ops summary before shaping the pyramid lanes.",
             items = listOf("backend-local", "server_py live selftest", "dashboard web / desktop", "arcana-smoke"),
-            liquidState = liquidState,
         )
         is OpsLoadState.Failed -> WorkSurface(
             title = "CI Results Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "backend control plane", "dashboard API"),
-            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            PyramidHeader(loadState.summary, liquidState)
-            PipelineGrid(loadState.summary, liquidState)
-            RunHistoryPanel(loadState.summary, liquidState)
-            ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest, liquidState)
+            PyramidHeader(loadState.summary)
+            PipelineGrid(loadState.summary)
+            RunHistoryPanel(loadState.summary)
+            ServerPySelfTestPanel(loadState.summary.repos.firstOrNull { it.id == "server_py" }?.selfTest)
         }
     }
 }
 
 @Composable
-private fun Issues(loadState: OpsLoadState, liquidState: LiquidState) {
+private fun Issues(loadState: OpsLoadState) {
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "Issues",
             detail = "Waiting for local .arcana/issues.json summaries before shaping lanes.",
             items = issueLanes.map { it.label },
-            liquidState = liquidState,
         )
         is OpsLoadState.Failed -> WorkSurface(
             title = "Issues Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
-            liquidState = liquidState,
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            IssuesHeader(loadState.summary, liquidState)
-            IssueRepoStrip(loadState.summary.repos, liquidState)
-            IssueBoard(loadState.summary.repos, liquidState)
+            IssuesHeader(loadState.summary)
+            IssueRepoStrip(loadState.summary.repos)
+            IssueBoard(loadState.summary.repos)
             WorkSurface(
                 title = "Issue Detail Contract",
                 detail = "The board reads repo-local Arcana issue summaries now; detail events, artifacts, diffs, and feedback attach after the issue DTO grows.",
                 items = listOf(".arcana/issues.json", "events", "artifacts", "feedback"),
-                liquidState = liquidState,
             )
         }
     }
 }
 
 @Composable
-private fun IssueRepoStrip(repos: List<RepoHealthDto>, liquidState: LiquidState) {
+private fun IssueRepoStrip(repos: List<RepoHealthDto>) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                repos.forEach { IssueRepoTile(it, liquidState, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { IssueRepoTile(it, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 repos.forEach { repo ->
-                    IssueRepoTile(repo, liquidState, modifier = Modifier.weight(1f))
+                    IssueRepoTile(repo, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -706,12 +696,12 @@ private fun IssueRepoStrip(repos: List<RepoHealthDto>, liquidState: LiquidState)
 }
 
 @Composable
-private fun IssueRepoTile(repo: RepoHealthDto, liquidState: LiquidState, modifier: Modifier = Modifier) {
+private fun IssueRepoTile(repo: RepoHealthDto, modifier: Modifier = Modifier) {
     val active = repo.issues.active
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.05f, borderAlpha = 0.28f)
+            .glassSurface(shape, repo.status.color(), glowAlpha = 0.05f, borderAlpha = 0.28f)
             .padding(13.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -730,14 +720,14 @@ private fun IssueRepoTile(repo: RepoHealthDto, liquidState: LiquidState, modifie
 }
 
 @Composable
-private fun IssuesHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
+private fun IssuesHeader(summary: OpsSummaryDto) {
     val active = summary.repos.sumOf { it.issues.active }
     val done = summary.repos.sumOf { it.issues.done }
     val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, amber, glowAlpha = 0.08f, borderAlpha = 0.26f)
+            .glassSurface(shape, amber, glowAlpha = 0.08f, borderAlpha = 0.26f)
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -754,16 +744,16 @@ private fun IssuesHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
 }
 
 @Composable
-private fun IssueBoard(repos: List<RepoHealthDto>, liquidState: LiquidState) {
+private fun IssueBoard(repos: List<RepoHealthDto>) {
     BoxWithConstraints {
         if (maxWidth < 1180.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                issueLanes.forEach { lane -> IssueLane(lane, repos, liquidState, modifier = Modifier.fillMaxWidth()) }
+                issueLanes.forEach { lane -> IssueLane(lane, repos, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 issueLanes.forEach { lane ->
-                    IssueLane(lane, repos, liquidState, modifier = Modifier.weight(1f))
+                    IssueLane(lane, repos, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -771,12 +761,12 @@ private fun IssueBoard(repos: List<RepoHealthDto>, liquidState: LiquidState) {
 }
 
 @Composable
-private fun IssueLane(lane: IssueLaneSpec, repos: List<RepoHealthDto>, liquidState: LiquidState, modifier: Modifier = Modifier) {
+private fun IssueLane(lane: IssueLaneSpec, repos: List<RepoHealthDto>, modifier: Modifier = Modifier) {
     val tickets = repos.mapNotNull { repo -> lane.count(repo).takeIf { it > 0 }?.let { repo to it } }
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(liquidState, shape, lane.color, glowAlpha = 0.07f, borderAlpha = 0.26f)
+            .glassSurface(shape, lane.color, glowAlpha = 0.07f, borderAlpha = 0.26f)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -831,12 +821,12 @@ private fun IssueTicket(lane: IssueLaneSpec, repo: RepoHealthDto, count: Int) {
 }
 
 @Composable
-private fun PyramidHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
+private fun PyramidHeader(summary: OpsSummaryDto) {
     val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, cyan, glowAlpha = 0.08f, borderAlpha = 0.28f)
+            .glassSurface(shape, cyan, glowAlpha = 0.08f, borderAlpha = 0.28f)
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -850,17 +840,17 @@ private fun PyramidHeader(summary: OpsSummaryDto, liquidState: LiquidState) {
 }
 
 @Composable
-private fun PipelineGrid(summary: OpsSummaryDto, liquidState: LiquidState) {
+private fun PipelineGrid(summary: OpsSummaryDto) {
     val repos = summary.repos
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { PipelineLane(it, summary.generatedAtMs, liquidState, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { PipelineLane(it, summary.generatedAtMs, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    PipelineLane(repo, summary.generatedAtMs, liquidState, modifier = Modifier.weight(1f))
+                    PipelineLane(repo, summary.generatedAtMs, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -868,12 +858,12 @@ private fun PipelineGrid(summary: OpsSummaryDto, liquidState: LiquidState) {
 }
 
 @Composable
-private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, liquidState: LiquidState, modifier: Modifier = Modifier) {
+private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
     val steps = pipelineSteps(repo)
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(liquidState, shape, repo.status.color(), glowAlpha = 0.09f, borderAlpha = 0.32f)
+            .glassSurface(shape, repo.status.color(), glowAlpha = 0.09f, borderAlpha = 0.32f)
             .padding(15.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -974,7 +964,7 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
 }
 
 @Composable
-private fun RunHistoryPanel(summary: OpsSummaryDto, liquidState: LiquidState) {
+private fun RunHistoryPanel(summary: OpsSummaryDto) {
     val events = summary.repos
         .flatMap { repo -> repo.history.map { repo to it } }
         .sortedByDescending { it.second.timestampMs ?: 0L }
@@ -985,7 +975,7 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, liquidState: LiquidState) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, green, glowAlpha = 0.06f, borderAlpha = 0.26f)
+            .glassSurface(shape, green, glowAlpha = 0.06f, borderAlpha = 0.26f)
             .padding(15.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -1026,12 +1016,12 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto) {
 }
 
 @Composable
-private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?, liquidState: LiquidState) {
+private fun ServerPySelfTestPanel(selfTest: SelfTestSummaryDto?) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, selfTest?.status?.color() ?: cyan, glowAlpha = 0.07f, borderAlpha = 0.28f)
+            .glassSurface(shape, selfTest?.status?.color() ?: cyan, glowAlpha = 0.07f, borderAlpha = 0.28f)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(13.dp),
     ) {
@@ -1287,12 +1277,12 @@ private fun SelfTestCaseRow(name: String, status: OpsStatusDto, latencyMs: Doubl
 }
 
 @Composable
-private fun WorkSurface(title: String, detail: String, items: List<String>, liquidState: LiquidState) {
+private fun WorkSurface(title: String, detail: String, items: List<String>) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassSurface(liquidState, shape, cyan, glowAlpha = 0.06f, borderAlpha = 0.28f)
+            .glassSurface(shape, cyan, glowAlpha = 0.06f, borderAlpha = 0.28f)
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -1333,7 +1323,6 @@ private fun PlaceholderTile(label: String) {
 @Composable
 private fun TabSwitcher(
     selectedTab: DashboardTab,
-    liquidState: LiquidState,
     compact: Boolean,
     onTabSelected: (DashboardTab) -> Unit,
     modifier: Modifier = Modifier,
@@ -1366,7 +1355,7 @@ private fun TabSwitcher(
                 .offset(x = selectedOffset)
                 .width(selectedWidth)
                 .height(42.dp)
-                .glassSurface(liquidState, shape, cyan, glowAlpha = 0.20f, borderAlpha = 0.56f),
+                .glassSurface(shape, cyan, glowAlpha = 0.20f, borderAlpha = 0.56f),
         ) {
             Canvas(Modifier.matchParentSize()) {
                 drawLine(
@@ -1450,33 +1439,121 @@ private fun StatusPill(label: String, color: Color) {
 
 @Composable
 private fun StatusDot(status: OpsStatusDto) {
-    val transition = rememberInfiniteTransition(label = "status-dot")
-    val pulse by transition.animateFloat(
-        initialValue = if (status == OpsStatusDto.OK || status == OpsStatusDto.UNKNOWN) 0.32f else 0.18f,
-        targetValue = if (status == OpsStatusDto.OK || status == OpsStatusDto.UNKNOWN) 0.32f else 0.42f,
-        animationSpec = infiniteRepeatable(animation = tween(1300, easing = LinearEasing), repeatMode = RepeatMode.Reverse),
-        label = "status-dot-pulse",
-    )
-    Box(
-        modifier = Modifier
-            .padding(top = 6.dp)
-            .size(14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(14.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .alpha(pulse)
-                .background(status.color()),
-        )
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(status.color()),
-        )
-    }
+    // Compose/Wasm reference only: continuous Canvas radial-gradient animation caused global frame jank.
+    // val transition = rememberInfiniteTransition(label = "status-dot")
+    // val glow by transition.animateFloat(
+    //     initialValue = 0f,
+    //     targetValue = 1f,
+    //     animationSpec = infiniteRepeatable(
+    //         animation = tween(if (status == OpsStatusDto.OK) 3_600 else 1_900, easing = FastOutSlowInEasing),
+    //         repeatMode = RepeatMode.Reverse,
+    //     ),
+    //     label = "status-dot-glow",
+    // )
+    /*
+     * Replay-only body removed from runtime:
+     * - kept here because it reproduced whole-page lag in Compose/Wasm;
+     * - do not call this on Wasm unless intentionally recording/debugging the regression;
+     * - the shipped web path is PlatformStatusDot(status), which delegates to a DOM/CSS overlay.
+     *
+     * @Composable
+     * private fun ComposeLagStatusDot(status: OpsStatusDto) {
+     *     val transition = rememberInfiniteTransition(label = "status-dot")
+     *     val glow by transition.animateFloat(
+     *         initialValue = 0f,
+     *         targetValue = 1f,
+     *         animationSpec = infiniteRepeatable(
+     *             animation = tween(if (status == OpsStatusDto.OK) 3_600 else 1_900, easing = FastOutSlowInEasing),
+     *             repeatMode = RepeatMode.Reverse,
+     *         ),
+     *         label = "status-dot-glow",
+     *     )
+     *     val color = status.color()
+     *     val fullGlow = status == OpsStatusDto.OK || status == OpsStatusDto.FAIL
+     *     val inactiveGlow = if (fullGlow) 1f else 0.5f
+     *     Box(
+     *         modifier = Modifier
+     *             .padding(top = 6.dp)
+     *             .size(36.dp),
+     *         contentAlignment = Alignment.Center,
+     *     ) {
+     *         Canvas(Modifier.fillMaxSize()) {
+     *             val core = 5.8.dp.toPx()
+     *             val gap = core * 1.06f
+     *             val bloom = size.minDimension * (0.40f + glow * 0.15f)
+     *             val bloomCenter = Offset(center.x - size.width * 0.010f, center.y - size.height * 0.018f)
+     *             drawCircle(
+     *                 brush = Brush.radialGradient(
+     *                     colorStops = arrayOf(
+     *                         0.00f to color.copy(alpha = if (fullGlow) 0.006f + glow * 0.030f else 0.010f + glow * 0.030f),
+     *                         0.26f to color.copy(alpha = if (fullGlow) 0.018f + glow * 0.090f else (0.030f + glow * 0.055f) * inactiveGlow),
+     *                         0.58f to color.copy(alpha = if (fullGlow) 0.035f + glow * 0.140f else (0.020f + glow * 0.060f) * inactiveGlow),
+     *                         0.82f to color.copy(alpha = if (fullGlow) 0.012f + glow * 0.055f else (0.008f + glow * 0.028f) * inactiveGlow),
+     *                         1.00f to Color.Transparent,
+     *                     ),
+     *                     center = bloomCenter,
+     *                     radius = bloom,
+     *                 ),
+     *                 radius = bloom,
+     *                 center = bloomCenter,
+     *             )
+     *             drawCircle(
+     *                 brush = Brush.radialGradient(
+     *                     colorStops = arrayOf(
+     *                         0.00f to Color.Black.copy(alpha = 0.14f),
+     *                         0.70f to Color.Black.copy(alpha = 0.10f),
+     *                         1.00f to Color.Transparent,
+     *                     ),
+     *                     center = center,
+     *                     radius = gap * 1.25f,
+     *                 ),
+     *                 radius = gap,
+     *                 center = center,
+     *             )
+     *             drawCircle(
+     *                 brush = Brush.radialGradient(
+     *                     colorStops = arrayOf(
+     *                         0.00f to Color.Transparent,
+     *                         0.36f to color.copy(alpha = if (fullGlow) 0.06f + glow * 0.18f else (0.04f + glow * 0.08f) * inactiveGlow),
+     *                         0.74f to color.copy(alpha = if (fullGlow) 0.025f + glow * 0.07f else (0.016f + glow * 0.035f) * inactiveGlow),
+     *                         1.00f to Color.Transparent,
+     *                     ),
+     *                     center = Offset(center.x - size.width * 0.024f, center.y - size.height * 0.032f),
+     *                     radius = core * (2.35f + glow * 0.35f),
+     *                 ),
+     *                 radius = core * (2.35f + glow * 0.35f),
+     *                 center = Offset(center.x - size.width * 0.010f, center.y - size.height * 0.014f),
+     *             )
+     *             drawCircle(
+     *                 brush = Brush.radialGradient(
+     *                     colorStops = arrayOf(
+     *                         0.00f to Color.White.copy(alpha = 0.46f + glow * 0.18f),
+     *                         0.20f to color.copy(alpha = 0.92f),
+     *                         0.68f to color.copy(alpha = 0.78f + glow * 0.12f),
+     *                         1.00f to color.copy(alpha = 0.58f + glow * 0.08f),
+     *                     ),
+     *                     center = Offset(center.x - core * 0.24f, center.y - core * 0.28f),
+     *                     radius = core * 1.55f,
+     *                 ),
+     *                 radius = core,
+     *                 center = center,
+     *             )
+     *             drawCircle(
+     *                 color = Color.White.copy(alpha = 0.28f + glow * 0.16f),
+     *                 radius = 1.25.dp.toPx(),
+     *                 center = Offset(center.x - core * 0.38f, center.y - core * 0.42f),
+     *             )
+     *             drawCircle(
+     *                 color = Color.White.copy(alpha = 0.18f),
+     *                 radius = core,
+     *                 center = center,
+     *                 style = Stroke(width = 0.8.dp.toPx()),
+     *             )
+     *         }
+     *     }
+     * }
+     */
+    PlatformStatusDot(status)
 }
 
 @Composable
@@ -1518,27 +1595,50 @@ private fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
     .joinToString(" · ")
 
 private fun Modifier.glassSurface(
-    liquidState: LiquidState,
     shape: RoundedCornerShape,
     accent: Color,
     glowAlpha: Float,
     borderAlpha: Float,
 ): Modifier = this
     .surfaceDepth(shape, accent, glowAlpha)
-    .liquid(liquidState) {
-        this.shape = shape
-        frost = 2.dp
-        refraction = 0.20f
-        curve = 0.10f
-        edge = 0.025f
-        tint = Color.Black.copy(alpha = 0.62f)
-        saturation = 1.25f
-        contrast = 1.08f
-        dispersion = 0.05f
-    }
+    .background(Color.Black.copy(alpha = 0.62f), shape)
+    .background(
+        Brush.linearGradient(
+            listOf(
+                Color.White.copy(alpha = 0.13f),
+                Color.Transparent,
+                accent.copy(alpha = 0.055f),
+                Color.Black.copy(alpha = 0.18f),
+            ),
+            start = Offset(-90f, -60f),
+            end = Offset(520f, 700f),
+        ),
+        shape,
+    )
+    .innerShadow(
+        shape,
+        Shadow(
+            radius = 18.dp,
+            spread = (-7).dp,
+            offset = DpOffset((-4).dp, 3.dp),
+            color = Color.White,
+            alpha = 0.20f,
+        ),
+    )
+    .innerShadow(
+        shape,
+        Shadow(
+            radius = 32.dp,
+            spread = (-12).dp,
+            offset = DpOffset(0.dp, (-14).dp),
+            color = Color.Black,
+            alpha = 0.42f,
+        ),
+    )
+    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.17f)), shape)
     .border(BorderStroke(1.dp, accent.copy(alpha = borderAlpha)), shape)
 
-private fun OpsStatusDto.color(): Color = when (this) {
+internal fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green
     OpsStatusDto.WARN -> amber
     OpsStatusDto.FAIL -> rose
@@ -1562,30 +1662,21 @@ private fun Modifier.surfaceDepth(shape: RoundedCornerShape, accent: Color, glow
     .dropShadow(
         shape,
         Shadow(
-            radius = 18.dp,
-            spread = (-4).dp,
-            offset = DpOffset(0.dp, 8.dp),
+            radius = 34.dp,
+            spread = (-7).dp,
+            offset = DpOffset(0.dp, 19.dp),
             color = Color.Black,
-            alpha = 0.22f,
+            alpha = 0.52f,
         ),
     )
     .dropShadow(
         shape,
         Shadow(
-            radius = 24.dp,
-            spread = (-12).dp,
-            offset = DpOffset.Zero,
+            radius = 36.dp,
+            spread = (-15).dp,
+            offset = DpOffset((-10).dp, (-7).dp),
             color = accent,
-            alpha = glowAlpha * 0.5f,
-        ),
-    )
-    .innerShadow(
-        shape,
-        Shadow(
-            radius = 8.dp,
-            offset = DpOffset(0.dp, 1.dp),
-            color = Color.White,
-            alpha = 0.0175f,
+            alpha = glowAlpha,
         ),
     )
     .border(BorderStroke(1.dp, accent.copy(alpha = glowAlpha * 0.5f)), shape)

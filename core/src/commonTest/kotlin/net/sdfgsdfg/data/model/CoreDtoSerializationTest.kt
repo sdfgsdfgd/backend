@@ -97,6 +97,7 @@ class CoreDtoSerializationTest {
                         role = "control plane",
                         status = OpsStatusDto.OK,
                         location = "/repo",
+                        runtimeLabel = "local preview",
                         serviceName = "backend.service",
                         latestRun = TestRunSummaryDto(
                             label = "smoke",
@@ -163,6 +164,7 @@ class CoreDtoSerializationTest {
         val selfTest = repo.getValue("self_test").jsonObject
         val selfTestCase = selfTest.getValue("cases").jsonArray.first().jsonObject
         assertEquals(7L, obj.getValue("generated_at_ms").jsonPrimitive.long)
+        assertEquals("local preview", repo.getValue("runtime_label").jsonPrimitive.content)
         assertEquals("backend.service", repo.getValue("service_name").jsonPrimitive.content)
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
@@ -187,6 +189,7 @@ class CoreDtoSerializationTest {
         assertEquals("5.5-thinking-heavy", selfTestCase.getValue("name").jsonPrimitive.content)
         assertFalse("generatedAtMs" in obj)
         assertFalse("serviceName" in repo)
+        assertFalse("runtimeLabel" in repo)
         assertFalse("latestRun" in repo)
         assertFalse("selfTest" in repo)
         assertFalse("timestampLabel" in selfTest)

@@ -326,7 +326,7 @@ fun stopBackendProcess(process: Process) {
     }
 }
 
-fun foreground(): Nothing {
+fun foreground(start: Long, mode: String): Nothing {
     startLocalDb()
     log("◆", "starting $app in foreground: $bin", appLog)
     val process = runCatching { startBackendProcess(console = true) }
@@ -343,6 +343,13 @@ fun foreground(): Nothing {
     val stopHook = Thread(::stopForeground)
     Runtime.getRuntime().addShutdownHook(stopHook)
     localSmoke()
+    runCatching {
+        appendDeployHistory(
+            mode = mode,
+            durationMs = (System.nanoTime() - start) / 1_000_000,
+            detail = "local preview: /test and /metrics/security passed",
+        )
+    }.onFailure { log("⚠", "could not write local preview history: ${it.message}") }
     val exit = process.waitFor()
     runCatching { Runtime.getRuntime().removeShutdownHook(stopHook) }
     stopForeground()
@@ -464,11 +471,11 @@ fun <T> withLock(block: () -> T): T =
         lock.use { block() }
     }
 
-fun installAndForeground(): Nothing {
+fun installAndForeground(start: Long, mode: String): Nothing {
     log("◆", "using foreground process mode")
     stopPort()
     gradle(":installServer")
-    foreground()
+    foreground(start, mode)
 }
 
 fun deploy() {
@@ -500,10 +507,10 @@ fun deploy() {
                     if (!insideBackendService()) {
                         fail("$service still self-deploys through deploy.main.kts. Install the runtime unit before detached deploy.")
                     }
-                    installAndForeground()
+                    installAndForeground(start, mode)
                 }
                 "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-                else -> installAndForeground()
+                else -> installAndForeground(start, mode)
             }
 
             val durationMs = (System.nanoTime() - start) / 1_000_000
@@ -538,7 +545,7 @@ fun dispatch(command: String) {
         "start" -> when (mode) {
             "runtime" -> { startService(); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> foreground()
+            else -> foreground(System.nanoTime(), mode)
         }
         "stop" -> when (mode) {
             "runtime" -> systemctl("stop")
@@ -548,7 +555,7 @@ fun dispatch(command: String) {
         "restart" -> when (mode) {
             "runtime" -> { systemctl("reset-failed"); systemctl("restart"); localSmoke() }
             "other" -> fail("$service has an unsupported ExecStart: ${execStart()}")
-            else -> { stopPort(); stopLocalDb(); foreground() }
+            else -> { stopPort(); stopLocalDb(); foreground(System.nanoTime(), mode) }
         }
         "status" -> status()
         "smoke", "local-smoke" -> localSmoke()

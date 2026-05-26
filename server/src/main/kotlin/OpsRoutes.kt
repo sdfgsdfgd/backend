@@ -80,6 +80,7 @@ fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestTargetFile: File = defaultArcanaIngestFile,
     selfTestArtifactFile: File = serverPySelfTestFile,
+    deployHistorySourceFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
 ) {
     fun allowed(call: ApplicationCall): Boolean {
@@ -107,7 +108,7 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(arcanaIngestTargetFile, githubIssues))
+        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, deployHistorySourceFile, githubIssues))
     }
 
     post("/api/ops/ingest/arcana") {
@@ -214,19 +215,28 @@ private fun File.dashboardContentType() = when (extension.lowercase()) {
 }
 
 private fun opsSummary(
+    localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestFile: File = defaultArcanaIngestFile,
+    historyFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
 ): OpsSummaryDto {
     val serverPySelfTest = latestServerPySelfTest()
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
-    val backendHistory = deployHistory()
+    val backendHistory = deployHistory(historyFile)
     val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
     val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
-    val backendLatestRun = backendHistory.firstOrNull() ?: TestRunSummaryDto(
-        label = "local smoke",
+    val backendCurrentRun = TestRunSummaryDto(
+        label = if (localPreview) "local preview" else "local smoke",
         status = OpsStatusDto.OK,
-        detail = "/test and /metrics/security are deploy-gated",
+        detail = if (localPreview) {
+            "/test and /metrics/security are serving from this local backend."
+        } else {
+            "/test and /metrics/security are deploy-gated"
+        },
     )
+    val backendLatestRun = backendHistory.firstOrNull()
+        ?.takeUnless { localPreview && it.status == OpsStatusDto.FAIL }
+        ?: backendCurrentRun
     val arcanaLatestRun = arcanaIngest?.toRunSummary() ?: TestRunSummaryDto(
         label = "local-first publisher",
         status = OpsStatusDto.WIP,
@@ -244,6 +254,7 @@ private fun opsSummary(
                 role = "Ktor control plane",
                 status = OpsStatusDto.OK,
                 location = backendRepo.path,
+                runtimeLabel = if (localPreview) "local preview" else null,
                 serviceName = "backend.service",
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),

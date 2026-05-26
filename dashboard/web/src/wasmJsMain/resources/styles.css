@@ -21,6 +21,144 @@ body {
   background: #0b0d10;
 }
 
+.ops-status-light {
+  --light-rgb: 141, 152, 169;
+  --light-core: #8d98a9;
+  --light-edge: #596272;
+  --light-duration: 3.6s;
+  --light-glow-low: 0.05;
+  --light-glow-high: 0.30;
+  --light-corona-low: 0.04;
+  --light-corona-high: 0.22;
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  border-radius: 999px;
+  contain: layout style;
+  overflow: visible;
+  transform: translateZ(0);
+}
+
+.ops-status-light::before,
+.ops-status-light::after,
+.ops-status-light-core,
+.ops-status-light-core::after {
+  position: absolute;
+  content: "";
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.ops-status-light::before {
+  inset: 9px;
+  background: rgba(var(--light-rgb), 0.72);
+  filter: blur(18px);
+  opacity: var(--light-glow-low);
+  transform: scale(0.48);
+  transform-origin: center;
+  will-change: opacity, transform, filter;
+  animation: ops-light-bloom var(--light-duration) ease-in-out infinite alternate;
+}
+
+.ops-status-light::after {
+  inset: 18px;
+  background: rgba(var(--light-rgb), 0.72);
+  filter: blur(13px);
+  opacity: var(--light-corona-low);
+  transform: scale(0.70);
+  transform-origin: center;
+  will-change: opacity, transform, filter;
+  animation: ops-light-corona var(--light-duration) ease-in-out infinite alternate;
+}
+
+.ops-status-light-core {
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background:
+    radial-gradient(
+      circle at 36% 31%,
+      rgba(255, 255, 255, 0.82) 0%,
+      rgba(255, 255, 255, 0.44) 13%,
+      rgba(var(--light-rgb), 0.98) 28%,
+      rgba(var(--light-rgb), 0.82) 54%,
+      rgba(var(--light-rgb), 0.54) 78%,
+      rgba(var(--light-rgb), 0.26) 100%
+    );
+  box-shadow:
+    inset 0 0 1px rgba(255, 255, 255, 0.64),
+    0 0 6px rgba(var(--light-rgb), 0.24),
+    0 0 14px rgba(var(--light-rgb), 0.10);
+  transform: translate(-50%, -50%) translateZ(0);
+}
+
+.ops-status-light-core::after {
+  left: 3px;
+  top: 3px;
+  width: 2.5px;
+  height: 2.5px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.ops-status-light.ok {
+  --light-rgb: 92, 229, 139;
+  --light-core: #5ce58b;
+  --light-edge: #23985a;
+  --light-duration: 3.6s;
+  --light-glow-low: 0.18;
+  --light-glow-high: 0.96;
+  --light-corona-low: 0.06;
+  --light-corona-high: 0.46;
+}
+
+.ops-status-light.fail {
+  --light-rgb: 255, 116, 116;
+  --light-core: #ff7474;
+  --light-edge: #a82734;
+  --light-duration: 3.6s;
+  --light-glow-low: 0.18;
+  --light-glow-high: 0.96;
+  --light-corona-low: 0.06;
+  --light-corona-high: 0.46;
+}
+
+.ops-status-light.warn {
+  --light-rgb: 255, 200, 107;
+  --light-core: #ffc86b;
+  --light-edge: #a66a22;
+  --light-duration: 2.4s;
+}
+
+.ops-status-light.wip {
+  --light-rgb: 117, 212, 255;
+  --light-core: #75d4ff;
+  --light-edge: #247aa2;
+  --light-duration: 2.8s;
+}
+
+@keyframes ops-light-bloom {
+  0% {
+    opacity: var(--light-glow-low);
+    transform: scale(0.48);
+  }
+  100% {
+    opacity: var(--light-glow-high);
+    transform: scale(0.94);
+  }
+}
+
+@keyframes ops-light-corona {
+  0% {
+    opacity: var(--light-corona-low);
+    transform: scale(0.70);
+  }
+  100% {
+    opacity: var(--light-corona-high);
+    transform: scale(1.08);
+  }
+}
+
 .boot {
   position: fixed;
   inset: 0;

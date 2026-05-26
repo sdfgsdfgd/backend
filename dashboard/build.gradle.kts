@@ -26,7 +26,6 @@ kotlin {
             implementation(libs.compose.components.resources)
             implementation(libs.coroutines)
             implementation(libs.kotlinx.serialization.json)
-            implementation(libs.mckee.liquid)
         }
 
         commonTest.dependencies {
