@@ -52,8 +52,12 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
 
         val summary = json.decodeFromString<OpsSummaryDto>(response.body<String>())
+        val backend = summary.repos.first { it.id == "backend" }
+        val serverPy = summary.repos.first { it.id == "server_py" }
         val backendRuns = summary.repos.first { it.id == "backend" }.runs
         assertEquals(listOf("backend", "server_py", "arcana"), summary.repos.map { it.id })
+        assertEquals("remote q", backend.runtimeLabel)
+        assertEquals("remote q", serverPy.runtimeLabel)
         assertEquals(true, backendRuns.any { it.label == "server checks" })
         assertEquals(true, backendRuns.any { it.label == "public ingress" })
         assertEquals(
@@ -215,7 +219,7 @@ class OpsRoutesTest {
         val backend = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "backend" }
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("local preview", backend.runtimeLabel)
+        assertEquals("local", backend.runtimeLabel)
         assertEquals("local preview", backend.latestRun?.label)
         assertEquals(OpsStatusDto.OK, backend.latestRun?.status)
         assertEquals("deploy failed", backend.history.first().label)

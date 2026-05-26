@@ -28,6 +28,7 @@ import kotlinx.serialization.json.longOrNull
 import net.sdfgsdfg.data.model.ArcanaIngestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
+import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -65,6 +66,7 @@ private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
+private val serverPySocket = File("/tmp/server_py/server_py.sock")
 private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
 private val publicIngressUrl = "https://sdfgsdfg.net/test"
@@ -220,13 +222,24 @@ private fun opsSummary(
     historyFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
 ): OpsSummaryDto {
+    val runtimeLabel = if (localPreview) "local" else "remote q"
     val serverPySelfTest = latestServerPySelfTest()
+    val serverPyReady = serverPySocket.exists()
+    val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
+    val serverPyStatus = serverPySelfTest
+        ?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL }
+        ?: serverPySocketStatus
+    val serverPyLatestRun = serverPySelfTest?.toRunSummary() ?: TestRunSummaryDto(
+        label = "gRPC bridge",
+        status = serverPyStatus,
+        detail = if (serverPyReady) "Unix socket is accepting backend traffic on this $runtimeLabel runtime." else "Waiting for server_py socket or live selftest.",
+    )
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
     val backendHistory = deployHistory(historyFile)
     val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
     val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
     val backendCurrentRun = TestRunSummaryDto(
-        label = if (localPreview) "local preview" else "local smoke",
+        label = if (localPreview) "local preview" else "deploy smoke",
         status = OpsStatusDto.OK,
         detail = if (localPreview) {
             "/test and /metrics/security are serving from this local backend."
@@ -244,6 +257,8 @@ private fun opsSummary(
     )
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
+    fun signal(label: String, status: OpsStatusDto, detail: String, meta: String = runtimeLabel) =
+        OpsSignalDto(label, status, detail = detail, meta = meta)
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -253,37 +268,37 @@ private fun opsSummary(
                 name = "backend",
                 role = "Ktor control plane",
                 status = OpsStatusDto.OK,
-                location = backendRepo.path,
-                runtimeLabel = if (localPreview) "local preview" else null,
+                runtimeLabel = runtimeLabel,
                 serviceName = "backend.service",
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
                 issues = backendIssues,
-                note = "Production deploy verifies before restart.",
+                signals = listOf(signal("runtime", OpsStatusDto.OK, if (localPreview) "Foreground deploy preview" else "systemd runtime")),
             ),
             RepoHealthDto(
                 id = "server_py",
                 name = "server_py",
                 role = "ChatGPT/browser automation bridge",
-                status = serverPySelfTest?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL } ?: OpsStatusDto.UNKNOWN,
-                location = serverPyRepo.path,
+                status = serverPyStatus,
+                runtimeLabel = runtimeLabel,
                 serviceName = "server_py.service",
-                latestRun = serverPySelfTest?.toRunSummary(),
-                runs = serverPyRuns(serverPySelfTest),
+                latestRun = serverPyLatestRun,
+                runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
                 issues = serverPyIssues,
-                note = "Live selftest JSON is rendered by the dashboard and preserved as a workflow artifact.",
+                signals = listOf(signal("gRPC socket", serverPySocketStatus, if (serverPyReady) "Backend bridge is reachable." else "Socket is not present.")),
             ),
             RepoHealthDto(
                 id = "arcana",
                 name = "arcana",
                 role = "Local codebase comprehension and session engine",
                 status = arcanaIngest?.status ?: OpsStatusDto.WIP,
-                location = arcanaRepo.path,
+                runtimeLabel = runtimeLabel,
                 latestRun = arcanaLatestRun,
                 runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
                 issues = arcanaIssues,
+                signals = arcanaSignals(arcanaRepo, runtimeLabel),
                 note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
             ),
         ),
@@ -301,6 +316,45 @@ private fun latestArcanaIngest(file: File = defaultArcanaIngestFile): ArcanaInge
         ?.readText()
         ?.let { opsJson.decodeFromString<ArcanaIngestDto>(it) }
 }.getOrNull()
+
+private fun arcanaSignals(repoRoot: File, runtimeLabel: String): List<OpsSignalDto> = buildList {
+    val commands = processCommands()
+    val arcanaCount = commands.count { it.containsArcanaProcess() }
+    val codexCount = commands.count { it.containsCodexProcess() }
+    add(
+        OpsSignalDto(
+            label = "visible processes",
+            status = if (arcanaCount + codexCount > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+            detail = "$arcanaCount arcana · $codexCount codex",
+            meta = runtimeLabel,
+        ),
+    )
+    currentArcanaSession(repoRoot, runtimeLabel)?.let(::add)
+}
+
+private fun currentArcanaSession(repoRoot: File, runtimeLabel: String): OpsSignalDto? = runCatching {
+    val root = opsJson.parseToJsonElement(repoRoot.resolve(".arcana/session/current.json").readText()).jsonObject
+    val entry = root.obj("entry")
+    val firstRound = root.array("rounds")?.firstOrNull()?.jsonObject
+    val query = firstRound?.obj("user")?.text("input")
+        ?: root.obj("latest")?.text("main_objective")
+        ?: return@runCatching null
+    OpsSignalDto(
+        label = "current session",
+        status = root.text("status").sessionStatus(),
+        timestampMs = root.instantMs("updated_at") ?: root.instantMs("created_at"),
+        detail = query.compact(170),
+        meta = listOfNotNull(runtimeLabel, entry?.text("mode"), entry?.text("model")).joinToString(" · "),
+    )
+}.getOrNull()
+
+private fun processCommands(): List<String> = ProcessHandle.allProcesses()
+    .toList()
+    .mapNotNull { it.info().commandLine().orElse(null) }
+
+private fun String.containsArcanaProcess() = lowercase().let { "grep" !in it && ("desktop/py/arcana" in it || "/arcana/" in it || it.endsWith("/arcana")) }
+
+private fun String.containsCodexProcess() = lowercase().let { "grep" !in it && "computeruse" !in it && (" codex" in it || "/codex" in it) }
 
 internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryDto> = runCatching {
     file.takeIf { it.isFile }
@@ -327,8 +381,8 @@ private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External probe stays outside restart gating.", url = publicIngressUrl),
 )
 
-private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> = listOfNotNull(
-    selfTest?.toRunSummary() ?: TestRunSummaryDto("live selftest", OpsStatusDto.UNKNOWN, detail = "Waiting for persisted server-py-selftest.json.", url = serverPyLiveSelftestUrl),
+private fun serverPyRuns(selfTest: SelfTestResultDto?, socketReady: Boolean, latestRun: TestRunSummaryDto): List<TestRunSummaryDto> = listOfNotNull(
+    latestRun.copy(url = selfTest?.workflowUrl ?: serverPyLiveSelftestUrl),
     selfTest?.cases?.takeIf { it.isNotEmpty() }?.let { cases ->
         val passed = cases.count { it.ok }
         TestRunSummaryDto(
@@ -338,7 +392,7 @@ private fun serverPyRuns(selfTest: SelfTestResultDto?): List<TestRunSummaryDto> 
         )
     },
     TestRunSummaryDto("dashboard selftest parity", OpsStatusDto.OK, detail = "Dashboard renders the live selftest JSON, workflow link, and model matrix.", url = serverPySelfTestArtifactUrl),
-    TestRunSummaryDto("gRPC/browser bridge", OpsStatusDto.WIP, detail = "server_py owns automation internals; backend displays normalized facts."),
+    TestRunSummaryDto("gRPC/browser bridge", if (socketReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN, detail = "server_py owns automation internals; backend displays normalized facts."),
 )
 
 private fun arcanaRuns(latestRun: TestRunSummaryDto, ingest: ArcanaIngestDto?) = buildList {
@@ -514,6 +568,25 @@ private fun JsonObject.text(name: String): String? = this[name]
     ?.contentOrNull
     ?.takeIf { it.isNotBlank() }
 
+private fun JsonObject.obj(name: String): JsonObject? = this[name] as? JsonObject
+
+private fun JsonObject.array(name: String): JsonArray? = this[name] as? JsonArray
+
 private fun JsonObject.long(name: String): Long? = this[name]?.jsonPrimitive?.longOrNull
 
 private fun JsonObject.double(name: String): Double? = this[name]?.jsonPrimitive?.doubleOrNull
+
+private fun JsonObject.instantMs(name: String): Long? = text(name)?.let { value ->
+    runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+}
+
+private fun String?.sessionStatus(): OpsStatusDto = when (this?.lowercase()) {
+    "running", "active" -> OpsStatusDto.WIP
+    "done", "complete", "completed" -> OpsStatusDto.OK
+    "failed", "fail", "error" -> OpsStatusDto.FAIL
+    else -> OpsStatusDto.UNKNOWN
+}
+
+private fun String.compact(max: Int): String = replace(Regex("\\s+"), " ")
+    .trim()
+    .let { if (it.length <= max) it else it.take(max - 1).trimEnd() + "…" }

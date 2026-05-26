@@ -15,12 +15,12 @@ data class RepoHealthDto(
     val name: String,
     val role: String,
     val status: OpsStatusDto,
-    val location: String,
     @SerialName("runtime_label") val runtimeLabel: String? = null,
     @SerialName("service_name") val serviceName: String? = null,
     @SerialName("latest_run") val latestRun: TestRunSummaryDto? = null,
     val runs: List<TestRunSummaryDto> = emptyList(),
     val history: List<TestRunSummaryDto> = emptyList(),
+    val signals: List<OpsSignalDto> = emptyList(),
     @SerialName("self_test") val selfTest: SelfTestSummaryDto? = null,
     val issues: IssueSummaryDto = IssueSummaryDto(),
     val note: String? = null,
@@ -43,6 +43,15 @@ data class TestRunSummaryDto(
     @SerialName("duration_ms") val durationMs: Double? = null,
     val detail: String? = null,
     val url: String? = null,
+)
+
+@Serializable
+data class OpsSignalDto(
+    val label: String,
+    val status: OpsStatusDto,
+    @SerialName("timestamp_ms") val timestampMs: Long? = null,
+    val detail: String? = null,
+    val meta: String? = null,
 )
 
 @Serializable

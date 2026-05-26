@@ -71,11 +71,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
+import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
@@ -376,7 +378,7 @@ private fun Home(loadState: OpsLoadState) {
         )
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             SummaryStrip(loadState.summary)
-            RepoGrid(loadState.summary.repos)
+            RepoGrid(loadState.summary.repos, loadState.summary.generatedAtMs)
         }
     }
 }
@@ -414,16 +416,16 @@ private fun SummaryStrip(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun RepoGrid(repos: List<RepoHealthDto>) {
+private fun RepoGrid(repos: List<RepoHealthDto>, generatedAtMs: Long) {
     BoxWithConstraints {
         if (maxWidth < 980.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { RepoCard(it, modifier = Modifier.fillMaxWidth()) }
+                repos.forEach { RepoCard(it, generatedAtMs, modifier = Modifier.fillMaxWidth()) }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repos.forEach { repo ->
-                    RepoCard(repo, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
+                    RepoCard(repo, generatedAtMs, modifier = Modifier.weight(1f).heightIn(min = 330.dp))
                 }
             }
         }
@@ -431,7 +433,7 @@ private fun RepoGrid(repos: List<RepoHealthDto>) {
 }
 
 @Composable
-private fun RepoCard(repo: RepoHealthDto, modifier: Modifier = Modifier) {
+private fun RepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
@@ -439,12 +441,12 @@ private fun RepoCard(repo: RepoHealthDto, modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        RepoCardContent(repo)
+        RepoCardContent(repo, generatedAtMs)
     }
 }
 
 @Composable
-private fun RunSignal(run: TestRunSummaryDto) {
+private fun RunSignal(run: TestRunSummaryDto, generatedAtMs: Long) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -456,7 +458,7 @@ private fun RunSignal(run: TestRunSummaryDto) {
     ) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text(run.label, color = text, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text(run.status.name, color = run.status.color(), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            RunTail(run, generatedAtMs)
         }
         run.detail?.let {
             Text(it, color = Color(0xFFC2CCDA), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -465,7 +467,7 @@ private fun RunSignal(run: TestRunSummaryDto) {
 }
 
 @Composable
-private fun RepoCardContent(repo: RepoHealthDto) {
+private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         StatusDot(repo.status)
         Column(modifier = Modifier.weight(1f)) {
@@ -481,13 +483,10 @@ private fun RepoCardContent(repo: RepoHealthDto) {
         listOf(
             FieldSpec("service", repo.serviceName ?: "-"),
             FieldSpec("issues", repo.issues.active.toString(), issueSourceBreakdown(listOf(repo))),
-            FieldSpec("location", repo.location),
         ),
     )
-    repo.latestRun?.let { RunSignal(it) }
-    repo.note?.let {
-        Text(it, color = Color(0xFFDCE4EE), fontSize = 13.sp, lineHeight = 18.sp)
-    }
+    repo.latestRun?.let { RunSignal(it, generatedAtMs) }
+    repo.signals.takeIf { it.isNotEmpty() }?.let { SignalStack(it, generatedAtMs) }
 }
 
 @Composable
@@ -522,9 +521,53 @@ private fun RunPanel(run: TestRunSummaryDto) {
 }
 
 @Composable
+private fun SignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        signals.forEach { SignalRow(it, generatedAtMs) }
+    }
+}
+
+@Composable
+private fun SignalRow(signal: OpsSignalDto, generatedAtMs: Long) {
+    val shape = RoundedCornerShape(7.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.038f))
+            .border(BorderStroke(1.dp, signal.status.color().copy(alpha = 0.18f)), shape)
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        StatusDot(signal.status)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(signal.label, color = text, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                signal.timestampMs?.let { AgePill(it, generatedAtMs) }
+            }
+            signal.detail?.let {
+                Text(it, color = Color(0xFFC2CCDA), fontSize = 11.sp, lineHeight = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            signal.meta?.let {
+                Text(it, color = muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
 private fun FieldGrid(fields: List<FieldSpec>) {
-    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        fields.forEach { Field(it) }
+    BoxWithConstraints {
+        if (maxWidth < 360.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                fields.forEach { Field(it) }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                fields.forEach { field -> Box(Modifier.weight(1f)) { Field(field) } }
+            }
+        }
     }
 }
 
@@ -902,7 +945,7 @@ private fun PipelineLane(repo: RepoHealthDto, generatedAtMs: Long, modifier: Mod
             }
         }
         steps.forEachIndexed { index, step ->
-            PipelineStep(index + 1, step)
+            PipelineStep(index + 1, step, generatedAtMs)
         }
         if (repo.id == "arcana") ArcanaOperatorTile(repo.latestRun, generatedAtMs)
     }
@@ -925,7 +968,7 @@ private fun ArcanaOperatorTile(run: TestRunSummaryDto?, generatedAtMs: Long) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MiniFact("source", "arcana-smoke", modifier = Modifier.weight(1f))
-            MiniFact("last", run?.timestampMs?.ageFrom(generatedAtMs) ?: "waiting", modifier = Modifier.weight(1f))
+            MiniFact("last", run?.timestampMs?.relativeFrom(generatedAtMs) ?: "waiting", modifier = Modifier.weight(1f))
             MiniFact("duration", run?.durationMs?.ms() ?: "-", modifier = Modifier.weight(1f))
         }
     }
@@ -947,7 +990,7 @@ private fun MiniFact(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
+private fun PipelineStep(index: Int, step: TestRunSummaryDto, generatedAtMs: Long) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -971,7 +1014,7 @@ private fun PipelineStep(index: Int, step: TestRunSummaryDto) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(step.label, color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(step.status.name, color = step.status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                RunTail(step, generatedAtMs, fontSize = 11.sp)
             }
             step.detail?.let {
                 Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1013,12 +1056,12 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
             }
             StatusPill("${events.size} events", green)
         }
-        events.forEach { (repo, run) -> RunHistoryRow(repo, run) }
+        events.forEach { (repo, run) -> RunHistoryRow(repo, run, summary.generatedAtMs) }
     }
 }
 
 @Composable
-private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto) {
+private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1033,7 +1076,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${repo.name} / ${run.label}", color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(run.durationMs?.ms() ?: run.status.name, color = run.status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                RunTail(run, generatedAtMs, run.durationMs?.ms() ?: run.status.name, fontSize = 11.sp)
             }
             run.detail?.let {
                 Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1471,6 +1514,28 @@ private fun StatusPill(label: String, color: Color) {
 }
 
 @Composable
+private fun RunTail(run: TestRunSummaryDto, generatedAtMs: Long, label: String = run.status.name, fontSize: TextUnit = 12.sp) {
+    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+        run.timestampMs?.let { AgePill(it, generatedAtMs) }
+        Text(label, color = run.status.color(), fontSize = fontSize, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun AgePill(timestampMs: Long, generatedAtMs: Long) {
+    val color = timestampMs.ageColor(generatedAtMs)
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.11f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.30f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+    ) {
+        Text(timestampMs.relativeFrom(generatedAtMs), color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
 private fun StatusDot(status: OpsStatusDto) {
     // Compose/Wasm reference only: continuous Canvas radial-gradient animation caused global frame jank.
     // val transition = rememberInfiniteTransition(label = "status-dot")
@@ -1681,13 +1746,23 @@ internal fun OpsStatusDto.color(): Color = when (this) {
 
 private fun Double.ms(): String = if (this <= 0.0) "-" else "${roundToInt()}ms"
 
-private fun Long.ageFrom(nowMs: Long): String {
+private fun Long.relativeFrom(nowMs: Long): String {
     val seconds = ((nowMs - this) / 1_000).coerceAtLeast(0)
     return when {
-        seconds < 60 -> "${seconds}s ago"
-        seconds < 3_600 -> "${seconds / 60}m ago"
-        seconds < 86_400 -> "${seconds / 3_600}h ago"
-        else -> "${seconds / 86_400}d ago"
+        seconds < 60 -> "<1m"
+        seconds < 3_600 -> "<${seconds / 60 + 1}m"
+        seconds < 86_400 -> "<${seconds / 3_600}h ${(seconds % 3_600) / 60}m"
+        else -> "<${seconds / 86_400}d ${(seconds % 86_400) / 3_600}h"
+    }
+}
+
+private fun Long.ageColor(nowMs: Long): Color {
+    val seconds = ((nowMs - this) / 1_000).coerceAtLeast(0)
+    return when {
+        seconds < 15 * 60 -> rose
+        seconds < 2 * 3_600 -> amber
+        seconds < 24 * 3_600 -> cyan
+        else -> green
     }
 }
 

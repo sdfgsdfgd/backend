@@ -96,7 +96,6 @@ class CoreDtoSerializationTest {
                         name = "backend",
                         role = "control plane",
                         status = OpsStatusDto.OK,
-                        location = "/repo",
                         runtimeLabel = "local preview",
                         serviceName = "backend.service",
                         latestRun = TestRunSummaryDto(
@@ -117,6 +116,15 @@ class CoreDtoSerializationTest {
                                 status = OpsStatusDto.OK,
                                 timestampMs = 13L,
                                 durationMs = 44.0,
+                            ),
+                        ),
+                        signals = listOf(
+                            OpsSignalDto(
+                                label = "runtime",
+                                status = OpsStatusDto.OK,
+                                timestampMs = 15L,
+                                detail = "systemd runtime",
+                                meta = "remote q",
                             ),
                         ),
                         selfTest = SelfTestSummaryDto(
@@ -161,6 +169,7 @@ class CoreDtoSerializationTest {
         val run = repo.getValue("latest_run").jsonObject
         val pyramidRun = repo.getValue("runs").jsonArray.first().jsonObject
         val historyRun = repo.getValue("history").jsonArray.first().jsonObject
+        val signal = repo.getValue("signals").jsonArray.first().jsonObject
         val selfTest = repo.getValue("self_test").jsonObject
         val selfTestCase = selfTest.getValue("cases").jsonArray.first().jsonObject
         assertEquals(7L, obj.getValue("generated_at_ms").jsonPrimitive.long)
@@ -172,6 +181,9 @@ class CoreDtoSerializationTest {
         assertEquals("deploy abc1234", historyRun.getValue("label").jsonPrimitive.content)
         assertEquals(13L, historyRun.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(44.0, historyRun.getValue("duration_ms").jsonPrimitive.double)
+        assertEquals("runtime", signal.getValue("label").jsonPrimitive.content)
+        assertEquals(15L, signal.getValue("timestamp_ms").jsonPrimitive.long)
+        assertEquals("remote q", signal.getValue("meta").jsonPrimitive.content)
         assertEquals(true, selfTest.getValue("satisfied_expectation").jsonPrimitive.boolean)
         assertEquals("20 May, 12:24 AM AEST", selfTest.getValue("timestamp_label").jsonPrimitive.content)
         assertEquals(33.0, selfTest.getValue("ask_latency_ms").jsonPrimitive.double)
