@@ -130,6 +130,7 @@ fun DashboardApp() {
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
     }
+    PlatformArrowKeys { selectedTab = selectedTab.shift(it) }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
