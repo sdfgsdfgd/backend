@@ -183,7 +183,6 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeSpec())
                 repo.testBadges().forEach { PanelBadge(it) }
-                repo.transportBadges().forEach { PanelBadge(it) }
             }
         }
     }

@@ -254,13 +254,14 @@ private fun opsSummary(
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
     peerSnapshot: OpsHostSnapshotDto? = null,
 ): OpsSummaryDto {
-    val ownSnapshot = hostSnapshot(localPreview)
+    val ownServerPySelfTest = latestServerPySelfTest(selfTestFile)?.toOpsSelfTestSummary()
+    val ownSnapshot = hostSnapshot(localPreview, ownServerPySelfTest)
     val snapshots = listOfNotNull(ownSnapshot, peerSnapshot).distinctBy { it.host }
     val backendRuntimeLabels = snapshots.runtimeLabels { it.backendRuntimeLabel }
     val serverPyReadySnapshot = snapshots.firstOrNull { it.serverPyReady } ?: ownSnapshot
     val serverPyRuntimeLabel = serverPyReadySnapshot.serverPyRuntimeLabel
     val serverPyRuntimeLabels = snapshots.runtimeLabels { it.serverPyRuntimeLabel }
-    val serverPySelfTest = latestServerPySelfTest(selfTestFile)
+    val serverPySelfTest = ownServerPySelfTest ?: snapshots.firstNotNullOfOrNull { it.serverPySelfTest }
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
@@ -318,8 +319,8 @@ private fun opsSummary(
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
                 latestRun = serverPyLatestRun,
-                runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
-                selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
+                runs = serverPyRuns(serverPySelfTest, serverPyLatestRun),
+                selfTest = serverPySelfTest,
                 issues = serverPyIssues,
                 signals = snapshots.map { it.serverPySignal() },
             ),
@@ -340,7 +341,10 @@ private fun opsSummary(
     )
 }
 
-private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
+private fun hostSnapshot(
+    localPreview: Boolean,
+    serverPySelfTest: SelfTestSummaryDto? = latestServerPySelfTest()?.toOpsSelfTestSummary(),
+): OpsHostSnapshotDto {
     val backendRuntimeLabel = if (localPreview) localRuntimeLabel else qRuntimeLabel
     val serverPyRuntimeLabel = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) qRuntimeLabel else localRuntimeLabel
     val serverPyReady = if (serverPyRuntimeLabel == localRuntimeLabel) {
@@ -357,6 +361,7 @@ private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
         serverPyRuntimeLabel = serverPyRuntimeLabel,
         serverPyReady = serverPyReady,
         serverPyTransport = if (serverPyRuntimeLabel == localRuntimeLabel) "TCP 1453" else "UDS",
+        serverPySelfTest = serverPySelfTest,
         arcanaSignals = arcanaSignals(backendRuntimeLabel),
     )
 }
@@ -591,19 +596,17 @@ private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External probe stays outside restart gating.", url = publicIngressUrl),
 )
 
-private fun serverPyRuns(selfTest: SelfTestResultDto?, socketReady: Boolean, latestRun: TestRunSummaryDto) = buildList {
+private fun serverPyRuns(selfTest: SelfTestSummaryDto?, latestRun: TestRunSummaryDto) = buildList {
     add(latestRun.copy(url = selfTest?.workflowUrl ?: serverPyLiveSelftestUrl))
     if (selfTest == null) return@buildList
-    selfTest.cases.takeIf { it.isNotEmpty() }?.let { cases ->
-        val passed = cases.count { it.ok }
+    if (selfTest.caseCount > 0) {
         add(TestRunSummaryDto(
             label = "model matrix",
-            status = if (passed == cases.size) OpsStatusDto.OK else OpsStatusDto.FAIL,
-            detail = "$passed/${cases.size} model cases passing.",
+            status = if (selfTest.casePassCount == selfTest.caseCount) OpsStatusDto.OK else OpsStatusDto.FAIL,
+            detail = "${selfTest.casePassCount}/${selfTest.caseCount} model cases passing.",
         ))
     }
     add(TestRunSummaryDto("selftest artifact", OpsStatusDto.OK, detail = "Dashboard renders the latest selftest JSON and workflow link.", url = serverPySelfTestArtifactUrl))
-    add(TestRunSummaryDto("transport", if (socketReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN, detail = "Backend gRPC channel reachability."))
 }
 
 private fun arcanaRuns(latestRun: TestRunSummaryDto?, ingest: ArcanaIngestDto?) = buildList {
@@ -731,10 +734,10 @@ private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
     url = url,
 )
 
-private fun SelfTestResultDto.toRunSummary() = TestRunSummaryDto(
+private fun SelfTestSummaryDto.toRunSummary() = TestRunSummaryDto(
     label = "live selftest",
-    status = if (ok) OpsStatusDto.OK else OpsStatusDto.FAIL,
-    timestampMs = timestampMs.takeIf { it > 0 },
+    status = status,
+    timestampMs = timestampMs?.takeIf { it > 0 },
     durationMs = latencyMs,
     detail = rawError ?: textExcerpt.take(120).ifBlank { null },
     url = workflowUrl ?: serverPyLiveSelftestUrl,

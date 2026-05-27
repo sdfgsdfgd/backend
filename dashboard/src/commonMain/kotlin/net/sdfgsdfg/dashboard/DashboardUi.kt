@@ -402,18 +402,6 @@ internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
     else -> emptyList()
 }
 
-internal fun RepoHealthDto.transportBadges(): List<BadgeSpec> {
-    val transports = if (id == "server_py") signals.filter { it.label == "transport" } else return emptyList()
-    return transports
-        .filter { it.status == OpsStatusDto.OK }
-        .mapNotNull { signal ->
-            signal.detail
-                ?.takeIf { it.isNotBlank() }
-                ?.let { BadgeSpec("gRPC / $it", green) }
-        }
-        .distinctBy { it.label }
-}
-
 internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
     val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
     val visibleProcesses = signals.firstOrNull { it.isActiveProcessSummary() }

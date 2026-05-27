@@ -62,6 +62,7 @@ data class OpsHostSnapshotDto(
     @SerialName("server_py_runtime_label") val serverPyRuntimeLabel: String,
     @SerialName("server_py_ready") val serverPyReady: Boolean,
     @SerialName("server_py_transport") val serverPyTransport: String,
+    @SerialName("server_py_self_test") val serverPySelfTest: SelfTestSummaryDto? = null,
     @SerialName("arcana_signals") val arcanaSignals: List<OpsSignalDto> = emptyList(),
 )
 

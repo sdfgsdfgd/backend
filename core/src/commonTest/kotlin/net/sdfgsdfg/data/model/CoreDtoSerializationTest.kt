@@ -246,6 +246,12 @@ class CoreDtoSerializationTest {
                     serverPyRuntimeLabel = "local",
                     serverPyReady = true,
                     serverPyTransport = "TCP 1453",
+                    serverPySelfTest = SelfTestSummaryDto(
+                        status = OpsStatusDto.OK,
+                        ok = true,
+                        satisfiedExpectation = true,
+                        textExcerpt = "healthy",
+                    ),
                     arcanaSignals = listOf(OpsSignalDto("visible processes", OpsStatusDto.OK, detail = "1 codex live", meta = "local")),
                 ),
             ),
@@ -255,12 +261,14 @@ class CoreDtoSerializationTest {
         assertEquals("local", hostSnapshot.getValue("server_py_runtime_label").jsonPrimitive.content)
         assertEquals(true, hostSnapshot.getValue("server_py_ready").jsonPrimitive.boolean)
         assertEquals("TCP 1453", hostSnapshot.getValue("server_py_transport").jsonPrimitive.content)
+        assertEquals("healthy", hostSnapshot.getValue("server_py_self_test").jsonObject.getValue("text_excerpt").jsonPrimitive.content)
         assertEquals("visible processes", hostSnapshot.getValue("arcana_signals").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
         assertFalse("generatedAtMs" in hostSnapshot)
         assertFalse("backendRuntimeLabel" in hostSnapshot)
         assertFalse("serverPyRuntimeLabel" in hostSnapshot)
         assertFalse("serverPyReady" in hostSnapshot)
         assertFalse("serverPyTransport" in hostSnapshot)
+        assertFalse("serverPySelfTest" in hostSnapshot)
         assertFalse("arcanaSignals" in hostSnapshot)
     }
 }

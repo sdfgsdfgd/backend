@@ -27,6 +27,7 @@ import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
+import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -187,7 +188,7 @@ class OpsRoutesTest {
         assertEquals("conversation ok", serverPy.latestRun?.detail)
         assertEquals(88.0, serverPy.latestRun?.durationMs)
         assertEquals("transport", serverPy.signals.single().label)
-        assertEquals(listOf("live selftest", "selftest artifact", "transport"), serverPy.runs.map { it.label })
+        assertEquals(listOf("live selftest", "selftest artifact"), serverPy.runs.map { it.label })
     }
 
     @Test
@@ -231,6 +232,7 @@ class OpsRoutesTest {
 
     @Test
     fun opsSummaryMergesPeerHostSnapshotWhenEnabled() = testApplication {
+        val missingSelfTestFile = File(createTempDirectory().toFile(), "server-py-selftest.json")
         val peer = OpsHostSnapshotDto(
             generatedAtMs = 123L,
             host = "remote q",
@@ -238,6 +240,16 @@ class OpsRoutesTest {
             serverPyRuntimeLabel = "remote q",
             serverPyReady = true,
             serverPyTransport = "UDS",
+            serverPySelfTest = SelfTestSummaryDto(
+                status = OpsStatusDto.OK,
+                ok = true,
+                satisfiedExpectation = true,
+                timestampMs = 99L,
+                latencyMs = 12.0,
+                textExcerpt = "peer selftest",
+                caseCount = 2,
+                casePassCount = 2,
+            ),
             arcanaSignals = listOf(
                 OpsSignalDto("active", OpsStatusDto.OK, detail = "0 arcana live · 1 codex live", meta = "remote q"),
                 OpsSignalDto("codex", OpsStatusDto.OK, timestampMs = 99L, detail = "peer session", meta = "remote q · process #7"),
@@ -249,6 +261,7 @@ class OpsRoutesTest {
             routing {
                 opsRoutes(
                     localPreview = true,
+                    selfTestArtifactFile = missingSelfTestFile,
                     githubIssues = noGithubIssues,
                     enablePeerSnapshots = true,
                     peerSnapshot = { peer },
@@ -259,11 +272,15 @@ class OpsRoutesTest {
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
         val repos = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos
         val backend = repos.first { it.id == "backend" }
+        val serverPy = repos.first { it.id == "server_py" }
         val arcana = repos.first { it.id == "arcana" }
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(listOf("local", "remote q"), backend.runtimeLabels)
         assertEquals("local + remote q", backend.runtimeLabel)
+        assertEquals(OpsStatusDto.OK, serverPy.selfTest?.status)
+        assertEquals("peer selftest", serverPy.latestRun?.detail)
+        assertEquals(listOf("live selftest", "model matrix", "selftest artifact"), serverPy.runs.map { it.label })
         assertEquals(listOf("local", "remote q"), arcana.runtimeLabels)
         assertEquals(true, arcana.signals.first().detail?.contains("remote q: 0 arcana live") == true)
         assertEquals(true, arcana.signals.any { it.detail == "peer session" && it.meta == "remote q · process #7" })
