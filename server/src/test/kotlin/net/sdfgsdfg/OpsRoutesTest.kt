@@ -342,6 +342,47 @@ class OpsRoutesTest {
         assertEquals(false, arcana.signals.any { it.label == "arcana current" || it.label == "current session" })
     }
 
+    @Test
+    fun arcanaProcessGroupsCollapseSandboxLauncherAndDockerChild() {
+        val launcher = ProcessSnapshot(
+            pid = 10,
+            parentPid = null,
+            command = "python _0.py --kaan --sandbox --path /Users/x/Desktop/py/arcana",
+            startedAtMs = 100,
+        )
+        val sandbox = ProcessSnapshot(
+            pid = 11,
+            parentPid = 10,
+            command = "docker run --rm /app/arcana/_0.py --path /Users/x/Desktop/py/arcana",
+            startedAtMs = 110,
+        )
+        val independent = ProcessSnapshot(
+            pid = 12,
+            parentPid = null,
+            command = "python _0.py --auto --path /Users/x/Desktop/py/arcana",
+            startedAtMs = 120,
+        )
+
+        val groups = listOf(launcher, sandbox, independent)
+            .arcanaProcessGroups()
+            .sortedBy { it.pids.first() }
+
+        assertEquals(listOf(listOf(10L, 11L), listOf(12L)), groups.map { it.pids })
+        assertEquals(launcher, groups.first().head)
+    }
+
+    @Test
+    fun arcanaProcessGroupsKeepIndependentRunsSeparate() {
+        val first = ProcessSnapshot(20, null, "python _0.py --path /Users/x/Desktop/py/arcana", 200)
+        val second = ProcessSnapshot(21, null, "python _0.py --no-index-sync --path /Users/x/Desktop/py/arcana", 210)
+
+        val groups = listOf(first, second)
+            .arcanaProcessGroups()
+            .sortedBy { it.pids.first() }
+
+        assertEquals(listOf(listOf(20L), listOf(21L)), groups.map { it.pids })
+    }
+
     // Static asset tests are intentionally kept together: they protect the
     // public Compose/Wasm shell, not generic file-serving trivia.
     @Test

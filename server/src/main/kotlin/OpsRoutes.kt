@@ -432,21 +432,20 @@ private fun latestArcanaIngest(file: File = defaultArcanaIngestFile): ArcanaInge
 
 private fun arcanaSignals(runtimeLabel: String): List<OpsSignalDto> = buildList {
     val processes = processSnapshots()
-    val arcanaProcesses = processes.filter { it.command.containsArcanaProcess() }
+    val arcanaGroups = processes.filter { it.command.containsArcanaProcess() }.arcanaProcessGroups()
     val codexProcesses = processes.filter { it.command.containsCodexProcess() }
     val codexSessions = codexSessionSnapshots()
     val codexGroups = codexProcesses.groupBy { it.startedAtMs?.div(1_000) ?: it.pid }
-    val arcanaCount = arcanaProcesses.size
     add(
         OpsSignalDto(
             label = "visible processes",
-            status = if (arcanaCount + codexGroups.size > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
-            detail = "$arcanaCount arcana live · ${codexGroups.size} codex live",
+            status = if (arcanaGroups.size + codexGroups.size > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+            detail = "${arcanaGroups.size} arcana live · ${codexGroups.size} codex live",
             meta = runtimeLabel,
         ),
     )
     (
-        arcanaProcesses.map { it.toSignal("arcana", runtimeLabel) } +
+        arcanaGroups.map { it.toSignal(runtimeLabel) } +
             codexGroups.values.map { group ->
                 val head = group.minBy { it.startedAtMs ?: Long.MAX_VALUE }
                 head.toSignal("codex", runtimeLabel, group.map { it.pid }, codexSessions.nearest(head.startedAtMs)?.detail)
@@ -457,7 +456,17 @@ private fun arcanaSignals(runtimeLabel: String): List<OpsSignalDto> = buildList 
         .forEach(::add)
 }
 
-private data class ProcessSnapshot(val pid: Long, val command: String, val startedAtMs: Long?)
+internal data class ProcessSnapshot(val pid: Long, val parentPid: Long?, val command: String, val startedAtMs: Long?)
+
+internal data class ProcessGroup(val processes: List<ProcessSnapshot>) {
+    val pids = processes.map { it.pid }.sorted()
+    val startedAtMs = processes.mapNotNull { it.startedAtMs }.minOrNull()
+    val head = processes.minWith(
+        compareBy<ProcessSnapshot> { it.command.contains("docker ", ignoreCase = true) }
+            .thenBy { it.startedAtMs ?: Long.MAX_VALUE }
+            .thenBy { it.pid },
+    )
+}
 
 private data class CodexSessionSnapshot(val startedAtMs: Long, val detail: String)
 
@@ -465,9 +474,29 @@ private fun processSnapshots(): List<ProcessSnapshot> = ProcessHandle.allProcess
     .toList()
     .mapNotNull { process ->
         process.info().commandLine().orElse(null)?.let { command ->
-            ProcessSnapshot(process.pid(), command, process.info().startInstant().orElse(null)?.toEpochMilli())
+            ProcessSnapshot(
+                pid = process.pid(),
+                parentPid = process.parent().map { it.pid() }.orElse(null),
+                command = command,
+                startedAtMs = process.info().startInstant().orElse(null)?.toEpochMilli(),
+            )
         }
     }
+
+internal fun List<ProcessSnapshot>.arcanaProcessGroups(): List<ProcessGroup> {
+    val byPid = associateBy { it.pid }
+    fun root(process: ProcessSnapshot): ProcessSnapshot {
+        var current = process
+        val seen = mutableSetOf<Long>()
+        while (seen.add(current.pid)) {
+            current = byPid[current.parentPid] ?: return current
+        }
+        return current
+    }
+    return groupBy { root(it).pid }
+        .values
+        .map { ProcessGroup(it) }
+}
 
 private fun ProcessSnapshot.toSignal(kind: String, runtimeLabel: String, pids: List<Long> = listOf(pid), detailOverride: String? = null) = OpsSignalDto(
     label = kind,
@@ -475,6 +504,14 @@ private fun ProcessSnapshot.toSignal(kind: String, runtimeLabel: String, pids: L
     timestampMs = startedAtMs,
     detail = detailOverride ?: if (kind == "codex") "Codex CLI process" else command.commandPreview(),
     meta = "$runtimeLabel · process ${pids.sorted().joinToString(" ") { "#$it" }}",
+)
+
+private fun ProcessGroup.toSignal(runtimeLabel: String) = OpsSignalDto(
+    label = "arcana",
+    status = OpsStatusDto.OK,
+    timestampMs = startedAtMs,
+    detail = head.command.commandPreview(),
+    meta = "$runtimeLabel · process ${pids.joinToString(" ") { "#$it" }}",
 )
 
 private fun codexSessionSnapshots(): List<CodexSessionSnapshot> = runCatching {
