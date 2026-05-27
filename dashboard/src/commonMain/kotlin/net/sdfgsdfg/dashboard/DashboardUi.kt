@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
@@ -68,6 +71,7 @@ internal const val UPDATE_FLASH_MS = 2_400L
 
 internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
 internal data class IssueLaneSpec(val label: String, val color: Color, val count: (RepoHealthDto) -> Int)
+internal data class BadgeSpec(val label: String, val color: Color, val strong: Boolean = false)
 
 @Composable
 internal fun rememberFreshKeys(keys: List<String>): Set<String> {
@@ -151,6 +155,39 @@ internal fun StatusPill(label: String, color: Color) {
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
         Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+internal fun PanelBadge(badge: BadgeSpec, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        badge.color.copy(alpha = if (badge.strong) 0.20f else 0.12f),
+                        Color.White.copy(alpha = 0.035f),
+                    ),
+                ),
+            )
+            .border(BorderStroke(1.dp, badge.color.copy(alpha = if (badge.strong) 0.52f else 0.30f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Canvas(modifier = Modifier.size(5.dp)) {
+            drawCircle(badge.color.copy(alpha = 0.18f), radius = size.width * 0.88f)
+            drawCircle(badge.color, radius = size.width * 0.42f)
+        }
+        Text(
+            badge.label,
+            color = if (badge.strong) text else Color(0xFFD2DCE9),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -345,6 +382,56 @@ internal fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
         "$label ${sources.sumOf { it.active }}"
     }
     .joinToString(" · ")
+
+internal fun IssueSummaryDto.badgeSpec() = BadgeSpec(
+    label = if (active == 1) "1 issue" else "$active issues",
+    color = if (active == 0) green else amber,
+    strong = active > 0,
+)
+
+internal fun RepoHealthDto.statusBadge(): BadgeSpec? = if (id == "arcana") null else BadgeSpec(status.name, status.color(), strong = true)
+
+internal fun RepoHealthDto.transportBadges(): List<BadgeSpec> {
+    val transports = if (id == "server_py") signals.filter { it.label == "transport" } else return emptyList()
+    return transports
+        .filter { it.status == OpsStatusDto.OK }
+        .mapNotNull { signal ->
+            signal.detail
+                ?.takeIf { it.isNotBlank() }
+                ?.let { BadgeSpec("gRPC / $it", green) }
+        }
+        .distinctBy { it.label }
+}
+
+internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
+    val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
+    val visibleProcesses = signals.firstOrNull { it.label.startsWith("visible ") }
+    val arcanaStatuses = if (id == "arcana") {
+        val labeled = visibleProcesses?.detail
+            ?.split(" / ")
+            .orEmpty()
+            .mapNotNull { segment ->
+                segment.substringBefore(": ", missingDelimiterValue = "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { it to segment.substringAfter(": ") }
+            }
+        labeled.ifEmpty { visibleProcesses?.let { listOf(it.meta to it.detail.orEmpty()) }.orEmpty() }
+            .associate { (label, detail) ->
+                label to if (liveProcessCount.findAll(detail).sumOf { it.groupValues[1].toInt() } > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
+            }
+    } else {
+        emptyMap()
+    }
+    return labels.mapNotNull { label ->
+        val status = if (id == "arcana") arcanaStatuses[label] else signals.firstOrNull { it.meta == label }?.status
+        when {
+            label == "local" && status != OpsStatusDto.OK -> null
+            label == "remote q" && status != OpsStatusDto.OK -> BadgeSpec(label, rose)
+            status == OpsStatusDto.OK -> BadgeSpec(label, green)
+            else -> BadgeSpec(label, cyan)
+        }
+    }
+}
 
 internal fun Modifier.glassSurface(
     shape: RoundedCornerShape,

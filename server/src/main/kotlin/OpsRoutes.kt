@@ -253,13 +253,12 @@ private fun opsSummary(
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
     peerSnapshot: OpsHostSnapshotDto? = null,
 ): OpsSummaryDto {
-    val localSnapshot = hostSnapshot(localPreview)
-    val hostSnapshots = listOfNotNull(localSnapshot, peerSnapshot).distinctBy { it.host }
-    val backendRuntimeLabel = localSnapshot.backendRuntimeLabel
-    val backendRuntimeLabels = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels()
-    val serverPyReadySnapshot = hostSnapshots.firstOrNull { it.serverPyReady } ?: localSnapshot
+    val ownSnapshot = hostSnapshot(localPreview)
+    val snapshots = listOfNotNull(ownSnapshot, peerSnapshot).distinctBy { it.host }
+    val backendRuntimeLabels = snapshots.runtimeLabels { it.backendRuntimeLabel }
+    val serverPyReadySnapshot = snapshots.firstOrNull { it.serverPyReady } ?: ownSnapshot
     val serverPyRuntimeLabel = serverPyReadySnapshot.serverPyRuntimeLabel
-    val serverPyRuntimeLabels = hostSnapshots.map { it.serverPyRuntimeLabel }.runtimeLabels()
+    val serverPyRuntimeLabels = snapshots.runtimeLabels { it.serverPyRuntimeLabel }
     val serverPySelfTest = latestServerPySelfTest(selfTestFile)
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
@@ -287,7 +286,7 @@ private fun opsSummary(
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
-    val arcanaSignals = mergedArcanaSignals(hostSnapshots)
+    val arcanaSignals = mergedArcanaSignals(snapshots)
     val arcanaStatus = if (arcanaSignals.firstOrNull { it.label.startsWith("visible ") }?.status == OpsStatusDto.OK) {
         OpsStatusDto.OK
     } else {
@@ -314,7 +313,7 @@ private fun opsSummary(
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
                 issues = backendIssues,
-                signals = hostSnapshots.map(::backendMode),
+                signals = snapshots.map(::backendMode),
             ),
             RepoHealthDto(
                 id = "server_py",
@@ -327,7 +326,7 @@ private fun opsSummary(
                 runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
                 issues = serverPyIssues,
-                signals = hostSnapshots.map { it.serverPySignal() },
+                signals = snapshots.map { it.serverPySignal() },
             ),
             RepoHealthDto(
                 id = "arcana",
@@ -422,6 +421,8 @@ private fun mergedArcanaSignals(hostSnapshots: List<OpsHostSnapshotDto>): List<O
         ),
     ) + rows.sortedByDescending { it.timestampMs ?: 0L }.take(10)
 }
+
+private fun <T> List<T>.runtimeLabels(label: (T) -> String): List<String> = map(label).runtimeLabels()
 
 private fun List<String>.runtimeLabels(): List<String> = distinct().filter { it.isNotBlank() }
 

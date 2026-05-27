@@ -19,7 +19,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,7 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -59,7 +57,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
-import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
@@ -171,7 +168,7 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                repo.runtimeBadges().forEach { (label, color) -> PanelBadge(label, color) }
+                repo.runtimeBadges().forEach { PanelBadge(it) }
                 Text(
                     repo.role,
                     modifier = Modifier.weight(1f),
@@ -181,11 +178,11 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (repo.id != "arcana") PanelBadge(repo.status.name, repo.status.color(), strong = true)
+                repo.statusBadge()?.let { PanelBadge(it) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                PanelBadge(repo.issues.badgeLabel(), repo.issues.badgeColor(), strong = repo.issues.active > 0)
-                repo.transportBadges().forEach { (label, color) -> PanelBadge(label, color) }
+                PanelBadge(repo.issues.badgeSpec())
+                repo.transportBadges().forEach { PanelBadge(it) }
             }
         }
     }
@@ -193,92 +190,6 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
     val visibleSignals = if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
-    }
-}
-
-@Composable
-private fun PanelBadge(label: String, color: Color, modifier: Modifier = Modifier, strong: Boolean = false) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        color.copy(alpha = if (strong) 0.20f else 0.12f),
-                        Color.White.copy(alpha = 0.035f),
-                    ),
-                ),
-            )
-            .border(BorderStroke(1.dp, color.copy(alpha = if (strong) 0.52f else 0.30f)), RoundedCornerShape(999.dp))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Canvas(modifier = Modifier.size(5.dp)) {
-            drawCircle(color.copy(alpha = 0.18f), radius = size.width * 0.88f)
-            drawCircle(color, radius = size.width * 0.42f)
-        }
-        Text(
-            label,
-            color = if (strong) text else Color(0xFFD2DCE9),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-private fun IssueSummaryDto.badgeLabel(): String = when (active) {
-    1 -> "1 issue"
-    else -> "$active issues"
-}
-
-private fun IssueSummaryDto.badgeColor(): Color = if (active == 0) green else amber
-
-private fun RepoHealthDto.transportBadges(): List<Pair<String, Color>> {
-    val transports = if (id == "server_py") signals.filter { it.label == "transport" } else return emptyList()
-    return transports
-        .filter { it.status == OpsStatusDto.OK }
-        .mapNotNull { signal ->
-            signal.detail
-                ?.takeIf { it.isNotBlank() }
-                ?.let { "gRPC / $it" to green }
-        }
-        .distinctBy { it.first }
-}
-
-private fun RepoHealthDto.runtimeBadges(): List<Pair<String, Color>> {
-    val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
-    val visibleProcesses = signals.firstOrNull { it.label.startsWith("visible ") }
-    val arcanaStatuses = if (id == "arcana") {
-        val labeled = visibleProcesses?.detail
-            ?.split(" / ")
-            .orEmpty()
-            .mapNotNull { segment ->
-                segment.substringBefore(": ", missingDelimiterValue = "")
-                    .takeIf { it.isNotBlank() }
-                    ?.let { it to segment.substringAfter(": ") }
-            }
-        labeled.ifEmpty { visibleProcesses?.let { listOf(it.meta to it.detail.orEmpty()) }.orEmpty() }
-            .associate { (label, detail) ->
-                label to if (liveProcessCount.findAll(detail).sumOf { it.groupValues[1].toInt() } > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
-            }
-    } else {
-        emptyMap()
-    }
-    return labels.mapNotNull { label ->
-        val status = if (id == "arcana") {
-            arcanaStatuses[label]
-        } else {
-            signals.firstOrNull { it.meta == label }?.status
-        }
-        when {
-            label == "local" && status != OpsStatusDto.OK -> null
-            label == "remote q" && status != OpsStatusDto.OK -> label to rose
-            status == OpsStatusDto.OK -> label to green
-            else -> label to cyan
-        }
     }
 }
 
