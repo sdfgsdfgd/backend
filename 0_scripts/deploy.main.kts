@@ -194,7 +194,7 @@ fun arcanaSmoke() {
         .lastOrNull { it.contains(" passed") || it.contains(" failed") || it.contains(" error") }
         ?: "pytest exit=${result.code}"
     val status = if (result.code == 0) "OK" else "FAIL"
-    val detail = "$summary on q $qArcanaDir @$head"
+    val detail = "$summary on q @$head"
     val payload = listOf(
         "\"status\":${status.jsonString()}",
         "\"label\":\"q arcana unit pytest\"",
@@ -347,7 +347,7 @@ fun foreground(start: Long, mode: String): Nothing {
         appendDeployHistory(
             mode = mode,
             durationMs = (System.nanoTime() - start) / 1_000_000,
-            detail = "local preview: /test and /metrics/security passed",
+            detail = "Local health probes passed.",
         )
     }.onFailure { log("⚠", "could not write local preview history: ${it.message}") }
     val exit = process.waitFor()

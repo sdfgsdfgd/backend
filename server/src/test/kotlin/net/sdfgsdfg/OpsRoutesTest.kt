@@ -57,7 +57,9 @@ class OpsRoutesTest {
         val backendRuns = summary.repos.first { it.id == "backend" }.runs
         assertEquals(listOf("backend", "server_py", "arcana"), summary.repos.map { it.id })
         assertEquals("remote q", backend.runtimeLabel)
-        assertEquals("remote q", serverPy.runtimeLabel)
+        assertEquals("backend.service", backend.serviceName)
+        assertEquals(if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) "remote q" else "local", serverPy.runtimeLabel)
+        assertEquals(if (serverPy.runtimeLabel == "remote q") "server_py.service" else null, serverPy.serviceName)
         assertEquals(true, backendRuns.any { it.label == "server checks" })
         assertEquals(true, backendRuns.any { it.label == "public ingress" })
         assertEquals(
@@ -166,6 +168,28 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsSummaryUsesTheScopedServerPySelftestArtifact() = testApplication {
+        val artifact = File(createTempDirectory().toFile(), "server-py-selftest.json")
+        artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok","latency_ms":88.0,"timestamp_ms":42}""")
+
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing { opsRoutes(localPreview = true, selfTestArtifactFile = artifact, githubIssues = noGithubIssues) }
+        }
+
+        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val serverPy = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "server_py" }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(OpsStatusDto.OK, serverPy.status)
+        assertEquals("live selftest", serverPy.latestRun?.label)
+        assertEquals("conversation ok", serverPy.latestRun?.detail)
+        assertEquals(88.0, serverPy.latestRun?.durationMs)
+        assertEquals("transport", serverPy.signals.single().label)
+        assertEquals(listOf("live selftest", "selftest artifact", "transport"), serverPy.runs.map { it.label })
+    }
+
+    @Test
     fun arcanaIngestArtifactIsScopedAndDownloadable() = testApplication {
         val artifact = File(createTempDirectory().toFile(), "arcana-ingest.json")
         artifact.writeText("""{"status":"OK","label":"q arcana unit pytest"}""")
@@ -216,14 +240,39 @@ class OpsRoutesTest {
         }
 
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
-        val backend = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "backend" }
+        val repos = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos
+        val backend = repos.first { it.id == "backend" }
+        val serverPy = repos.first { it.id == "server_py" }
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("local", backend.runtimeLabel)
+        assertEquals(null, backend.serviceName)
+        assertEquals("local", serverPy.runtimeLabel)
+        assertEquals(null, serverPy.serviceName)
         assertEquals("local preview", backend.latestRun?.label)
         assertEquals(OpsStatusDto.OK, backend.latestRun?.status)
         assertEquals("deploy failed", backend.history.first().label)
         assertEquals(OpsStatusDto.FAIL, backend.history.first().status)
+        assertEquals(listOf("gRPC bridge"), serverPy.runs.map { it.label })
+    }
+
+    @Test
+    fun arcanaWithoutIngestDoesNotFabricateSessionOrPlaceholderRun() = testApplication {
+        val ingestFile = File(createTempDirectory().toFile(), "missing-arcana-ingest.json")
+
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing { opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, githubIssues = noGithubIssues) }
+        }
+
+        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val arcana = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "arcana" }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(null, arcana.latestRun)
+        assertEquals(false, arcana.runs.any { it.label == "activity monitor" })
+        assertEquals(true, arcana.signals.any { it.label == "visible processes" })
+        assertEquals(false, arcana.signals.any { it.label == "arcana current" || it.label == "current session" })
     }
 
     // Static asset tests are intentionally kept together: they protect the
@@ -501,6 +550,7 @@ class OpsRoutesTest {
         assertEquals("error", summary.zenSeverity)
         assertEquals("/tmp/zen-artifact", summary.zenArtifactPath)
         assertEquals("server-py-selftest.json", summary.artifacts.single().name)
+        assertEquals(null, summary.artifacts.single().path)
         assertEquals("/api/ops/artifacts/server-py-selftest.json", summary.artifacts.single().url)
         assertEquals(listOf(OpsStatusDto.OK, OpsStatusDto.FAIL), summary.cases.map { it.status })
     }
