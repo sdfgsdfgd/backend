@@ -394,10 +394,10 @@ internal fun RepoHealthDto.statusBadge(): BadgeSpec? = if (id == "arcana") null 
 
 internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
     "backend" -> runs.firstOrNull { it.label == "server checks" }
-        ?.let { listOf(BadgeSpec("verifyServer ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+        ?.let { listOf(BadgeSpec("TEST: verifyServer ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
         .orEmpty()
     "server_py" -> selfTest
-        ?.let { listOf(BadgeSpec("selftest ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+        ?.let { listOf(BadgeSpec("TEST: selftest ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
         .orEmpty()
     else -> emptyList()
 }
