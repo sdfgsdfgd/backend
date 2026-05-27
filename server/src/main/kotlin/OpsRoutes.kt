@@ -374,10 +374,13 @@ private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
 private fun systemdStatus(vararg command: String): OpsStatusDto? {
     if (!isLinuxHost) return null
     return runCatching {
-        val process = ProcessBuilder(*command)
+        val builder = ProcessBuilder(*command)
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
-            .start()
+        if ("--user" in command) {
+            builder.environment().putIfAbsent("XDG_RUNTIME_DIR", "/run/user/1000")
+        }
+        val process = builder.start()
         if (!process.waitFor(700, TimeUnit.MILLISECONDS)) {
             process.destroyForcibly()
             OpsStatusDto.UNKNOWN
