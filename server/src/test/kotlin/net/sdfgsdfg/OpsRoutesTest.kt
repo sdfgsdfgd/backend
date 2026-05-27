@@ -233,10 +233,19 @@ class OpsRoutesTest {
         val historyFile = File(createTempDirectory().toFile(), "deploy-history.jsonl").apply {
             writeText("""{"label":"deploy failed","status":"FAIL","timestamp_ms":2,"duration_ms":22,"detail":"docker daemon was down"}""")
         }
+        val missingSelfTestFile = File(createTempDirectory().toFile(), "server-py-selftest.json")
+        val expectedServerPyRuntime = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) "remote q" else "local"
 
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            routing { opsRoutes(localPreview = true, deployHistorySourceFile = historyFile, githubIssues = noGithubIssues) }
+            routing {
+                opsRoutes(
+                    localPreview = true,
+                    deployHistorySourceFile = historyFile,
+                    selfTestArtifactFile = missingSelfTestFile,
+                    githubIssues = noGithubIssues,
+                )
+            }
         }
 
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
@@ -247,8 +256,8 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("local", backend.runtimeLabel)
         assertEquals(null, backend.serviceName)
-        assertEquals("local", serverPy.runtimeLabel)
-        assertEquals(null, serverPy.serviceName)
+        assertEquals(expectedServerPyRuntime, serverPy.runtimeLabel)
+        assertEquals(if (expectedServerPyRuntime == "remote q") "server_py.service" else null, serverPy.serviceName)
         assertEquals("local preview", backend.latestRun?.label)
         assertEquals(OpsStatusDto.OK, backend.latestRun?.status)
         assertEquals("deploy failed", backend.history.first().label)
