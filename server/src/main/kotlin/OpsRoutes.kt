@@ -510,7 +510,7 @@ private fun ProcessGroup.toSignal(runtimeLabel: String) = OpsSignalDto(
     label = "arcana",
     status = OpsStatusDto.OK,
     timestampMs = startedAtMs,
-    detail = head.command.commandPreview(),
+    detail = head.command.normalizedCommand(),
     meta = "$runtimeLabel · process ${pids.joinToString(" ") { "#$it" }}",
 )
 
@@ -528,7 +528,12 @@ private fun codexSessionSnapshots(): List<CodexSessionSnapshot> = runCatching {
                     if (detail == null) detail = payload?.obj("goal")?.text("objective")
                 }
             }
-            startedAtMs?.let { CodexSessionSnapshot(it, detail?.compact(170) ?: "Codex session") }
+            startedAtMs?.let {
+                CodexSessionSnapshot(
+                    it,
+                    detail?.replace(Regex("\\s+"), " ")?.trim()?.takeIf(String::isNotBlank) ?: "Codex session",
+                )
+            }
         }
 }.getOrDefault(emptyList())
 
@@ -541,11 +546,14 @@ private fun String.containsCodexProcess() = lowercase().let { !it.isProbeCommand
 
 private fun String.isProbeCommand() = "grep" in this || "/rg " in this || endsWith("/rg") || " rg " in this
 
-private fun String.commandPreview(): String = replace(Regex("/opt/homebrew/lib/node_modules/@openai/codex/\\S*/bin/codex"), "codex")
+private fun String.commandPreview(): String = normalizedCommand().compact(150)
+
+private fun String.normalizedCommand(): String = replace(Regex("/opt/homebrew/lib/node_modules/@openai/codex/\\S*/bin/codex"), "codex")
     .replace("/opt/homebrew/bin/node /opt/homebrew/bin/codex", "node codex")
     .replace("/opt/homebrew/bin/codex", "codex")
     .replace(Regex("(/Users|/home)/x/"), "~/")
-    .compact(150)
+    .replace(Regex("\\s+"), " ")
+    .trim()
 
 private fun tcpReady(host: String, port: Int): Boolean = runCatching {
     Socket().use { it.connect(InetSocketAddress(host, port), 150) }

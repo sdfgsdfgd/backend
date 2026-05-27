@@ -80,6 +80,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -729,6 +730,9 @@ private fun SignalRow(
 @Composable
 private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: Boolean = false) {
     val shape = RoundedCornerShape(7.dp)
+    val command = signal.detail?.takeIf { signal.label == "arcana" }?.arcanaCommandParts()
+    val expandable = command != null || (signal.detail?.let { it.length > 130 || "\n" in it } == true)
+    var expanded by remember(signal.label, signal.meta, signal.timestampMs, signal.detail) { mutableStateOf(false) }
     val flash by animateFloatAsState(
         targetValue = if (fresh) 1f else 0f,
         animationSpec = tween(if (fresh) 180 else 760, easing = FastOutSlowInEasing),
@@ -743,11 +747,12 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: B
             .background(cyan.copy(alpha = flash * 0.10f))
             .border(BorderStroke(1.dp, signal.status.color().copy(alpha = 0.20f + flash * 0.30f)), shape)
             .animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
+            .let { if (expandable) it.clickable { expanded = !expanded } else it }
             .padding(horizontal = 9.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.spacedBy(9.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        FreshRail(signal.timestampMs, generatedAtMs, height = 30.dp)
+        FreshRail(signal.timestampMs, generatedAtMs, height = if (expanded) 44.dp else 30.dp)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(signal.label, modifier = Modifier.weight(1f), color = text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -760,16 +765,95 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: B
                         UpdatePill(cyan)
                     }
                     signal.timestampMs?.let { AgePill(it, generatedAtMs) }
+                    if (expandable) {
+                        Text(if (expanded) "less" else "full", color = cyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-            signal.detail?.let {
-                Text(it, color = Color(0xFFC6D1DF), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (command == null) {
+                signal.detail?.let {
+                    Text(
+                        it,
+                        color = Color(0xFFC6D1DF),
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        maxLines = if (expanded) Int.MAX_VALUE else 3,
+                        overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
+                val (headline, commandKnobs) = command
+                Text(headline, color = Color(0xFFD9E6F2), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val knobs = if (expanded) commandKnobs else commandKnobs.take(6)
+                if (knobs.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        knobs.chunked(3).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                                row.forEach { knob ->
+                                    val color = if (" " in knob) cyan else green
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(color.copy(alpha = 0.09f))
+                                            .border(BorderStroke(1.dp, color.copy(alpha = 0.22f)), RoundedCornerShape(999.dp))
+                                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                                    ) {
+                                        Text(knob, color = Color(0xFFD5E0EC), fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                }
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = fadeIn(tween(180, easing = FastOutSlowInEasing)) + expandVertically(tween(220, easing = FastOutSlowInEasing), expandFrom = Alignment.Top),
+                    exit = fadeOut(tween(120, easing = FastOutSlowInEasing)) + shrinkVertically(tween(160, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+                ) {
+                    Text(
+                        signal.detail.orEmpty(),
+                        color = Color(0xFFD4DEE9),
+                        fontSize = 9.sp,
+                        lineHeight = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
             }
             signal.meta?.let {
                 Text(it, color = muted, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
+}
+
+private fun String.arcanaCommandParts(): Pair<String, List<String>> {
+    fun compact(value: String, max: Int) = value.replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= max) it else it.take(max - 3).trimEnd() + "..." }
+
+    val tokens = trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    val optionIndex = tokens.indexOfFirst { it.startsWith("--") }.let { if (it < 0) tokens.size else it }
+    val headline = tokens.take(optionIndex)
+        .takeLast(2)
+        .joinToString(" ") { it.substringAfterLast('/') }
+        .ifBlank { compact(this, 80) }
+    val knobs = mutableListOf<String>()
+    var index = optionIndex
+    while (index < tokens.size) {
+        val name = tokens[index]
+        if (!name.startsWith("--")) {
+            index += 1
+            continue
+        }
+        var end = index + 1
+        while (end < tokens.size && !tokens[end].startsWith("--")) end += 1
+        val value = tokens.subList(index + 1, end).joinToString(" ").trim('"')
+        knobs += if (value.isBlank()) name else "$name ${compact(value, if (name == "--initial-query") 90 else 38)}"
+        index = end
+    }
+    return headline to knobs
 }
 
 @Composable
