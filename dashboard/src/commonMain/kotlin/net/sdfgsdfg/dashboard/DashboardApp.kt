@@ -524,23 +524,13 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeLabel(), repo.issues.badgeColor(), strong = repo.issues.active > 0)
-                repo.serviceName?.let {
-                    val serviceColor = when (repo.serviceStatus) {
-                        OpsStatusDto.OK -> green
-                        null -> muted
-                        else -> rose
-                    }
-                    PanelBadge(
-                        it,
-                        serviceColor,
-                        modifier = Modifier.widthIn(max = 128.dp),
-                    )
-                }
+                repo.transportBadges().forEach { (label, color) -> PanelBadge(label, color) }
             }
         }
     }
-    repo.latestRun?.let { RunSignal(it, generatedAtMs) }
-    repo.signals.takeIf { it.isNotEmpty() }?.let {
+    if (repo.id != "server_py") repo.latestRun?.let { RunSignal(it, generatedAtMs) }
+    val visibleSignals = if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
+    visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
     }
 }
@@ -584,6 +574,21 @@ private fun IssueSummaryDto.badgeLabel(): String = when (active) {
 }
 
 private fun IssueSummaryDto.badgeColor(): Color = if (active == 0) green else amber
+
+private fun RepoHealthDto.transportBadges(): List<Pair<String, Color>> {
+    val transports = if (id == "server_py") signals.filter { it.label == "transport" } else return emptyList()
+    return transports
+        .filter { it.status == OpsStatusDto.OK }
+        .mapNotNull { signal ->
+            signal.detail
+                ?.substringBefore(" reachable")
+                ?.substringBefore(" unavailable")
+                ?.removeSuffix(".")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { "gRPC / $it" to green }
+        }
+        .distinctBy { it.first }
+}
 
 private fun RepoHealthDto.runtimeBadges(): List<Pair<String, Color>> {
     val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }

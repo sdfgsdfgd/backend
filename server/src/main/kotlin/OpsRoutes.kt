@@ -39,12 +39,14 @@ import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
-import java.net.URI
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URI
+import java.net.UnixDomainSocketAddress
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.channels.SocketChannel
 import java.nio.file.Paths
 import java.security.MessageDigest
 import java.time.Duration
@@ -52,7 +54,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 private val opsJson = Json {
@@ -81,18 +82,16 @@ private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.js
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
 private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
-private val isLinuxHost = System.getProperty("os.name").contains("Linux", ignoreCase = true)
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
 private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
 private const val macHostSnapshotUrl = "http://192.168.1.2/api/ops/host-snapshot"
 private const val qHostSnapshotUrl = "http://192.168.1.4/api/ops/host-snapshot"
 private const val peerSnapshotRefreshMs = 180_000L
-private const val peerSnapshotStaleMs = 6 * 60_000L
 private const val peerSnapshotFailBackoffMs = 5 * 60_000L
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
-private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val fetchedAtMs: Long, val nextAttemptAtMs: Long)
+private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long)
 
 private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
@@ -263,12 +262,8 @@ private fun opsSummary(
     val serverPySelfTest = latestServerPySelfTest(selfTestFile)
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
-    val backendServiceStatus = hostSnapshots.firstOrNull { it.backendRuntimeLabel == qRuntimeLabel }?.backendServiceStatus
-    val serverPyServiceStatus = hostSnapshots.firstOrNull { it.serverPyRuntimeLabel == qRuntimeLabel }?.serverPyServiceStatus
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
-    val serverPyStatus = serverPySelfTest
-        ?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL }
-        ?: serverPySocketStatus
+    val serverPyStatus = serverPySocketStatus
     val serverPyLatestRun = serverPySelfTest?.toRunSummary() ?: TestRunSummaryDto(
         label = "gRPC bridge",
         status = serverPyStatus,
@@ -315,7 +310,6 @@ private fun opsSummary(
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
                 serviceName = if (localPreview) null else "backend.service",
-                serviceStatus = backendServiceStatus,
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
@@ -330,7 +324,6 @@ private fun opsSummary(
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
                 serviceName = if (serverPyRuntimeLabel == "local") null else "server_py.service",
-                serviceStatus = serverPyServiceStatus,
                 latestRun = serverPyLatestRun,
                 runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
@@ -356,40 +349,23 @@ private fun opsSummary(
 
 private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
     val backendRuntimeLabel = if (localPreview) localRuntimeLabel else qRuntimeLabel
-    val serverPyRuntimeLabel = if (isLinuxHost) qRuntimeLabel else localRuntimeLabel
-    val serverPyReady = if (serverPyRuntimeLabel == localRuntimeLabel) tcpReady("127.0.0.1", 1453) else serverPySocket.exists()
+    val serverPyRuntimeLabel = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) qRuntimeLabel else localRuntimeLabel
+    val serverPyReady = if (serverPyRuntimeLabel == localRuntimeLabel) {
+        tcpReady("127.0.0.1", 1453)
+    } else {
+        serverPySocket.exists() && runCatching {
+            SocketChannel.open(UnixDomainSocketAddress.of(serverPySocket.toPath())).use { true }
+        }.getOrDefault(false)
+    }
     return OpsHostSnapshotDto(
         generatedAtMs = System.currentTimeMillis(),
         host = backendRuntimeLabel,
         backendRuntimeLabel = backendRuntimeLabel,
-        backendServiceStatus = if (backendRuntimeLabel == qRuntimeLabel) systemdStatus("systemctl", "is-active", "--quiet", "backend.service") else null,
         serverPyRuntimeLabel = serverPyRuntimeLabel,
-        serverPyServiceStatus = if (serverPyRuntimeLabel == qRuntimeLabel) systemdStatus("systemctl", "--user", "is-active", "--quiet", "server_py.service") else null,
         serverPyReady = serverPyReady,
         serverPyTransport = if (serverPyRuntimeLabel == localRuntimeLabel) "TCP 1453" else "UDS",
         arcanaSignals = arcanaSignals(backendRuntimeLabel),
     )
-}
-
-private fun systemdStatus(vararg command: String): OpsStatusDto? {
-    if (!isLinuxHost) return null
-    return runCatching {
-        val builder = ProcessBuilder(*command)
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
-        if ("--user" in command) {
-            builder.environment().putIfAbsent("XDG_RUNTIME_DIR", "/run/user/1000")
-        }
-        val process = builder.start()
-        if (!process.waitFor(700, TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly()
-            OpsStatusDto.UNKNOWN
-        } else if (process.exitValue() == 0) {
-            OpsStatusDto.OK
-        } else {
-            OpsStatusDto.FAIL
-        }
-    }.getOrDefault(OpsStatusDto.UNKNOWN)
 }
 
 private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
@@ -397,18 +373,15 @@ private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
     val now = System.currentTimeMillis()
     synchronized(peerSnapshotLock) {
         peerSnapshotCache?.takeIf { it.url == url }?.let { cached ->
-            if (cached.nextAttemptAtMs > now) return cached.snapshot?.takeIf { cached.fetchedAtMs + peerSnapshotStaleMs > now }
+            if (cached.nextAttemptAtMs > now) return cached.snapshot
         }
     }
-    val fetched = fetchPeerHostSnapshot(url).getOrNull()
+    val snapshot = fetchPeerHostSnapshot(url).getOrNull()
     synchronized(peerSnapshotLock) {
-        val previous = peerSnapshotCache?.takeIf { it.url == url }?.snapshot
-        val snapshot = fetched ?: previous?.takeIf { peerSnapshotCache?.fetchedAtMs?.plus(peerSnapshotStaleMs) ?: 0L > now }
         peerSnapshotCache = CachedPeerSnapshot(
             url = url,
             snapshot = snapshot,
-            fetchedAtMs = if (fetched == null && snapshot != null) peerSnapshotCache?.fetchedAtMs ?: now else now,
-            nextAttemptAtMs = now + if (fetched == null) peerSnapshotFailBackoffMs else peerSnapshotRefreshMs,
+            nextAttemptAtMs = now + if (snapshot == null) peerSnapshotFailBackoffMs else peerSnapshotRefreshMs,
         )
         return snapshot
     }

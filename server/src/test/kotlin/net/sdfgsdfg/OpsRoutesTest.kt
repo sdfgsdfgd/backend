@@ -183,8 +183,9 @@ class OpsRoutesTest {
         val serverPy = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "server_py" }
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(OpsStatusDto.OK, serverPy.status)
+        assertEquals(serverPy.signals.single().status, serverPy.status)
         assertEquals("live selftest", serverPy.latestRun?.label)
+        assertEquals(OpsStatusDto.OK, serverPy.latestRun?.status)
         assertEquals("conversation ok", serverPy.latestRun?.detail)
         assertEquals(88.0, serverPy.latestRun?.durationMs)
         assertEquals("transport", serverPy.signals.single().label)
@@ -268,6 +269,28 @@ class OpsRoutesTest {
         assertEquals(listOf("local", "remote q"), arcana.runtimeLabels)
         assertEquals(true, arcana.signals.first().detail?.contains("remote q: 0 arcana live") == true)
         assertEquals(true, arcana.signals.any { it.detail == "peer session" && it.meta == "remote q · process #7" })
+    }
+
+    @Test
+    fun opsSummaryDoesNotInventMissingPeerRuntime() = testApplication {
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing {
+                opsRoutes(
+                    localPreview = false,
+                    githubIssues = noGithubIssues,
+                    enablePeerSnapshots = true,
+                    peerSnapshot = { null },
+                )
+            }
+        }
+
+        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val backend = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "backend" }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(listOf("remote q"), backend.runtimeLabels)
+        assertEquals("remote q", backend.runtimeLabel)
     }
 
     @Test
