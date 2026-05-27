@@ -7,6 +7,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.infiniteRepeatable
@@ -111,6 +112,7 @@ private val green = Color(0xFF5CE58B)
 private val amber = Color(0xFFFFC86B)
 private val rose = Color(0xFFFF7474)
 private const val OPS_SUMMARY_REFRESH_MS = 45_000L
+private const val UPDATE_FLASH_MS = 2_400L
 
 private enum class DashboardTab(val label: String) {
     Home("Home"),
@@ -571,6 +573,23 @@ private fun IssueSummaryDto.badgeLabel(): String = when (active) {
 private fun IssueSummaryDto.badgeColor(): Color = if (active == 0) green else amber
 
 @Composable
+private fun rememberFreshKeys(keys: List<String>): Set<String> {
+    var known by remember { mutableStateOf<Set<String>?>(null) }
+    var fresh by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(keys) {
+        val current = keys.toSet()
+        val nextFresh = known?.let { current - it }.orEmpty()
+        known = current
+        fresh = nextFresh
+        if (nextFresh.isNotEmpty()) {
+            delay(UPDATE_FLASH_MS)
+            fresh = emptySet()
+        }
+    }
+    return fresh
+}
+
+@Composable
 private fun RunPanel(run: TestRunSummaryDto) {
     Column(
         modifier = Modifier
@@ -615,6 +634,8 @@ private fun SignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
 private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
     val summary = signals.firstOrNull { it.label.startsWith("visible ") }
     val processRows = signals.filter { it != summary }
+    val processKeys = processRows.map { "${it.label}-${it.meta}-${it.timestampMs}-${it.detail}" }
+    val freshKeys = rememberFreshKeys(processKeys)
     var expanded by remember { mutableStateOf(false) }
 
     Column(
@@ -642,9 +663,22 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
                 modifier = Modifier.animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing)),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                processRows.forEach { process ->
-                    key("${process.label}-${process.meta}-${process.timestampMs}") {
-                        ProcessSignalRow(process, generatedAtMs)
+                processRows.forEachIndexed { index, process ->
+                    val rowKey = processKeys[index]
+                    key(rowKey) {
+                        val visibleState = remember {
+                            MutableTransitionState(false).apply { targetState = true }
+                        }
+                        AnimatedVisibility(
+                            visibleState = visibleState,
+                            enter = fadeIn(tween(320, easing = FastOutSlowInEasing)) +
+                                expandVertically(tween(360, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+                                slideInVertically(tween(360, easing = FastOutSlowInEasing)) { -it / 2 },
+                            exit = fadeOut(tween(140, easing = FastOutSlowInEasing)) +
+                                shrinkVertically(tween(190, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+                        ) {
+                            ProcessSignalRow(process, generatedAtMs, fresh = rowKey in freshKeys)
+                        }
                     }
                 }
             }
@@ -691,15 +725,21 @@ private fun SignalRow(
 }
 
 @Composable
-private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long) {
+private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: Boolean = false) {
     val shape = RoundedCornerShape(7.dp)
+    val flash by animateFloatAsState(
+        targetValue = if (fresh) 1f else 0f,
+        animationSpec = tween(if (fresh) 180 else 760, easing = FastOutSlowInEasing),
+        label = "process-row-flash",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 18.dp)
             .clip(shape)
             .background(Color(0xFF0B1118).copy(alpha = 0.86f))
-            .border(BorderStroke(1.dp, signal.status.color().copy(alpha = 0.20f)), shape)
+            .background(cyan.copy(alpha = flash * 0.10f))
+            .border(BorderStroke(1.dp, signal.status.color().copy(alpha = 0.20f + flash * 0.30f)), shape)
             .animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
             .padding(horizontal = 9.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -708,8 +748,17 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long) {
         FreshRail(signal.timestampMs, generatedAtMs, height = 30.dp)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(signal.label, color = text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                signal.timestampMs?.let { AgePill(it, generatedAtMs) }
+                Text(signal.label, modifier = Modifier.weight(1f), color = text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AnimatedVisibility(
+                        visible = fresh,
+                        enter = fadeIn(tween(180, easing = FastOutSlowInEasing)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.86f),
+                        exit = fadeOut(tween(280, easing = FastOutSlowInEasing)),
+                    ) {
+                        UpdatePill(cyan)
+                    }
+                    signal.timestampMs?.let { AgePill(it, generatedAtMs) }
+                }
             }
             signal.detail?.let {
                 Text(it, color = Color(0xFFC6D1DF), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -1205,6 +1254,8 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
         .sortedByDescending { it.second.timestampMs ?: 0L }
         .take(8)
     if (events.isEmpty()) return
+    val eventKeys = events.map { (repo, run) -> "${repo.id}-${run.label}-${run.timestampMs}" }
+    val freshKeys = rememberFreshKeys(eventKeys)
 
     val shape = RoundedCornerShape(8.dp)
     Column(
@@ -1222,8 +1273,9 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
             }
             StatusPill("${events.size} events", green)
         }
-        events.forEach { (repo, run) ->
-            key("${repo.id}-${run.label}-${run.timestampMs}") {
+        events.forEachIndexed { index, (repo, run) ->
+            val rowKey = eventKeys[index]
+            key(rowKey) {
                 val visibleState = remember {
                     MutableTransitionState(false).apply { targetState = true }
                 }
@@ -1236,7 +1288,7 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
                     exit = fadeOut(tween(160, easing = FastOutSlowInEasing)) +
                         shrinkVertically(tween(220, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
                 ) {
-                    RunHistoryRow(repo, run, summary.generatedAtMs)
+                    RunHistoryRow(repo, run, summary.generatedAtMs, fresh = rowKey in freshKeys)
                 }
             }
         }
@@ -1244,13 +1296,19 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long) {
+private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false) {
+    val flash by animateFloatAsState(
+        targetValue = if (fresh) 1f else 0f,
+        animationSpec = tween(if (fresh) 180 else 840, easing = FastOutSlowInEasing),
+        label = "run-row-flash",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFF0D141B))
-            .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.24f)), RoundedCornerShape(7.dp))
+            .background(run.status.color().copy(alpha = flash * 0.11f))
+            .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.24f + flash * 0.32f)), RoundedCornerShape(7.dp))
             .animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1259,8 +1317,15 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
         FreshRail(run.timestampMs, generatedAtMs)
         StatusDot(run.status)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${repo.name} / ${run.label}", color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${repo.name} / ${run.label}", modifier = Modifier.weight(1f), color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                AnimatedVisibility(
+                    visible = fresh,
+                    enter = fadeIn(tween(180, easing = FastOutSlowInEasing)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.86f),
+                    exit = fadeOut(tween(280, easing = FastOutSlowInEasing)),
+                ) {
+                    UpdatePill(run.status.color())
+                }
                 RunTail(run, generatedAtMs, run.durationMs?.ms() ?: run.status.name, fontSize = 11.sp)
             }
             run.detail?.let {
@@ -1695,6 +1760,19 @@ private fun StatusPill(label: String, color: Color) {
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
         Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun UpdatePill(color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.16f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.42f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text("new", color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold)
     }
 }
 
