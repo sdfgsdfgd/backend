@@ -98,7 +98,6 @@ class CoreDtoSerializationTest {
                         status = OpsStatusDto.OK,
                         runtimeLabel = "local preview",
                         runtimeLabels = listOf("remote q", "local"),
-                        serviceName = "backend.service",
                         latestRun = TestRunSummaryDto(
                             label = "smoke",
                             status = OpsStatusDto.OK,
@@ -176,7 +175,6 @@ class CoreDtoSerializationTest {
         assertEquals(7L, obj.getValue("generated_at_ms").jsonPrimitive.long)
         assertEquals("local preview", repo.getValue("runtime_label").jsonPrimitive.content)
         assertEquals(listOf("remote q", "local"), repo.getValue("runtime_labels").jsonArray.map { it.jsonPrimitive.content })
-        assertEquals("backend.service", repo.getValue("service_name").jsonPrimitive.content)
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
         assertEquals("public ingress", pyramidRun.getValue("label").jsonPrimitive.content)
@@ -202,6 +200,7 @@ class CoreDtoSerializationTest {
         assertEquals("server-py-selftest.json", selfTest.getValue("artifacts").jsonArray.first().jsonObject.getValue("name").jsonPrimitive.content)
         assertEquals("5.5-thinking-heavy", selfTestCase.getValue("name").jsonPrimitive.content)
         assertFalse("generatedAtMs" in obj)
+        assertFalse("service_name" in repo)
         assertFalse("serviceName" in repo)
         assertFalse("runtimeLabel" in repo)
         assertFalse("runtimeLabels" in repo)

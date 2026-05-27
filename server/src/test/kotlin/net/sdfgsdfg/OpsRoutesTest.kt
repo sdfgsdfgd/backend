@@ -59,9 +59,7 @@ class OpsRoutesTest {
         val backendRuns = summary.repos.first { it.id == "backend" }.runs
         assertEquals(listOf("backend", "server_py", "arcana"), summary.repos.map { it.id })
         assertEquals("remote q", backend.runtimeLabel)
-        assertEquals("backend.service", backend.serviceName)
         assertEquals(if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) "remote q" else "local", serverPy.runtimeLabel)
-        assertEquals(if (serverPy.runtimeLabel == "remote q") "server_py.service" else null, serverPy.serviceName)
         assertEquals(true, backendRuns.any { it.label == "server checks" })
         assertEquals(true, backendRuns.any { it.label == "public ingress" })
         assertEquals(
@@ -336,9 +334,7 @@ class OpsRoutesTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("local", backend.runtimeLabel)
-        assertEquals(null, backend.serviceName)
         assertEquals(expectedServerPyRuntime, serverPy.runtimeLabel)
-        assertEquals(if (expectedServerPyRuntime == "remote q") "server_py.service" else null, serverPy.serviceName)
         assertEquals("local preview", backend.latestRun?.label)
         assertEquals(OpsStatusDto.OK, backend.latestRun?.status)
         assertEquals("deploy failed", backend.history.first().label)

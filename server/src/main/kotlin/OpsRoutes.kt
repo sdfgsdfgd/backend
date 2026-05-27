@@ -309,7 +309,6 @@ private fun opsSummary(
                 status = OpsStatusDto.OK,
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
-                serviceName = if (localPreview) null else "backend.service",
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
@@ -323,7 +322,6 @@ private fun opsSummary(
                 status = serverPyStatus,
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
-                serviceName = if (serverPyRuntimeLabel == "local") null else "server_py.service",
                 latestRun = serverPyLatestRun,
                 runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
@@ -401,7 +399,7 @@ private fun fetchPeerHostSnapshot(url: String) = runCatching {
 private fun OpsHostSnapshotDto.serverPySignal() = OpsSignalDto(
     label = "transport",
     status = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
-    detail = "$serverPyTransport ${if (serverPyReady) "reachable" else "unavailable"}.",
+    detail = serverPyTransport,
     meta = serverPyRuntimeLabel,
 )
 
