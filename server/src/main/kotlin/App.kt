@@ -128,7 +128,7 @@ private fun Application.routes() = routing {
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
     // [ Ops API ] --> public on ops.sdfgsdfg.net; local preview only when deploy stamps BACKEND_ENV=local.
-    opsRoutes()
+    opsRoutes(enablePeerSnapshots = true)
 
     get("/_q/probe") {
         val token = syntheticProbeToken

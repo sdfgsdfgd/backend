@@ -97,6 +97,7 @@ class CoreDtoSerializationTest {
                         role = "control plane",
                         status = OpsStatusDto.OK,
                         runtimeLabel = "local preview",
+                        runtimeLabels = listOf("remote q", "local"),
                         serviceName = "backend.service",
                         latestRun = TestRunSummaryDto(
                             label = "smoke",
@@ -174,6 +175,7 @@ class CoreDtoSerializationTest {
         val selfTestCase = selfTest.getValue("cases").jsonArray.first().jsonObject
         assertEquals(7L, obj.getValue("generated_at_ms").jsonPrimitive.long)
         assertEquals("local preview", repo.getValue("runtime_label").jsonPrimitive.content)
+        assertEquals(listOf("remote q", "local"), repo.getValue("runtime_labels").jsonArray.map { it.jsonPrimitive.content })
         assertEquals("backend.service", repo.getValue("service_name").jsonPrimitive.content)
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
@@ -202,6 +204,7 @@ class CoreDtoSerializationTest {
         assertFalse("generatedAtMs" in obj)
         assertFalse("serviceName" in repo)
         assertFalse("runtimeLabel" in repo)
+        assertFalse("runtimeLabels" in repo)
         assertFalse("latestRun" in repo)
         assertFalse("selfTest" in repo)
         assertFalse("timestampLabel" in selfTest)
@@ -234,5 +237,31 @@ class CoreDtoSerializationTest {
         assertEquals("pytest unit", ingest.getValue("runs").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
         assertFalse("timestampMs" in ingest)
         assertFalse("durationMs" in ingest)
+
+        val hostSnapshot = json.parseToJsonElement(
+            json.encodeToString(
+                OpsHostSnapshotDto(
+                    generatedAtMs = 31L,
+                    host = "local",
+                    backendRuntimeLabel = "local",
+                    serverPyRuntimeLabel = "local",
+                    serverPyReady = true,
+                    serverPyTransport = "TCP 1453",
+                    arcanaSignals = listOf(OpsSignalDto("visible processes", OpsStatusDto.OK, detail = "1 codex live", meta = "local")),
+                ),
+            ),
+        ).jsonObject
+        assertEquals(31L, hostSnapshot.getValue("generated_at_ms").jsonPrimitive.long)
+        assertEquals("local", hostSnapshot.getValue("backend_runtime_label").jsonPrimitive.content)
+        assertEquals("local", hostSnapshot.getValue("server_py_runtime_label").jsonPrimitive.content)
+        assertEquals(true, hostSnapshot.getValue("server_py_ready").jsonPrimitive.boolean)
+        assertEquals("TCP 1453", hostSnapshot.getValue("server_py_transport").jsonPrimitive.content)
+        assertEquals("visible processes", hostSnapshot.getValue("arcana_signals").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
+        assertFalse("generatedAtMs" in hostSnapshot)
+        assertFalse("backendRuntimeLabel" in hostSnapshot)
+        assertFalse("serverPyRuntimeLabel" in hostSnapshot)
+        assertFalse("serverPyReady" in hostSnapshot)
+        assertFalse("serverPyTransport" in hostSnapshot)
+        assertFalse("arcanaSignals" in hostSnapshot)
     }
 }

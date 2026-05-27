@@ -16,6 +16,7 @@ data class RepoHealthDto(
     val role: String,
     val status: OpsStatusDto,
     @SerialName("runtime_label") val runtimeLabel: String? = null,
+    @SerialName("runtime_labels") val runtimeLabels: List<String> = emptyList(),
     @SerialName("service_name") val serviceName: String? = null,
     @SerialName("latest_run") val latestRun: TestRunSummaryDto? = null,
     val runs: List<TestRunSummaryDto> = emptyList(),
@@ -52,6 +53,17 @@ data class OpsSignalDto(
     @SerialName("timestamp_ms") val timestampMs: Long? = null,
     val detail: String? = null,
     val meta: String? = null,
+)
+
+@Serializable
+data class OpsHostSnapshotDto(
+    @SerialName("generated_at_ms") val generatedAtMs: Long,
+    val host: String,
+    @SerialName("backend_runtime_label") val backendRuntimeLabel: String,
+    @SerialName("server_py_runtime_label") val serverPyRuntimeLabel: String,
+    @SerialName("server_py_ready") val serverPyReady: Boolean,
+    @SerialName("server_py_transport") val serverPyTransport: String,
+    @SerialName("arcana_signals") val arcanaSignals: List<OpsSignalDto> = emptyList(),
 )
 
 @Serializable

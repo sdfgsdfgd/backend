@@ -28,6 +28,7 @@ import kotlinx.serialization.json.longOrNull
 import net.sdfgsdfg.data.model.ArcanaIngestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
+import net.sdfgsdfg.data.model.OpsHostSnapshotDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -77,10 +78,22 @@ private val publicIngressUrl = "https://sdfgsdfg.net/test"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
+private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
+private const val localRuntimeLabel = "local"
+private const val qRuntimeLabel = "remote q"
+private const val macHostSnapshotUrl = "http://192.168.1.2/api/ops/host-snapshot"
+private const val qHostSnapshotUrl = "http://192.168.1.4/api/ops/host-snapshot"
+private const val peerSnapshotRefreshMs = 180_000L
+private const val peerSnapshotStaleMs = 6 * 60_000L
+private const val peerSnapshotFailBackoffMs = 5 * 60_000L
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
+private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val fetchedAtMs: Long, val nextAttemptAtMs: Long)
+
+private val peerSnapshotLock = Any()
+private var peerSnapshotCache: CachedPeerSnapshot? = null
 
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
@@ -88,6 +101,8 @@ fun Route.opsRoutes(
     selfTestArtifactFile: File = serverPySelfTestFile,
     deployHistorySourceFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
+    enablePeerSnapshots: Boolean = false,
+    peerSnapshot: (Boolean) -> OpsHostSnapshotDto? = ::peerHostSnapshot,
 ) {
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
@@ -114,7 +129,15 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, selfTestArtifactFile, deployHistorySourceFile, githubIssues))
+        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, selfTestArtifactFile, deployHistorySourceFile, githubIssues, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
+    }
+
+    get("/api/ops/host-snapshot") {
+        if (!call.clientInfo().isLocal) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@get
+        }
+        call.respond(hostSnapshot(localPreview))
     }
 
     post("/api/ops/ingest/arcana") {
@@ -226,13 +249,17 @@ private fun opsSummary(
     selfTestFile: File = serverPySelfTestFile,
     historyFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
+    peerSnapshot: OpsHostSnapshotDto? = null,
 ): OpsSummaryDto {
-    val backendRuntimeLabel = if (localPreview) "local" else "remote q"
-    val linuxRuntime = System.getProperty("os.name").contains("Linux", ignoreCase = true)
-    val serverPyRuntimeLabel = if (linuxRuntime) "remote q" else "local"
+    val localSnapshot = hostSnapshot(localPreview)
+    val hostSnapshots = listOfNotNull(localSnapshot, peerSnapshot).distinctBy { it.host }
+    val backendRuntimeLabel = localSnapshot.backendRuntimeLabel
+    val backendRuntimeLabels = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels()
+    val serverPyRuntimeLabel = localSnapshot.serverPyRuntimeLabel
+    val serverPyRuntimeLabels = hostSnapshots.map { it.serverPyRuntimeLabel }.runtimeLabels()
     val serverPySelfTest = latestServerPySelfTest(selfTestFile)
-    val serverPyReady = if (serverPyRuntimeLabel == "local") tcpReady("127.0.0.1", 1453) else serverPySocket.exists()
-    val serverPyTransport = if (serverPyRuntimeLabel == "local") "TCP 1453" else "UDS"
+    val serverPyReady = localSnapshot.serverPyReady
+    val serverPyTransport = localSnapshot.serverPyTransport
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
     val serverPyStatus = serverPySelfTest
         ?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL }
@@ -259,8 +286,12 @@ private fun opsSummary(
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
-    fun signal(label: String, status: OpsStatusDto, detail: String, meta: String = backendRuntimeLabel) =
-        OpsSignalDto(label, status, detail = detail, meta = meta)
+    fun backendMode(snapshot: OpsHostSnapshotDto) = OpsSignalDto(
+        label = "mode",
+        status = OpsStatusDto.OK,
+        detail = if (snapshot.backendRuntimeLabel == localRuntimeLabel) "foreground preview" else "systemd service",
+        meta = snapshot.backendRuntimeLabel,
+    )
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -270,44 +301,122 @@ private fun opsSummary(
                 name = "backend",
                 role = "Ktor control plane",
                 status = OpsStatusDto.OK,
-                runtimeLabel = backendRuntimeLabel,
+                runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
+                runtimeLabels = backendRuntimeLabels,
                 serviceName = if (localPreview) null else "backend.service",
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
                 issues = backendIssues,
-                signals = listOf(signal("mode", OpsStatusDto.OK, if (localPreview) "foreground preview" else "systemd service")),
+                signals = hostSnapshots.map(::backendMode),
             ),
             RepoHealthDto(
                 id = "server_py",
                 name = "server_py",
                 role = "ChatGPT/browser automation bridge",
                 status = serverPyStatus,
-                runtimeLabel = serverPyRuntimeLabel,
+                runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
+                runtimeLabels = serverPyRuntimeLabels,
                 serviceName = if (serverPyRuntimeLabel == "local") null else "server_py.service",
                 latestRun = serverPyLatestRun,
                 runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
                 issues = serverPyIssues,
-                signals = if (serverPySelfTest == null) emptyList() else {
-                    listOf(signal("transport", serverPySocketStatus, if (serverPyReady) "$serverPyTransport reachable." else "$serverPyTransport unavailable.", serverPyRuntimeLabel))
-                },
+                signals = hostSnapshots.map { it.serverPySignal() },
             ),
             RepoHealthDto(
                 id = "arcana",
                 name = "arcana",
                 role = "Local codebase comprehension and session engine",
                 status = arcanaIngest?.status ?: OpsStatusDto.WIP,
-                runtimeLabel = backendRuntimeLabel,
+                runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
+                runtimeLabels = backendRuntimeLabels,
                 latestRun = arcanaLatestRun,
                 runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
                 issues = arcanaIssues,
-                signals = arcanaSignals(backendRuntimeLabel),
+                signals = mergedArcanaSignals(hostSnapshots),
                 note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
             ),
         ),
     )
 }
+
+private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
+    val backendRuntimeLabel = if (localPreview) localRuntimeLabel else qRuntimeLabel
+    val serverPyRuntimeLabel = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) qRuntimeLabel else localRuntimeLabel
+    val serverPyReady = if (serverPyRuntimeLabel == localRuntimeLabel) tcpReady("127.0.0.1", 1453) else serverPySocket.exists()
+    return OpsHostSnapshotDto(
+        generatedAtMs = System.currentTimeMillis(),
+        host = backendRuntimeLabel,
+        backendRuntimeLabel = backendRuntimeLabel,
+        serverPyRuntimeLabel = serverPyRuntimeLabel,
+        serverPyReady = serverPyReady,
+        serverPyTransport = if (serverPyRuntimeLabel == localRuntimeLabel) "TCP 1453" else "UDS",
+        arcanaSignals = arcanaSignals(backendRuntimeLabel),
+    )
+}
+
+private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
+    val url = if (localPreview) qHostSnapshotUrl else macHostSnapshotUrl
+    val now = System.currentTimeMillis()
+    synchronized(peerSnapshotLock) {
+        peerSnapshotCache?.takeIf { it.url == url }?.let { cached ->
+            if (cached.nextAttemptAtMs > now) return cached.snapshot?.takeIf { cached.fetchedAtMs + peerSnapshotStaleMs > now }
+        }
+    }
+    val fetched = fetchPeerHostSnapshot(url).getOrNull()
+    synchronized(peerSnapshotLock) {
+        val previous = peerSnapshotCache?.takeIf { it.url == url }?.snapshot
+        val snapshot = fetched ?: previous?.takeIf { peerSnapshotCache?.fetchedAtMs?.plus(peerSnapshotStaleMs) ?: 0L > now }
+        peerSnapshotCache = CachedPeerSnapshot(
+            url = url,
+            snapshot = snapshot,
+            fetchedAtMs = if (fetched == null && snapshot != null) peerSnapshotCache?.fetchedAtMs ?: now else now,
+            nextAttemptAtMs = now + if (fetched == null) peerSnapshotFailBackoffMs else peerSnapshotRefreshMs,
+        )
+        return snapshot
+    }
+}
+
+private fun fetchPeerHostSnapshot(url: String) = runCatching {
+    val request = HttpRequest.newBuilder(URI.create(url))
+        .timeout(Duration.ofMillis(900))
+        .header("Accept", "application/json")
+        .header("User-Agent", "sdfgsdfg-backend-ops-peer")
+        .build()
+    val response = opsPeerHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() !in 200..299) error("Ops peer snapshot HTTP ${response.statusCode()}")
+    opsJson.decodeFromString<OpsHostSnapshotDto>(response.body())
+}
+
+private fun OpsHostSnapshotDto.serverPySignal() = OpsSignalDto(
+    label = "transport",
+    status = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+    detail = "$serverPyTransport ${if (serverPyReady) "reachable" else "unavailable"}.",
+    meta = serverPyRuntimeLabel,
+)
+
+private fun mergedArcanaSignals(hostSnapshots: List<OpsHostSnapshotDto>): List<OpsSignalDto> {
+    if (hostSnapshots.size == 1) return hostSnapshots.first().arcanaSignals
+    val summaries = hostSnapshots.mapNotNull { snapshot ->
+        snapshot.arcanaSignals.firstOrNull { it.label.startsWith("visible ") }
+    }
+    val rows = hostSnapshots.flatMap { snapshot ->
+        snapshot.arcanaSignals.filterNot { it.label.startsWith("visible ") }
+    }
+    return listOf(
+        OpsSignalDto(
+            label = "visible processes",
+            status = if (summaries.any { it.status == OpsStatusDto.OK }) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+            detail = summaries.joinToString(" / ") { "${it.meta}: ${it.detail}" }.compact(180),
+            meta = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels().joinToString(" · "),
+        ),
+    ) + rows.sortedByDescending { it.timestampMs ?: 0L }.take(10)
+}
+
+private fun List<String>.runtimeLabels(): List<String> = distinct().filter { it.isNotBlank() }
+
+private fun List<String>.joinedRuntimeLabel(): String? = takeIf { it.isNotEmpty() }?.joinToString(" + ")
 
 private fun latestServerPySelfTest(file: File = serverPySelfTestFile): SelfTestResultDto? = runCatching {
     file.takeIf { it.exists() }

@@ -21,6 +21,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.OpsHostSnapshotDto
+import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -226,6 +228,62 @@ class OpsRoutesTest {
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(listOf("backend", "server_py", "arcana"), json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.map { it.id })
+    }
+
+    @Test
+    fun opsSummaryMergesPeerHostSnapshotWhenEnabled() = testApplication {
+        val peer = OpsHostSnapshotDto(
+            generatedAtMs = 123L,
+            host = "remote q",
+            backendRuntimeLabel = "remote q",
+            serverPyRuntimeLabel = "remote q",
+            serverPyReady = true,
+            serverPyTransport = "UDS",
+            arcanaSignals = listOf(
+                OpsSignalDto("visible processes", OpsStatusDto.OK, detail = "0 arcana live · 1 codex live", meta = "remote q"),
+                OpsSignalDto("codex", OpsStatusDto.OK, timestampMs = 99L, detail = "peer session", meta = "remote q · process #7"),
+            ),
+        )
+
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing {
+                opsRoutes(
+                    localPreview = true,
+                    githubIssues = noGithubIssues,
+                    enablePeerSnapshots = true,
+                    peerSnapshot = { peer },
+                )
+            }
+        }
+
+        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val repos = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos
+        val backend = repos.first { it.id == "backend" }
+        val arcana = repos.first { it.id == "arcana" }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(listOf("local", "remote q"), backend.runtimeLabels)
+        assertEquals("local + remote q", backend.runtimeLabel)
+        assertEquals(listOf("local", "remote q"), arcana.runtimeLabels)
+        assertEquals(true, arcana.signals.first().detail?.contains("remote q: 0 arcana live") == true)
+        assertEquals(true, arcana.signals.any { it.detail == "peer session" && it.meta == "remote q · process #7" })
+    }
+
+    @Test
+    fun opsHostSnapshotExposesOnlyCurrentHostStatus() = testApplication {
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing { opsRoutes(localPreview = true, githubIssues = noGithubIssues) }
+        }
+
+        val response = client.get("/api/ops/host-snapshot") { header(HttpHeaders.Host, "127.0.0.1") }
+        val snapshot = json.decodeFromString<OpsHostSnapshotDto>(response.body<String>())
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("local", snapshot.host)
+        assertEquals("local", snapshot.backendRuntimeLabel)
+        assertEquals(true, snapshot.arcanaSignals.any { it.label == "visible processes" })
     }
 
     @Test

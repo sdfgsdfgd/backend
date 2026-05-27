@@ -508,7 +508,7 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                repo.runtimeLabel?.let { PanelBadge(it, cyan) }
+                repo.runtimeBadges().forEach { PanelBadge(it, cyan) }
                 Text(
                     repo.role,
                     modifier = Modifier.weight(1f),
@@ -571,6 +571,8 @@ private fun IssueSummaryDto.badgeLabel(): String = when (active) {
 }
 
 private fun IssueSummaryDto.badgeColor(): Color = if (active == 0) green else amber
+
+private fun RepoHealthDto.runtimeBadges(): List<String> = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
 
 @Composable
 private fun rememberFreshKeys(keys: List<String>): Set<String> {
