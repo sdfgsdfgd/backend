@@ -182,11 +182,12 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeSpec())
+                repo.testBadges().forEach { PanelBadge(it) }
                 repo.transportBadges().forEach { PanelBadge(it) }
             }
         }
     }
-    if (repo.id != "server_py") repo.latestRun?.let { RunSignal(it, generatedAtMs) }
+    if (repo.id != "backend" && repo.id != "server_py") repo.latestRun?.let { RunSignal(it, generatedAtMs) }
     val visibleSignals = if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
@@ -205,8 +206,8 @@ private fun SignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
 
 @Composable
 private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
-    val summary = signals.firstOrNull { it.label.startsWith("visible ") }
-    val processRows = signals.filter { it != summary }
+    val summary = signals.firstOrNull { it.isActiveProcessSummary() }
+    val processRows = signals.filterNot { it.isActiveProcessSummary() }
     val processKeys = processRows.map { "${it.label}-${it.meta}-${it.timestampMs}-${it.detail}" }
     val freshKeys = rememberFreshKeys(processKeys)
     var expanded by remember { mutableStateOf(true) }
@@ -216,10 +217,10 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         summary?.let {
-            SignalRow(
+            ActiveSignalRow(
                 signal = it,
                 generatedAtMs = generatedAtMs,
-                tailLabel = if (expanded) "hide" else "show",
+                expanded = expanded,
                 onClick = { expanded = !expanded },
             )
         }
@@ -251,6 +252,43 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
                                 shrinkVertically(tween(190, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
                         ) {
                             ProcessSignalRow(process, generatedAtMs, fresh = rowKey in freshKeys)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveSignalRow(signal: OpsSignalDto, generatedAtMs: Long, expanded: Boolean, onClick: () -> Unit) {
+    val groups = signal.activeProcessGroups()
+    val shape = RoundedCornerShape(7.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.038f))
+            .border(BorderStroke(1.dp, signal.status.color().copy(alpha = 0.18f)), shape)
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        FreshRail(signal.timestampMs, generatedAtMs, height = if (groups.size > 1) 48.dp else 34.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Active", color = text, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (expanded) "hide" else "show", color = cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            if (groups.isEmpty()) {
+                Text("no live arcana or codex processes", color = muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    groups.forEach { (host, badges) ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(host, color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            badges.forEach { PanelBadge(it) }
                         }
                     }
                 }
@@ -397,6 +435,21 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: B
         }
     }
 }
+
+private fun OpsSignalDto.activeProcessGroups(): List<Pair<String, List<BadgeSpec>>> = detail
+    .orEmpty()
+    .split(" / ")
+    .mapNotNull { segment ->
+        val host = segment.substringBefore(": ", missingDelimiterValue = meta.orEmpty())
+            .ifBlank { meta.orEmpty().ifBlank { "local" } }
+        val body = segment.substringAfter(": ", segment)
+        val badges = liveProcessCount.findAll(body).mapNotNull { match ->
+            val count = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+            val kind = match.groupValues[2]
+            count.takeIf { it > 0 }?.let { BadgeSpec("$kind $it", if (kind == "arcana") green else cyan, strong = true) }
+        }.toList()
+        badges.takeIf { it.isNotEmpty() }?.let { host to it }
+    }
 
 private fun String.arcanaCommandParts(): Pair<String, List<String>> {
     fun compact(value: String, max: Int) = value.replace(Regex("\\s+"), " ")

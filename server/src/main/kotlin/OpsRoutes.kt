@@ -90,6 +90,7 @@ private const val qHostSnapshotUrl = "http://192.168.1.4/api/ops/host-snapshot"
 private const val peerSnapshotRefreshMs = 45_000L
 private const val peerSnapshotFailBackoffMs = 45_000L
 private const val peerSnapshotStaleMs = 150_000L
+private const val activeProcessesLabel = "active"
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
 private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long)
@@ -287,17 +288,11 @@ private fun opsSummary(
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
     val arcanaSignals = mergedArcanaSignals(snapshots)
-    val arcanaStatus = if (arcanaSignals.firstOrNull { it.label.startsWith("visible ") }?.status == OpsStatusDto.OK) {
+    val arcanaStatus = if (arcanaSignals.firstOrNull { it.isActiveProcessSignal() }?.status == OpsStatusDto.OK) {
         OpsStatusDto.OK
     } else {
         arcanaIngest?.status ?: OpsStatusDto.WIP
     }
-    fun backendMode(snapshot: OpsHostSnapshotDto) = OpsSignalDto(
-        label = "mode",
-        status = OpsStatusDto.OK,
-        detail = if (snapshot.backendRuntimeLabel == localRuntimeLabel) "foreground preview" else "systemd service",
-        meta = snapshot.backendRuntimeLabel,
-    )
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -313,7 +308,7 @@ private fun opsSummary(
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
                 issues = backendIssues,
-                signals = snapshots.map(::backendMode),
+                signals = emptyList(),
             ),
             RepoHealthDto(
                 id = "server_py",
@@ -407,20 +402,22 @@ private fun OpsHostSnapshotDto.serverPySignal() = OpsSignalDto(
 private fun mergedArcanaSignals(hostSnapshots: List<OpsHostSnapshotDto>): List<OpsSignalDto> {
     if (hostSnapshots.size == 1) return hostSnapshots.first().arcanaSignals
     val summaries = hostSnapshots.mapNotNull { snapshot ->
-        snapshot.arcanaSignals.firstOrNull { it.label.startsWith("visible ") }
+        snapshot.arcanaSignals.firstOrNull { it.isActiveProcessSignal() }
     }
     val rows = hostSnapshots.flatMap { snapshot ->
-        snapshot.arcanaSignals.filterNot { it.label.startsWith("visible ") }
+        snapshot.arcanaSignals.filterNot { it.isActiveProcessSignal() }
     }
     return listOf(
         OpsSignalDto(
-            label = "visible processes",
+            label = activeProcessesLabel,
             status = if (summaries.any { it.status == OpsStatusDto.OK }) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
             detail = summaries.joinToString(" / ") { "${it.meta}: ${it.detail}" }.compact(180),
             meta = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels().joinToString(" · "),
         ),
     ) + rows.sortedByDescending { it.timestampMs ?: 0L }.take(10)
 }
+
+private fun OpsSignalDto.isActiveProcessSignal() = label == activeProcessesLabel || label.startsWith("visible ")
 
 private fun <T> List<T>.runtimeLabels(label: (T) -> String): List<String> = map(label).runtimeLabels()
 
@@ -448,7 +445,7 @@ private fun arcanaSignals(runtimeLabel: String): List<OpsSignalDto> = buildList 
     val codexGroups = codexProcesses.groupBy { it.startedAtMs?.div(1_000) ?: it.pid }
     add(
         OpsSignalDto(
-            label = "visible processes",
+            label = activeProcessesLabel,
             status = if (arcanaGroups.size + codexGroups.size > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
             detail = "${arcanaGroups.size} arcana live · ${codexGroups.size} codex live",
             meta = runtimeLabel,

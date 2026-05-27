@@ -239,7 +239,7 @@ class OpsRoutesTest {
             serverPyReady = true,
             serverPyTransport = "UDS",
             arcanaSignals = listOf(
-                OpsSignalDto("visible processes", OpsStatusDto.OK, detail = "0 arcana live · 1 codex live", meta = "remote q"),
+                OpsSignalDto("active", OpsStatusDto.OK, detail = "0 arcana live · 1 codex live", meta = "remote q"),
                 OpsSignalDto("codex", OpsStatusDto.OK, timestampMs = 99L, detail = "peer session", meta = "remote q · process #7"),
             ),
         )
@@ -304,7 +304,7 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("local", snapshot.host)
         assertEquals("local", snapshot.backendRuntimeLabel)
-        assertEquals(true, snapshot.arcanaSignals.any { it.label == "visible processes" })
+        assertEquals(true, snapshot.arcanaSignals.any { it.label == "active" })
     }
 
     @Test
@@ -357,7 +357,7 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(null, arcana.latestRun)
         assertEquals(false, arcana.runs.any { it.label == "activity monitor" })
-        assertEquals(true, arcana.signals.any { it.label == "visible processes" })
+        assertEquals(true, arcana.signals.any { it.label == "active" })
         assertEquals(false, arcana.signals.any { it.label == "arcana current" || it.label == "current session" })
     }
 

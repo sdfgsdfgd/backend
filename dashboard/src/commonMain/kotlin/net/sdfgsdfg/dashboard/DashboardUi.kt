@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
@@ -391,6 +392,16 @@ internal fun IssueSummaryDto.badgeSpec() = BadgeSpec(
 
 internal fun RepoHealthDto.statusBadge(): BadgeSpec? = if (id == "arcana") null else BadgeSpec(status.name, status.color(), strong = true)
 
+internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
+    "backend" -> runs.firstOrNull { it.label == "server checks" }
+        ?.let { listOf(BadgeSpec("verifyServer ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+        .orEmpty()
+    "server_py" -> selfTest
+        ?.let { listOf(BadgeSpec("selftest ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+        .orEmpty()
+    else -> emptyList()
+}
+
 internal fun RepoHealthDto.transportBadges(): List<BadgeSpec> {
     val transports = if (id == "server_py") signals.filter { it.label == "transport" } else return emptyList()
     return transports
@@ -405,7 +416,7 @@ internal fun RepoHealthDto.transportBadges(): List<BadgeSpec> {
 
 internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
     val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
-    val visibleProcesses = signals.firstOrNull { it.label.startsWith("visible ") }
+    val visibleProcesses = signals.firstOrNull { it.isActiveProcessSummary() }
     val arcanaStatuses = if (id == "arcana") {
         val labeled = visibleProcesses?.detail
             ?.split(" / ")
@@ -423,7 +434,11 @@ internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
         emptyMap()
     }
     return labels.mapNotNull { label ->
-        val status = if (id == "arcana") arcanaStatuses[label] else signals.firstOrNull { it.meta == label }?.status
+        val status = when (id) {
+            "arcana" -> arcanaStatuses[label]
+            "backend" -> OpsStatusDto.OK
+            else -> signals.firstOrNull { it.meta == label }?.status
+        }
         when {
             label == "local" && status != OpsStatusDto.OK -> null
             label == "remote q" && status != OpsStatusDto.OK -> BadgeSpec(label, rose)
@@ -432,6 +447,8 @@ internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
         }
     }
 }
+
+internal fun OpsSignalDto.isActiveProcessSummary() = label == "active" || label.startsWith("visible ")
 
 internal fun Modifier.glassSurface(
     shape: RoundedCornerShape,
