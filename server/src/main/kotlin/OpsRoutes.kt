@@ -87,8 +87,9 @@ private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
 private const val macHostSnapshotUrl = "http://192.168.1.2/api/ops/host-snapshot"
 private const val qHostSnapshotUrl = "http://192.168.1.4/api/ops/host-snapshot"
-private const val peerSnapshotRefreshMs = 180_000L
-private const val peerSnapshotFailBackoffMs = 5 * 60_000L
+private const val peerSnapshotRefreshMs = 45_000L
+private const val peerSnapshotFailBackoffMs = 45_000L
+private const val peerSnapshotStaleMs = 150_000L
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
 private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long)
@@ -369,17 +370,18 @@ private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
 private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
     val url = if (localPreview) qHostSnapshotUrl else macHostSnapshotUrl
     val now = System.currentTimeMillis()
-    synchronized(peerSnapshotLock) {
-        peerSnapshotCache?.takeIf { it.url == url }?.let { cached ->
-            if (cached.nextAttemptAtMs > now) return cached.snapshot
-        }
+    val previous = synchronized(peerSnapshotLock) { peerSnapshotCache?.takeIf { it.url == url } }
+    if (previous != null && previous.nextAttemptAtMs > now) {
+        return previous.snapshot?.takeIf { now - it.generatedAtMs <= peerSnapshotStaleMs }
     }
-    val snapshot = fetchPeerHostSnapshot(url).getOrNull()
+    val fetched = fetchPeerHostSnapshot(url)
+    val snapshot = fetched.getOrNull()
+        ?: previous?.snapshot?.takeIf { now - it.generatedAtMs <= peerSnapshotStaleMs }
     synchronized(peerSnapshotLock) {
         peerSnapshotCache = CachedPeerSnapshot(
             url = url,
             snapshot = snapshot,
-            nextAttemptAtMs = now + if (snapshot == null) peerSnapshotFailBackoffMs else peerSnapshotRefreshMs,
+            nextAttemptAtMs = now + if (fetched.isSuccess) peerSnapshotRefreshMs else peerSnapshotFailBackoffMs,
         )
         return snapshot
     }
