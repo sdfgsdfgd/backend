@@ -112,6 +112,7 @@ private val cyan = Color(0xFF75D4FF)
 private val green = Color(0xFF5CE58B)
 private val amber = Color(0xFFFFC86B)
 private val rose = Color(0xFFFF7474)
+private val liveProcessCount = Regex("""(\d+) (arcana|codex) live""")
 private const val OPS_SUMMARY_REFRESH_MS = 45_000L
 private const val UPDATE_FLASH_MS = 2_400L
 
@@ -509,7 +510,7 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                repo.runtimeBadges().forEach { PanelBadge(it, cyan) }
+                repo.runtimeBadges().forEach { (label, color) -> PanelBadge(label, color) }
                 Text(
                     repo.role,
                     modifier = Modifier.weight(1f),
@@ -573,7 +574,39 @@ private fun IssueSummaryDto.badgeLabel(): String = when (active) {
 
 private fun IssueSummaryDto.badgeColor(): Color = if (active == 0) green else amber
 
-private fun RepoHealthDto.runtimeBadges(): List<String> = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
+private fun RepoHealthDto.runtimeBadges(): List<Pair<String, Color>> {
+    val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }
+    val visibleProcesses = signals.firstOrNull { it.label.startsWith("visible ") }
+    val arcanaStatuses = if (id == "arcana") {
+        val labeled = visibleProcesses?.detail
+            ?.split(" / ")
+            .orEmpty()
+            .mapNotNull { segment ->
+                segment.substringBefore(": ", missingDelimiterValue = "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { it to segment.substringAfter(": ") }
+            }
+        labeled.ifEmpty { visibleProcesses?.let { listOf(it.meta to it.detail.orEmpty()) }.orEmpty() }
+            .associate { (label, detail) ->
+                label to if (liveProcessCount.findAll(detail).sumOf { it.groupValues[1].toInt() } > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
+            }
+    } else {
+        emptyMap()
+    }
+    return labels.mapNotNull { label ->
+        val status = if (id == "arcana") {
+            arcanaStatuses[label]
+        } else {
+            signals.firstOrNull { it.meta == label }?.status
+        }
+        when {
+            label == "local" && status != OpsStatusDto.OK -> null
+            label == "remote q" && status != OpsStatusDto.OK -> label to rose
+            status == OpsStatusDto.OK -> label to green
+            else -> label to cyan
+        }
+    }
+}
 
 @Composable
 private fun rememberFreshKeys(keys: List<String>): Set<String> {
@@ -2123,17 +2156,17 @@ private fun Double.ms(): String = if (this <= 0.0) "-" else "${roundToInt()}ms"
 private fun Long.relativeFrom(nowMs: Long): String {
     val seconds = ((nowMs - this) / 1_000).coerceAtLeast(0)
     return when {
-        seconds < 60 -> "<1min"
-        seconds < 3_600 -> "<${seconds / 60 + 1}min"
+        seconds < 60 -> "1min"
+        seconds < 3_600 -> "${seconds / 60 + 1}min"
         seconds < 86_400 -> {
             val hours = seconds / 3_600
             val minutes = (seconds % 3_600) / 60
-            if (minutes == 0L) "<${hours}h" else "<${hours}h ${minutes}min"
+            if (minutes == 0L) "${hours}h" else "${hours}h ${minutes}min"
         }
         else -> {
             val days = seconds / 86_400
             val hours = (seconds % 86_400) / 3_600
-            if (hours == 0L) "<${days}d" else "<${days}d ${hours}h"
+            if (hours == 0L) "${days}d" else "${days}d ${hours}h"
         }
     }
 }

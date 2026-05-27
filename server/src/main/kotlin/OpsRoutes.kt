@@ -255,11 +255,12 @@ private fun opsSummary(
     val hostSnapshots = listOfNotNull(localSnapshot, peerSnapshot).distinctBy { it.host }
     val backendRuntimeLabel = localSnapshot.backendRuntimeLabel
     val backendRuntimeLabels = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels()
-    val serverPyRuntimeLabel = localSnapshot.serverPyRuntimeLabel
+    val serverPyReadySnapshot = hostSnapshots.firstOrNull { it.serverPyReady } ?: localSnapshot
+    val serverPyRuntimeLabel = serverPyReadySnapshot.serverPyRuntimeLabel
     val serverPyRuntimeLabels = hostSnapshots.map { it.serverPyRuntimeLabel }.runtimeLabels()
     val serverPySelfTest = latestServerPySelfTest(selfTestFile)
-    val serverPyReady = localSnapshot.serverPyReady
-    val serverPyTransport = localSnapshot.serverPyTransport
+    val serverPyReady = serverPyReadySnapshot.serverPyReady
+    val serverPyTransport = serverPyReadySnapshot.serverPyTransport
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
     val serverPyStatus = serverPySelfTest
         ?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL }
@@ -286,6 +287,12 @@ private fun opsSummary(
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
+    val arcanaSignals = mergedArcanaSignals(hostSnapshots)
+    val arcanaStatus = if (arcanaSignals.firstOrNull { it.label.startsWith("visible ") }?.status == OpsStatusDto.OK) {
+        OpsStatusDto.OK
+    } else {
+        arcanaIngest?.status ?: OpsStatusDto.WIP
+    }
     fun backendMode(snapshot: OpsHostSnapshotDto) = OpsSignalDto(
         label = "mode",
         status = OpsStatusDto.OK,
@@ -328,13 +335,13 @@ private fun opsSummary(
                 id = "arcana",
                 name = "arcana",
                 role = "Local codebase comprehension and session engine",
-                status = arcanaIngest?.status ?: OpsStatusDto.WIP,
+                status = arcanaStatus,
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
                 latestRun = arcanaLatestRun,
                 runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
                 issues = arcanaIssues,
-                signals = mergedArcanaSignals(hostSnapshots),
+                signals = arcanaSignals,
                 note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
             ),
         ),
