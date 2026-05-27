@@ -129,11 +129,15 @@ private data class FieldSpec(val name: String, val value: String, val detail: St
 private data class IssueLaneSpec(val label: String, val color: Color, val count: (RepoHealthDto) -> Int)
 
 @Composable
-fun DashboardApp() {
+fun DashboardApp(
+    arrowShiftSignal: Int = 0,
+    focusedArrowKeys: Boolean = true,
+) {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
+    var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
 
     DisposableEffect(Unit) {
         onDispose { mounted[0] = false }
@@ -150,6 +154,16 @@ fun DashboardApp() {
             delay(OPS_SUMMARY_REFRESH_MS)
         }
     }
+    LaunchedEffect(arrowShiftSignal) {
+        val shift = arrowShiftSignal - handledArrowShiftSignal
+        if (shift != 0) selectedTab = selectedTab.shift(shift)
+        handledArrowShiftSignal = arrowShiftSignal
+    }
+    val surfaceModifier = Modifier
+        .fillMaxSize()
+        .focusRequester(focusRequester)
+        .focusable()
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = cyan,
@@ -159,18 +173,18 @@ fun DashboardApp() {
         ),
     ) {
         Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .focusRequester(focusRequester)
-                .focusable()
-                .onPreviewKeyEvent {
+            modifier = if (focusedArrowKeys) {
+                surfaceModifier.onPreviewKeyEvent {
                     if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (it.key) {
                         Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); true }
                         Key.DirectionRight -> { selectedTab = selectedTab.shift(1); true }
                         else -> false
                     }
-                },
+                }
+            } else {
+                surfaceModifier
+            },
             color = background,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
