@@ -52,6 +52,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 private val opsJson = Json {
@@ -80,6 +81,7 @@ private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.js
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
 private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
+private val isLinuxHost = System.getProperty("os.name").contains("Linux", ignoreCase = true)
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
 private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
@@ -261,6 +263,8 @@ private fun opsSummary(
     val serverPySelfTest = latestServerPySelfTest(selfTestFile)
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
+    val backendServiceStatus = hostSnapshots.firstOrNull { it.backendRuntimeLabel == qRuntimeLabel }?.backendServiceStatus
+    val serverPyServiceStatus = hostSnapshots.firstOrNull { it.serverPyRuntimeLabel == qRuntimeLabel }?.serverPyServiceStatus
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
     val serverPyStatus = serverPySelfTest
         ?.let { if (it.ok) OpsStatusDto.OK else OpsStatusDto.FAIL }
@@ -311,6 +315,7 @@ private fun opsSummary(
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
                 serviceName = if (localPreview) null else "backend.service",
+                serviceStatus = backendServiceStatus,
                 latestRun = backendLatestRun,
                 runs = backendRuns(backendLatestRun),
                 history = backendHistory,
@@ -325,6 +330,7 @@ private fun opsSummary(
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
                 serviceName = if (serverPyRuntimeLabel == "local") null else "server_py.service",
+                serviceStatus = serverPyServiceStatus,
                 latestRun = serverPyLatestRun,
                 runs = serverPyRuns(serverPySelfTest, serverPyReady, serverPyLatestRun),
                 selfTest = serverPySelfTest?.toOpsSelfTestSummary(),
@@ -350,17 +356,37 @@ private fun opsSummary(
 
 private fun hostSnapshot(localPreview: Boolean): OpsHostSnapshotDto {
     val backendRuntimeLabel = if (localPreview) localRuntimeLabel else qRuntimeLabel
-    val serverPyRuntimeLabel = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) qRuntimeLabel else localRuntimeLabel
+    val serverPyRuntimeLabel = if (isLinuxHost) qRuntimeLabel else localRuntimeLabel
     val serverPyReady = if (serverPyRuntimeLabel == localRuntimeLabel) tcpReady("127.0.0.1", 1453) else serverPySocket.exists()
     return OpsHostSnapshotDto(
         generatedAtMs = System.currentTimeMillis(),
         host = backendRuntimeLabel,
         backendRuntimeLabel = backendRuntimeLabel,
+        backendServiceStatus = if (backendRuntimeLabel == qRuntimeLabel) systemdStatus("systemctl", "is-active", "--quiet", "backend.service") else null,
         serverPyRuntimeLabel = serverPyRuntimeLabel,
+        serverPyServiceStatus = if (serverPyRuntimeLabel == qRuntimeLabel) systemdStatus("systemctl", "--user", "is-active", "--quiet", "server_py.service") else null,
         serverPyReady = serverPyReady,
         serverPyTransport = if (serverPyRuntimeLabel == localRuntimeLabel) "TCP 1453" else "UDS",
         arcanaSignals = arcanaSignals(backendRuntimeLabel),
     )
+}
+
+private fun systemdStatus(vararg command: String): OpsStatusDto? {
+    if (!isLinuxHost) return null
+    return runCatching {
+        val process = ProcessBuilder(*command)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        if (!process.waitFor(700, TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly()
+            OpsStatusDto.UNKNOWN
+        } else if (process.exitValue() == 0) {
+            OpsStatusDto.OK
+        } else {
+            OpsStatusDto.FAIL
+        }
+    }.getOrDefault(OpsStatusDto.UNKNOWN)
 }
 
 private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {

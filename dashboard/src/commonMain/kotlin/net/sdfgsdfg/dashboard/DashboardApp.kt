@@ -524,7 +524,18 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeLabel(), repo.issues.badgeColor(), strong = repo.issues.active > 0)
-                repo.serviceName?.let { PanelBadge(it, muted, modifier = Modifier.widthIn(max = 128.dp)) }
+                repo.serviceName?.let {
+                    val serviceColor = when (repo.serviceStatus) {
+                        OpsStatusDto.OK -> green
+                        null -> muted
+                        else -> rose
+                    }
+                    PanelBadge(
+                        it,
+                        serviceColor,
+                        modifier = Modifier.widthIn(max = 128.dp),
+                    )
+                }
             }
         }
     }
@@ -672,7 +683,7 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
     val processRows = signals.filter { it != summary }
     val processKeys = processRows.map { "${it.label}-${it.meta}-${it.timestampMs}-${it.detail}" }
     val freshKeys = rememberFreshKeys(processKeys)
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier.animateContentSize(animationSpec = tween(320, easing = FastOutSlowInEasing)),
