@@ -72,6 +72,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -145,8 +150,6 @@ fun DashboardApp() {
             delay(OPS_SUMMARY_REFRESH_MS)
         }
     }
-    PlatformArrowKeys { selectedTab = selectedTab.shift(it) }
-
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = cyan,
@@ -159,7 +162,15 @@ fun DashboardApp() {
             modifier = Modifier
                 .fillMaxSize()
                 .focusRequester(focusRequester)
-                .focusable(),
+                .focusable()
+                .onPreviewKeyEvent {
+                    if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (it.key) {
+                        Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); true }
+                        Key.DirectionRight -> { selectedTab = selectedTab.shift(1); true }
+                        else -> false
+                    }
+                },
             color = background,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
