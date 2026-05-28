@@ -534,7 +534,7 @@ private fun sshMacProcesses(): List<ProcessSnapshot> {
         "-o", "ControlPersist=3m",
         "-o", "ControlPath=/tmp/sdfgsdfg-ops-mac-ssh-%r@%h:%p",
         macSshTarget,
-        "ps -axo pid=,ppid=,lstart=,command=",
+        "ps -axo pid=,ppid=,lstart=,command= | grep -E 'arcana|codex|_0.py' || true",
     )
     val process = ProcessBuilder(command).redirectErrorStream(true).start()
     if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
