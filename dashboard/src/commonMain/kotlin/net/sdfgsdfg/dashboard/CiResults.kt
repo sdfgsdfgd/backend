@@ -23,11 +23,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,7 +50,7 @@ import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 
 @Composable
-internal fun CiResults(loadState: OpsLoadState) {
+internal fun CiResults(loadState: OpsLoadState, atPageBottom: Boolean = false) {
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
             title = "CI Results",
@@ -62,7 +65,7 @@ internal fun CiResults(loadState: OpsLoadState) {
         is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CiHeader(loadState.summary)
             VerificationGrid(loadState.summary)
-            RunHistoryPanel(loadState.summary)
+            RunHistoryPanel(loadState.summary, atPageBottom)
         }
     }
 }
@@ -281,14 +284,22 @@ private fun ArtifactStrip(workflowUrl: String?, artifacts: List<OpsArtifactDto>)
 }
 
 @Composable
-private fun RunHistoryPanel(summary: OpsSummaryDto) {
-    val events = summary.repos
+private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
+    val repos = summary.repos.filter { it.id in historyRepoIds }
+    var enabled by remember { mutableStateOf(historyRepoIds.toSet()) }
+    var visibleLimit by remember { mutableStateOf(12) }
+    val counts = repos.associate { it.id to it.history.size }
+    val allEvents = repos
         .flatMap { repo -> repo.history.map { repo to it } }
         .sortedByDescending { it.second.timestampMs ?: 0L }
-        .take(8)
-    if (events.isEmpty()) return
-    val eventKeys = events.map { (repo, run) -> "${repo.id}-${run.label}-${run.timestampMs}" }
+    val events = allEvents.filter { it.first.id in enabled }
+    val visibleEvents = events.take(visibleLimit)
+    if (allEvents.isEmpty()) return
+    val eventKeys = visibleEvents.map { (repo, run) -> "${repo.id}-${run.label}-${run.timestampMs}" }
     val freshKeys = rememberFreshKeys(eventKeys)
+    LaunchedEffect(atPageBottom, events.size, visibleLimit) {
+        if (atPageBottom && visibleLimit < events.size) visibleLimit = (visibleLimit + 12).coerceAtMost(events.size)
+    }
 
     val shape = RoundedCornerShape(8.dp)
     Column(
@@ -302,11 +313,22 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Latest backend history, newest first.", color = muted, fontSize = 12.sp)
+                Text("Unified backend, server_py, and Arcana CI evidence.", color = muted, fontSize = 12.sp)
             }
-            StatusPill("${events.size} events", green)
+            StatusPill("${visibleEvents.size}/${events.size} shown", green)
         }
-        events.forEachIndexed { index, (repo, run) ->
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            historyRepoIds.forEach { id ->
+                HistoryFilterPill(
+                    label = "${id.displayRepoName()} ${counts[id] ?: 0}",
+                    color = id.historyColor(),
+                    enabled = id in enabled,
+                    onClick = { enabled = if (id in enabled) enabled - id else enabled + id },
+                )
+            }
+        }
+        if (events.isEmpty()) PlaceholderTile("no runs selected")
+        visibleEvents.forEachIndexed { index, (repo, run) ->
             val rowKey = eventKeys[index]
             key(rowKey) {
                 val visibleState = remember {
@@ -325,6 +347,32 @@ private fun RunHistoryPanel(summary: OpsSummaryDto) {
                 }
             }
         }
+    }
+}
+
+private val historyRepoIds = listOf("backend", "server_py", "arcana")
+
+@Composable
+private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
+    val activeColor = if (enabled) color else muted
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 4.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(activeColor.copy(alpha = if (enabled) 0.14f else 0.06f))
+            .border(BorderStroke(1.dp, activeColor.copy(alpha = if (enabled) 0.46f else 0.20f)), RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(5.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(activeColor),
+        )
+        Text(label, color = activeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -373,6 +421,15 @@ private fun RepoHealthDto.ciRole() = when (id) {
     "server_py" -> "GitHub selftest + model matrix"
     "arcana" -> "local pytest coverage"
     else -> role
+}
+
+private fun String.displayRepoName() = if (this == "server_py") "server_py" else replaceFirstChar { it.uppercase() }
+
+private fun String.historyColor() = when (this) {
+    "backend" -> green
+    "server_py" -> cyan
+    "arcana" -> amber
+    else -> muted
 }
 
 private fun RepoHealthDto.ciBadges(): List<BadgeSpec> = when (id) {

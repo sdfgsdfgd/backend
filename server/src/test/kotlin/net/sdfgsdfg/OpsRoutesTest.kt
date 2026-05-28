@@ -170,12 +170,14 @@ class OpsRoutesTest {
 
     @Test
     fun opsSummaryUsesTheScopedServerPySelftestArtifact() = testApplication {
-        val artifact = File(createTempDirectory().toFile(), "server-py-selftest.json")
+        val dir = createTempDirectory().toFile()
+        val artifact = File(dir, "server-py-selftest.json")
+        val history = File(dir, "server-py-selftest-history.jsonl")
         artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok","latency_ms":88.0,"timestamp_ms":42}""")
 
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            routing { opsRoutes(localPreview = true, selfTestArtifactFile = artifact, githubIssues = noGithubIssues) }
+            routing { opsRoutes(localPreview = true, selfTestArtifactFile = artifact, selfTestHistoryFile = history, githubIssues = noGithubIssues) }
         }
 
         val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
@@ -189,6 +191,7 @@ class OpsRoutesTest {
         assertEquals(88.0, serverPy.latestRun?.durationMs)
         assertEquals("transport", serverPy.signals.single().label)
         assertEquals(listOf("live selftest", "selftest artifact"), serverPy.runs.map { it.label })
+        assertEquals(listOf("live selftest"), serverPy.history.map { it.label })
     }
 
     @Test
@@ -584,12 +587,14 @@ class OpsRoutesTest {
 
     @Test
     fun arcanaIngestIsLocalOnlyAndFeedsOpsSummary() = testApplication {
-        val ingestFile = File(createTempDirectory().toFile(), "arcana-ingest.json")
+        val dir = createTempDirectory().toFile()
+        val ingestFile = File(dir, "arcana-ingest.json")
+        val historyFile = File(dir, "arcana-ingest-history.jsonl")
 
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             routing {
-                opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, githubIssues = noGithubIssues)
+                opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, arcanaIngestHistoryFile = historyFile, githubIssues = noGithubIssues)
             }
         }
 
@@ -629,6 +634,7 @@ class OpsRoutesTest {
         assertEquals(1, arcana.issues.wip)
         assertEquals(3, arcana.issues.done)
         assertEquals(true, arcana.runs.any { it.label == "pytest unit" && it.status == OpsStatusDto.OK })
+        assertEquals(listOf("pytest local publisher"), arcana.history.map { it.label })
         assertEquals(false, arcana.runs.any { it.label == "pytest unit spine" })
         assertEquals(true, arcana.runs.any { it.label == "issue/session schema" && it.status == OpsStatusDto.WIP })
         assertEquals(true, ingestFile.readText().contains("timestamp_ms"))

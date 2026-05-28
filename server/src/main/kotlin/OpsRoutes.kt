@@ -72,6 +72,8 @@ private val psStartFormatter = DateTimeFormatter.ofPattern("EEE MMM d HH:mm:ss y
 private val defaultArcanaIngestFile = File(resolveLogDir(), "arcana-ingest.json")
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
 private val deployHistoryFile = File(resolveLogDir(), "deploy-history.jsonl")
+private val defaultArcanaIngestHistoryFile = File(resolveLogDir(), "arcana-ingest-history.jsonl")
+internal val serverPySelfTestHistoryFile = File(resolveLogDir(), "server-py-selftest-history.jsonl")
 private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
@@ -105,7 +107,9 @@ private var peerSnapshotCache: CachedPeerSnapshot? = null
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestTargetFile: File = defaultArcanaIngestFile,
+    arcanaIngestHistoryFile: File = defaultArcanaIngestHistoryFile,
     selfTestArtifactFile: File = serverPySelfTestFile,
+    selfTestHistoryFile: File = serverPySelfTestHistoryFile,
     deployHistorySourceFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
     enablePeerSnapshots: Boolean = false,
@@ -136,7 +140,7 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, selfTestArtifactFile, deployHistorySourceFile, githubIssues, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
+        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, arcanaIngestHistoryFile, selfTestArtifactFile, selfTestHistoryFile, deployHistorySourceFile, githubIssues, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
     }
 
     get("/api/ops/host-snapshot") {
@@ -164,6 +168,7 @@ fun Route.opsRoutes(
 
         arcanaIngestTargetFile.parentFile?.mkdirs()
         arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
+        appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
@@ -253,7 +258,9 @@ private fun File.dashboardContentType() = when (extension.lowercase()) {
 private fun opsSummary(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestFile: File = defaultArcanaIngestFile,
+    arcanaHistoryFile: File = defaultArcanaIngestHistoryFile,
     selfTestFile: File = serverPySelfTestFile,
+    selfTestHistoryFile: File = serverPySelfTestHistoryFile,
     historyFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
     peerSnapshot: OpsHostSnapshotDto? = null,
@@ -279,7 +286,7 @@ private fun opsSummary(
         detail = if (serverPyReady) "$serverPyTransport bridge ready." else "$serverPyTransport bridge unavailable.",
     )
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
-    val backendHistory = deployHistory(historyFile)
+    val backendHistory = runHistory(historyFile)
     val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
     val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
     val backendCurrentRun = TestRunSummaryDto(
@@ -293,6 +300,8 @@ private fun opsSummary(
     )
     val backendLatestRun = if (localPreview) backendCurrentRun else backendHistory.firstOrNull() ?: backendCurrentRun
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
+    val serverPyHistory = runHistory(selfTestHistoryFile).ifEmpty { listOfNotNull(serverPySelfTest?.toRunSummary()) }
+    val arcanaHistory = runHistory(arcanaHistoryFile).ifEmpty { listOfNotNull(arcanaLatestRun) }
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
     val arcanaSignals = mergedArcanaSignals(processSnapshots)
@@ -327,6 +336,7 @@ private fun opsSummary(
                 runtimeLabels = serverPyRuntimeLabels,
                 latestRun = serverPyLatestRun,
                 runs = serverPyRuns(serverPySelfTest, serverPyLatestRun),
+                history = serverPyHistory,
                 selfTest = serverPySelfTest,
                 issues = serverPyIssues,
                 signals = snapshots.map { it.serverPySignal() },
@@ -340,6 +350,7 @@ private fun opsSummary(
                 runtimeLabels = arcanaRuntimeLabels,
                 latestRun = arcanaLatestRun,
                 runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
+                history = arcanaHistory,
                 issues = arcanaIssues,
                 signals = arcanaSignals,
                 note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
@@ -638,7 +649,9 @@ private fun tcpReady(host: String, port: Int): Boolean = runCatching {
     Socket().use { it.connect(InetSocketAddress(host, port), 150) }
 }.isSuccess
 
-internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryDto> = runCatching {
+internal fun deployHistory(file: File = deployHistoryFile, limit: Int = 80) = runHistory(file, limit)
+
+private fun runHistory(file: File, limit: Int = 80): List<TestRunSummaryDto> = runCatching {
     file.takeIf { it.isFile }
         ?.readLines()
         ?.asReversed()
@@ -653,9 +666,14 @@ internal fun deployHistory(file: File = deployHistoryFile): List<TestRunSummaryD
                 detail = item.text("detail") ?: item.text("mode"),
             )
         }
-        ?.take(8)
+        ?.take(limit)
         ?: emptyList()
 }.getOrDefault(emptyList())
+
+internal fun appendRunHistory(file: File, run: TestRunSummaryDto) = runCatching {
+    file.parentFile?.mkdirs()
+    file.appendText(opsJson.encodeToString(run) + "\n")
+}
 
 private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
     latestRun,
@@ -801,7 +819,7 @@ private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
     url = url,
 )
 
-private fun SelfTestSummaryDto.toRunSummary() = TestRunSummaryDto(
+internal fun SelfTestSummaryDto.toRunSummary() = TestRunSummaryDto(
     label = "live selftest",
     status = status,
     timestampMs = timestampMs?.takeIf { it > 0 },

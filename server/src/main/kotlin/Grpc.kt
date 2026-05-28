@@ -406,6 +406,7 @@ fun Route.grpc() {
 private fun persistSelfTestResult(result: SelfTestResultDto) {
     runCatching {
         selfTestResultFile.writeText(heartbeatJson.encodeToString(result))
+        appendRunHistory(serverPySelfTestHistoryFile, result.toOpsSelfTestSummary().toRunSummary())
     }.onFailure {
         println("[gRPC] [selftest] failed to persist result: ${it.message}")
     }

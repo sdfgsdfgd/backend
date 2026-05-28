@@ -3,6 +3,7 @@ package net.sdfgsdfg.dashboard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -107,7 +108,9 @@ fun DashboardApp(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val pageBottomGutter = maxHeight * 0.28f
                 OpsWallpaper()
+                val listState = rememberLazyListState()
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -130,7 +133,7 @@ fun DashboardApp(
                         ) {
                             when (selectedTab) {
                                 DashboardTab.Home -> Home(loadState)
-                                DashboardTab.Ci -> CiResults(loadState)
+                                DashboardTab.Ci -> CiResults(loadState, atPageBottom = !listState.canScrollForward)
                                 DashboardTab.Issues -> Issues(loadState)
                                 DashboardTab.Arcana -> WorkSurface(
                                     title = "Arcana Sessions",
