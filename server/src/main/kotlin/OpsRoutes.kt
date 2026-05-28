@@ -51,6 +51,7 @@ import java.nio.file.Paths
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -61,10 +62,12 @@ private val opsJson = Json {
     encodeDefaults = true
 }
 
+private val opsZoneId = ZoneId.of("Australia/Melbourne")
 private val opsTimeFormatter = DateTimeFormatter
     .ofPattern("d MMM, h:mm a z", Locale.ENGLISH)
-    .withZone(ZoneId.of("Australia/Melbourne"))
+    .withZone(opsZoneId)
 private val sessionDatePathFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd").withZone(ZoneId.systemDefault())
+private val psStartFormatter = DateTimeFormatter.ofPattern("EEE MMM d HH:mm:ss yyyy", Locale.ENGLISH)
 
 private val defaultArcanaIngestFile = File(resolveLogDir(), "arcana-ingest.json")
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
@@ -87,13 +90,14 @@ private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
 private const val macHostSnapshotUrl = "http://192.168.1.2/api/ops/host-snapshot"
 private const val qHostSnapshotUrl = "http://192.168.1.4/api/ops/host-snapshot"
+private val macSshTarget = System.getenv("OPS_MAC_SSH_TARGET")?.takeIf { it.isNotBlank() } ?: "x@192.168.1.2"
 private const val peerSnapshotRefreshMs = 45_000L
 private const val peerSnapshotFailBackoffMs = 45_000L
 private const val peerSnapshotStaleMs = 150_000L
 private const val activeProcessesLabel = "active"
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
-private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long)
+private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long, val misses: Int = 0)
 
 private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
@@ -256,8 +260,11 @@ private fun opsSummary(
 ): OpsSummaryDto {
     val ownServerPySelfTest = latestServerPySelfTest(selfTestFile)?.toOpsSelfTestSummary()
     val ownSnapshot = hostSnapshot(localPreview, ownServerPySelfTest)
-    val snapshots = listOfNotNull(ownSnapshot, peerSnapshot).distinctBy { it.host }
+    val httpPeerSnapshot = peerSnapshot?.takeIf { it.host != "ssh:$localRuntimeLabel" }
+    val snapshots = listOfNotNull(ownSnapshot, httpPeerSnapshot).distinctBy { it.host }
+    val processSnapshots = listOfNotNull(ownSnapshot, peerSnapshot).distinctBy { it.host }
     val backendRuntimeLabels = snapshots.runtimeLabels { it.backendRuntimeLabel }
+    val arcanaRuntimeLabels = processSnapshots.runtimeLabels { it.backendRuntimeLabel }
     val serverPyReadySnapshot = snapshots.firstOrNull { it.serverPyReady } ?: ownSnapshot
     val serverPyRuntimeLabel = serverPyReadySnapshot.serverPyRuntimeLabel
     val serverPyRuntimeLabels = snapshots.runtimeLabels { it.serverPyRuntimeLabel }
@@ -288,7 +295,7 @@ private fun opsSummary(
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
-    val arcanaSignals = mergedArcanaSignals(snapshots)
+    val arcanaSignals = mergedArcanaSignals(processSnapshots)
     val arcanaStatus = if (arcanaSignals.firstOrNull { it.isActiveProcessSignal() }?.status == OpsStatusDto.OK) {
         OpsStatusDto.OK
     } else {
@@ -329,8 +336,8 @@ private fun opsSummary(
                 name = "arcana",
                 role = "Local codebase comprehension and session engine",
                 status = arcanaStatus,
-                runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
-                runtimeLabels = backendRuntimeLabels,
+                runtimeLabel = arcanaRuntimeLabels.joinedRuntimeLabel(),
+                runtimeLabels = arcanaRuntimeLabels,
                 latestRun = arcanaLatestRun,
                 runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
                 issues = arcanaIssues,
@@ -375,12 +382,15 @@ private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
     }
     val fetched = fetchPeerHostSnapshot(url)
     val snapshot = fetched.getOrNull()
+        ?: (if (!localPreview) sshMacProcessSnapshot() else null)
         ?: previous?.snapshot?.takeIf { now - it.generatedAtMs <= peerSnapshotStaleMs }
+    val missed = fetched.isFailure && snapshot?.host != "ssh:$localRuntimeLabel"
     synchronized(peerSnapshotLock) {
         peerSnapshotCache = CachedPeerSnapshot(
             url = url,
             snapshot = snapshot,
-            nextAttemptAtMs = now + if (fetched.isSuccess) peerSnapshotRefreshMs else peerSnapshotFailBackoffMs,
+            nextAttemptAtMs = now + if (missed) peerSnapshotBackoffMs(previous?.misses.orZero()) else peerSnapshotRefreshMs,
+            misses = if (missed) previous?.misses.orZero() + 1 else 0,
         )
         return snapshot
     }
@@ -396,6 +406,19 @@ private fun fetchPeerHostSnapshot(url: String) = runCatching {
     if (response.statusCode() !in 200..299) error("Ops peer snapshot HTTP ${response.statusCode()}")
     opsJson.decodeFromString<OpsHostSnapshotDto>(response.body())
 }
+
+private fun sshMacProcessSnapshot(): OpsHostSnapshotDto? = runCatching {
+    val processes = sshMacProcesses()
+    OpsHostSnapshotDto(
+        generatedAtMs = System.currentTimeMillis(),
+        host = "ssh:$localRuntimeLabel",
+        backendRuntimeLabel = localRuntimeLabel,
+        serverPyRuntimeLabel = localRuntimeLabel,
+        serverPyReady = false,
+        serverPyTransport = "SSH",
+        arcanaSignals = arcanaSignals(localRuntimeLabel, processes),
+    )
+}.getOrNull()
 
 private fun OpsHostSnapshotDto.serverPySignal() = OpsSignalDto(
     label = "transport",
@@ -430,6 +453,14 @@ private fun List<String>.runtimeLabels(): List<String> = distinct().filter { it.
 
 private fun List<String>.joinedRuntimeLabel(): String? = takeIf { it.isNotEmpty() }?.joinToString(" + ")
 
+private fun Int?.orZero() = this ?: 0
+
+private fun peerSnapshotBackoffMs(misses: Int) = when {
+    misses >= 3 -> 5 * 60_000L
+    misses >= 1 -> 2 * 60_000L
+    else -> peerSnapshotFailBackoffMs
+}
+
 private fun latestServerPySelfTest(file: File = serverPySelfTestFile): SelfTestResultDto? = runCatching {
     file.takeIf { it.exists() }
         ?.readText()
@@ -442,8 +473,7 @@ private fun latestArcanaIngest(file: File = defaultArcanaIngestFile): ArcanaInge
         ?.let { opsJson.decodeFromString<ArcanaIngestDto>(it) }
 }.getOrNull()
 
-private fun arcanaSignals(runtimeLabel: String): List<OpsSignalDto> = buildList {
-    val processes = processSnapshots()
+private fun arcanaSignals(runtimeLabel: String, processes: List<ProcessSnapshot> = processSnapshots()): List<OpsSignalDto> = buildList {
     val arcanaGroups = processes.filter { it.command.containsArcanaProcess() }.arcanaProcessGroups()
     val codexProcesses = processes.filter { it.command.containsCodexProcess() }
     val codexSessions = codexSessionSnapshots()
@@ -494,6 +524,43 @@ private fun processSnapshots(): List<ProcessSnapshot> = ProcessHandle.allProcess
             )
         }
     }
+
+private fun sshMacProcesses(): List<ProcessSnapshot> {
+    val command = listOf(
+        "ssh",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=2",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPersist=3m",
+        "-o", "ControlPath=/tmp/sdfgsdfg-ops-mac-ssh-%r@%h:%p",
+        macSshTarget,
+        "ps -axo pid=,ppid=,lstart=,command=",
+    )
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        error("Mac SSH process probe timed out")
+    }
+    if (process.exitValue() != 0) error("Mac SSH process probe failed")
+    return process.inputStream.bufferedReader().lineSequence().mapNotNull { it.toProcessSnapshot() }.toList()
+}
+
+private fun String.toProcessSnapshot(): ProcessSnapshot? {
+    val parts = trimStart().split(Regex("\\s+"), limit = 9)
+    if (parts.size < 9) return null
+    val command = parts[8].trim().takeIf { it.isNotBlank() } ?: return null
+    return ProcessSnapshot(
+        pid = parts[0].toLongOrNull() ?: return null,
+        parentPid = parts[1].toLongOrNull(),
+        command = command,
+        startedAtMs = runCatching {
+            LocalDateTime.parse(parts.subList(2, 7).joinToString(" "), psStartFormatter)
+                .atZone(opsZoneId)
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull(),
+    )
+}
 
 internal fun List<ProcessSnapshot>.arcanaProcessGroups(): List<ProcessGroup> {
     val byPid = associateBy { it.pid }
