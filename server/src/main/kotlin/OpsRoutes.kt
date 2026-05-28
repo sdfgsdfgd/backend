@@ -531,7 +531,7 @@ private fun sshMacProcesses(): List<ProcessSnapshot> {
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=2",
         "-o", "ControlMaster=auto",
-        "-o", "ControlPersist=3m",
+        "-o", "ControlPersist=5m",
         "-o", "ControlPath=/tmp/sdfgsdfg-ops-mac-ssh-%r@%h:%p",
         macSshTarget,
         "ps -axo pid=,ppid=,lstart=,command= | grep -E 'arcana|codex|_0.py' || true",
