@@ -357,6 +357,7 @@ private fun opsSummary(
             "verifyServer, dashboard build-if-needed, installServer, local smoke."
         },
     )
+    val socketClients = OpsSocketHub.clientCount
     val backendLatestRun = if (localPreview) backendCurrentRun else backendHistory.firstOrNull() ?: backendCurrentRun
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val serverPyHistory = (runHistory(selfTestHistoryFile) + runHistory(serverPyUnitHistoryFile))
@@ -386,7 +387,15 @@ private fun opsSummary(
                 runs = backendRuns(backendLatestRun, backendFullSuite()),
                 history = backendHistory,
                 issues = backendIssues,
-                signals = emptyList(),
+                signals = listOf(
+                    OpsSignalDto(
+                        label = "websocket clients",
+                        status = if (socketClients > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+                        timestampMs = System.currentTimeMillis(),
+                        detail = "$socketClients active dashboard ${if (socketClients == 1) "client" else "clients"}",
+                        meta = "ops websocket",
+                    ),
+                ),
             ),
             RepoHealthDto(
                 id = "server_py",
@@ -701,7 +710,13 @@ private fun codexSessionSnapshots(): List<CodexSessionSnapshot> = runCatching {
 private fun List<CodexSessionSnapshot>.nearest(startedAtMs: Long?): CodexSessionSnapshot? = startedAtMs
     ?.let { start -> minByOrNull { abs(it.startedAtMs - start) }?.takeIf { abs(it.startedAtMs - start) < 4 * 60_000 } }
 
-private fun String.containsArcanaProcess() = lowercase().let { !it.isProbeCommand() && ("desktop/py/arcana" in it || "/arcana/" in it || it.endsWith("/arcana")) }
+private fun String.containsArcanaProcess() = lowercase().let {
+    !it.isProbeCommand() &&
+        "computer-use" !in it &&
+        "computeruse" !in it &&
+        "_0.py" in it &&
+        ("desktop/py/arcana" in it || "/arcana/" in it || it.endsWith("/arcana"))
+}
 
 private fun String.containsCodexProcess() = lowercase().let { !it.isProbeCommand() && "computeruse" !in it && "codex_snapshot" !in it && (" codex" in it || "/codex" in it) }
 

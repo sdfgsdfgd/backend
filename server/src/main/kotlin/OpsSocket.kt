@@ -33,6 +33,9 @@ internal object OpsSocketHub {
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
 
+    val clientCount: Int
+        get() = clients.size
+
     fun configure(provider: () -> OpsSummaryDto) {
         summaryProvider = provider
     }

@@ -193,7 +193,7 @@ internal fun PanelBadge(badge: BadgeSpec, modifier: Modifier = Modifier) {
 }
 
 @Composable
-internal fun UpdatePill(color: Color) {
+internal fun UpdatePill(color: Color, label: String = "new") {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
@@ -201,7 +201,7 @@ internal fun UpdatePill(color: Color) {
             .border(BorderStroke(1.dp, color.copy(alpha = 0.42f)), RoundedCornerShape(999.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
-        Text("new", color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -391,14 +391,27 @@ internal fun IssueSummaryDto.badgeSpec() = BadgeSpec(
 )
 
 internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
-    "backend" -> runs.firstOrNull { it.label == "unit tests" }
-        ?.let { listOf(BadgeSpec("TEST: unit ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
-        .orEmpty()
-    "server_py" -> selfTest
-        ?.let { listOf(BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
-        .orEmpty()
+    "backend" -> listOfNotNull(
+        runs.firstOrNull { it.label == "unit tests" }?.testBadge("unit"),
+        runs.firstOrNull { it.label == "full suite" }?.testBadge("suite"),
+    )
+    "server_py" -> listOfNotNull(
+        runs.firstOrNull { it.label == "unit tests" }?.testBadge("unit"),
+        runs.firstOrNull { it.label == "live e2e selftest" }?.testBadge("e2e")
+            ?: selfTest?.let { BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN) },
+    )
+    "arcana" -> listOfNotNull(
+        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.testBadge("unit"),
+    )
     else -> emptyList()
 }
+
+private fun TestRunSummaryDto.testBadge(kind: String) =
+    BadgeSpec("TEST: $kind ${status.name}", status.color(), strong = status != OpsStatusDto.UNKNOWN)
+
+internal fun TestRunSummaryDto.isArcanaTestRun() = label.contains("pytest", ignoreCase = true) ||
+    label.contains("z_tests", ignoreCase = true) ||
+    detail?.contains("passed", ignoreCase = true) == true
 
 internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
     val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }

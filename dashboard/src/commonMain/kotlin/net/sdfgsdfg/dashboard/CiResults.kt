@@ -307,9 +307,13 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
     val repos = summary.repos.filter { it.id in historyRepoIds }
     var enabled by remember { mutableStateOf(historyRepoIds.toSet()) }
     var visibleLimit by remember { mutableStateOf(12) }
-    val counts = repos.associate { it.id to it.history.size }
-    val allEvents = repos
-        .flatMap { repo -> repo.history.map { repo to it } }
+    val eventsByRepo = repos.associateWith { repo ->
+        (repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
+            .distinctBy { it.label to it.timestampMs }
+    }
+    val counts = eventsByRepo.entries.associate { (repo, runs) -> repo.id to runs.size }
+    val allEvents = eventsByRepo
+        .flatMap { (repo, runs) -> runs.map { repo to it } }
         .sortedByDescending { it.second.timestampMs ?: 0L }
     val events = allEvents.filter { it.first.id in enabled }
     val visibleEvents = events.take(visibleLimit)
@@ -381,6 +385,7 @@ private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onC
 @Composable
 private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false) {
     val flash = if (fresh) 1f else 0f
+    val running = run.status == OpsStatusDto.WIP
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -398,6 +403,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${repo.name} / ${run.label}", modifier = Modifier.weight(1f), color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (fresh) UpdatePill(run.status.color())
+                if (running) UpdatePill(cyan, "running")
                 RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
             }
             run.detail?.let {
@@ -474,10 +480,6 @@ private fun RepoHealthDto.ciRuns(): List<TestRunSummaryDto> = when (id) {
     "arcana" -> listOfNotNull(latestRun).filter { it.isArcanaTestRun() }.ifEmpty { runs.filter { it.isArcanaTestRun() } }
     else -> runs.ifEmpty { listOfNotNull(latestRun) }
 }.distinctBy { it.label to it.timestampMs }
-
-private fun TestRunSummaryDto.isArcanaTestRun() = label.contains("pytest", ignoreCase = true) ||
-    label.contains("z_tests", ignoreCase = true) ||
-    detail?.contains("passed", ignoreCase = true) == true
 
 private fun SelfTestSummaryDto.zenFields() = listOfNotNull(
     zenState?.let { FieldSpec("zen state", it) },

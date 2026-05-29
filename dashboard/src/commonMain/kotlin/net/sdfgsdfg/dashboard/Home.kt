@@ -181,9 +181,12 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: Op
                 )
                 if (repo.id != "arcana") PanelBadge(BadgeSpec(status.name, status.color(), strong = true))
             }
+            val testBadges = repo.testBadges()
+            if (testBadges.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                testBadges.forEach { PanelBadge(it) }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeSpec())
-                repo.testBadges().forEach { PanelBadge(it) }
             }
         }
     }
