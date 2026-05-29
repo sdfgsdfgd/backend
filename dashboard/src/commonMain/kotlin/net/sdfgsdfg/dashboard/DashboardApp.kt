@@ -53,6 +53,7 @@ fun DashboardApp(
 ) {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
+    var socketState by remember { mutableStateOf(OpsSocketState()) }
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
@@ -63,7 +64,18 @@ fun DashboardApp(
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
     }
-    LaunchedEffect(Unit) {
+    DisposableEffect(Unit) {
+        val close = connectOpsSocket(
+            onMessage = { message ->
+                if (!mounted[0]) return@connectOpsSocket
+                message.summary?.let { loadState = OpsLoadState.Ready(it) }
+            },
+            onState = { if (mounted[0]) socketState = it },
+        )
+        onDispose { close() }
+    }
+    LaunchedEffect(socketState.status) {
+        if (socketState.status != OpsSocketStatus.DISCONNECTED) return@LaunchedEffect
         while (true) {
             loadOpsSummary(
                 onLoaded = { if (mounted[0]) loadState = OpsLoadState.Ready(it) },
@@ -120,6 +132,7 @@ fun DashboardApp(
                         Header(
                             selectedTab = selectedTab,
                             onTabSelected = { selectedTab = it },
+                            socketState = socketState,
                         )
                         if (loadState is OpsLoadState.Loading) {
                             TopLoadTrace()

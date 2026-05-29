@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -73,6 +74,7 @@ internal fun OpsWallpaper() {
 internal fun Header(
     selectedTab: DashboardTab,
     onTabSelected: (DashboardTab) -> Unit,
+    socketState: OpsSocketState,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -95,17 +97,32 @@ internal fun Header(
                 .background(Brush.linearGradient(listOf(Color(0xEE06111E), Color(0xE904080D), Color(0xD8170710)))),
         )
         ToolbarTexture(Modifier.matchParentSize())
-        val compactTabs = maxWidth < 520.dp
+        val stackedHeader = maxWidth < 660.dp
         if (maxWidth < 900.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HeaderTitle()
-                TabSwitcher(selectedTab, compact = compactTabs, onTabSelected)
+                if (stackedHeader) {
+                    TabSwitcher(selectedTab, compact = true, onTabSelected)
+                    OpsConnectionBadge(socketState)
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TabSwitcher(selectedTab, compact = false, onTabSelected)
+                        OpsConnectionBadge(socketState)
+                    }
+                }
             }
         } else {
             Box(modifier = Modifier.fillMaxWidth()) {
                 HeaderTitle(modifier = Modifier.align(Alignment.CenterStart))
                 TabSwitcher(selectedTab, compact = false, onTabSelected, modifier = Modifier.align(Alignment.Center))
-                HeaderRuntimeBadge(modifier = Modifier.align(Alignment.CenterEnd))
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OpsConnectionBadge(socketState)
+                    HeaderRuntimeBadge()
+                }
             }
         }
     }
@@ -329,6 +346,39 @@ private fun HeaderRuntimeBadge(modifier: Modifier = Modifier) {
         Text("Compose 1.11", color = Color(0xFFDFF5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Text("/", color = Color(0xFF516075), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Text("hotRunJvm", color = cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun OpsConnectionBadge(state: OpsSocketState) {
+    val tone = when {
+        state.status == OpsSocketStatus.DISCONNECTED -> rose
+        state.status == OpsSocketStatus.CONNECTING -> amber
+        (state.latencyMs ?: 0L) > 700L -> amber
+        else -> green
+    }
+    val label = when (state.status) {
+        OpsSocketStatus.CONNECTED -> state.latencyMs?.let { "$it ms" } ?: "online"
+        OpsSocketStatus.CONNECTING -> "linking"
+        OpsSocketStatus.DISCONNECTED -> "offline"
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xC4081015))
+            .border(BorderStroke(1.dp, tone.copy(alpha = 0.40f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+            .widthIn(min = 72.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(tone),
+        )
+        Text(label, color = tone, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 

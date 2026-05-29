@@ -9,6 +9,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.response.respondText
@@ -16,6 +17,7 @@ import io.ktor.server.routing.host
 import io.ktor.server.routing.routing
 import io.ktor.server.routing.route
 import io.ktor.server.testing.testApplication
+import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -47,11 +49,15 @@ class OpsRoutesTest {
     private val noBackendFullSuite = {
         TestRunSummaryDto("full suite", OpsStatusDto.OK, detail = "stubbed backend umbrella.", url = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml")
     }
+    private fun Application.installOpsRouteTestPlugins() {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        install(WebSockets)
+    }
 
     @Test
     fun opsSummaryExposesGrandTrio() = testApplication {
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing { opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
         }
 
@@ -100,7 +106,7 @@ class OpsRoutesTest {
         File(dist, "index.html").writeText("<main>dashboard</main>")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
                 host("ops.sdfgsdfg.net") {
@@ -124,7 +130,7 @@ class OpsRoutesTest {
         File(dist, "index.html").writeText("<main>dashboard</main>")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
                 host("ops.sdfgsdfg.net") {
@@ -155,6 +161,7 @@ class OpsRoutesTest {
         artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok"}""")
 
         application {
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(selfTestArtifactFile = artifact, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
             }
@@ -179,7 +186,7 @@ class OpsRoutesTest {
         artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok","latency_ms":88.0,"timestamp_ms":42}""")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(
                     localPreview = true,
@@ -216,7 +223,7 @@ class OpsRoutesTest {
         artifact.writeText("""{"label":"unit tests","status":"OK","detail":"3 passed in 0.10s","coverage_pct":91.5}""")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(
                     localPreview = true,
@@ -248,6 +255,7 @@ class OpsRoutesTest {
         artifact.writeText("""{"status":"OK","label":"q arcana unit pytest"}""")
 
         application {
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(arcanaIngestTargetFile = artifact, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
             }
@@ -265,7 +273,7 @@ class OpsRoutesTest {
     @Test
     fun opsApiIsAvailableOnLoopbackForLocalDashboardPreview() = testApplication {
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(localPreview = true, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
                 route("/{...}") {
@@ -283,7 +291,9 @@ class OpsRoutesTest {
 
     @Test
     fun opsSummaryMergesPeerHostSnapshotWhenEnabled() = testApplication {
-        val missingSelfTestFile = File(createTempDirectory().toFile(), "server-py-selftest.json")
+        val dir = createTempDirectory().toFile()
+        val missingSelfTestFile = File(dir, "server-py-selftest.json")
+        val missingUnitFile = File(dir, "server-py-unit.json")
         val peer = OpsHostSnapshotDto(
             generatedAtMs = 123L,
             host = "remote q",
@@ -301,6 +311,13 @@ class OpsRoutesTest {
                 caseCount = 2,
                 casePassCount = 2,
             ),
+            serverPyUnitTest = TestRunSummaryDto(
+                label = "unit tests",
+                status = OpsStatusDto.OK,
+                detail = "22 passed in 0.64s",
+                url = "/api/ops/artifacts/server-py-unit.json",
+                coveragePct = 33.0,
+            ),
             arcanaSignals = listOf(
                 OpsSignalDto("active", OpsStatusDto.OK, detail = "0 arcana live · 1 codex live", meta = "remote q"),
                 OpsSignalDto("codex", OpsStatusDto.OK, timestampMs = 99L, detail = "peer session", meta = "remote q · process #7"),
@@ -308,11 +325,12 @@ class OpsRoutesTest {
         )
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(
                     localPreview = true,
                     selfTestArtifactFile = missingSelfTestFile,
+                    serverPyUnitFile = missingUnitFile,
                     githubIssues = noGithubIssues,
                     backendFullSuite = noBackendFullSuite,
                     enablePeerSnapshots = true,
@@ -332,7 +350,9 @@ class OpsRoutesTest {
         assertEquals("local + remote q", backend.runtimeLabel)
         assertEquals(OpsStatusDto.OK, serverPy.selfTest?.status)
         assertEquals("peer selftest", serverPy.latestRun?.detail)
-        assertEquals(listOf("live e2e selftest", "model matrix"), serverPy.runs.map { it.label })
+        assertEquals(listOf("unit tests", "live e2e selftest", "model matrix"), serverPy.runs.map { it.label })
+        assertEquals(33.0, serverPy.runs.first().coveragePct)
+        assertEquals("https://ops.sdfgsdfg.net/api/ops/artifacts/server-py-unit.json", serverPy.runs.first().url)
         assertEquals(listOf("local", "remote q"), arcana.runtimeLabels)
         assertEquals(true, arcana.signals.first().detail?.contains("remote q: 0 arcana live") == true)
         assertEquals(true, arcana.signals.any { it.detail == "peer session" && it.meta == "remote q · process #7" })
@@ -341,7 +361,7 @@ class OpsRoutesTest {
     @Test
     fun opsSummaryDoesNotInventMissingPeerRuntime() = testApplication {
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(
                     localPreview = false,
@@ -364,7 +384,7 @@ class OpsRoutesTest {
     @Test
     fun opsHostSnapshotExposesOnlyCurrentHostStatus() = testApplication {
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing { opsRoutes(localPreview = true, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
         }
 
@@ -386,7 +406,7 @@ class OpsRoutesTest {
         val expectedServerPyRuntime = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) "remote q" else "local"
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(
                     localPreview = true,
@@ -418,7 +438,7 @@ class OpsRoutesTest {
         val ingestFile = File(createTempDirectory().toFile(), "missing-arcana-ingest.json")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing { opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
         }
 
@@ -644,7 +664,7 @@ class OpsRoutesTest {
         val historyFile = File(dir, "arcana-ingest-history.jsonl")
 
         application {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            installOpsRouteTestPlugins()
             routing {
                 opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, arcanaIngestHistoryFile = historyFile, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite)
             }

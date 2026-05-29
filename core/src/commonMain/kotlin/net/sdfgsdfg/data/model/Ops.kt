@@ -10,6 +10,15 @@ data class OpsSummaryDto(
 )
 
 @Serializable
+data class OpsSocketMessageDto(
+    val type: String,
+    @SerialName("client_timestamp") val clientTimestamp: Long? = null,
+    @SerialName("server_timestamp") val serverTimestamp: Long? = null,
+    val summary: OpsSummaryDto? = null,
+    val message: String? = null,
+)
+
+@Serializable
 data class RepoHealthDto(
     val id: String,
     val name: String,
@@ -64,6 +73,7 @@ data class OpsHostSnapshotDto(
     @SerialName("server_py_ready") val serverPyReady: Boolean,
     @SerialName("server_py_transport") val serverPyTransport: String,
     @SerialName("server_py_self_test") val serverPySelfTest: SelfTestSummaryDto? = null,
+    @SerialName("server_py_unit_test") val serverPyUnitTest: TestRunSummaryDto? = null,
     @SerialName("arcana_signals") val arcanaSignals: List<OpsSignalDto> = emptyList(),
 )
 

@@ -13,6 +13,9 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.close
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -139,6 +142,21 @@ fun Route.opsRoutes(
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
         return opsHost || (localPreview && call.clientInfo().isLocal)
     }
+    fun summary() = opsSummary(
+        localPreview,
+        arcanaIngestTargetFile,
+        arcanaIngestHistoryFile,
+        selfTestArtifactFile,
+        selfTestHistoryFile,
+        serverPyUnitFile,
+        serverPyUnitHistoryFile,
+        deployHistorySourceFile,
+        githubIssues,
+        backendFullSuite,
+        if (enablePeerSnapshots) peerSnapshot(localPreview) else null,
+    )
+
+    OpsSocketHub.configure(::summary)
 
     suspend fun ApplicationCall.respondJsonArtifact(file: File) {
         if (!allowed(this)) {
@@ -155,12 +173,21 @@ fun Route.opsRoutes(
         }
     }
 
+    // Browser UI uses /api/ops/ws as the primary transport; keep this as the canonical snapshot endpoint for fallback and diagnostics.
     get("/api/ops/summary") {
         if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, arcanaIngestHistoryFile, selfTestArtifactFile, selfTestHistoryFile, serverPyUnitFile, serverPyUnitHistoryFile, deployHistorySourceFile, githubIssues, backendFullSuite, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
+        call.respond(summary())
+    }
+
+    webSocket("/api/ops/ws") {
+        if (!allowed(call)) {
+            close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
+            return@webSocket
+        }
+        OpsSocketHub.serve(this)
     }
 
     get("/api/ops/host-snapshot") {
@@ -189,6 +216,7 @@ fun Route.opsRoutes(
         arcanaIngestTargetFile.parentFile?.mkdirs()
         arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
         appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
+        OpsSocketHub.broadcastSummary()
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
@@ -303,6 +331,10 @@ private fun opsSummary(
     val serverPyRuntimeLabel = serverPyReadySnapshot.serverPyRuntimeLabel
     val serverPyRuntimeLabels = snapshots.runtimeLabels { it.serverPyRuntimeLabel }
     val serverPySelfTest = ownServerPySelfTest ?: snapshots.firstNotNullOfOrNull { it.serverPySelfTest }
+    val ownServerPyUnit = latestTestRun(serverPyUnitFile)
+    val serverPyUnit = ownServerPyUnit ?: snapshots
+        .firstNotNullOfOrNull { snapshot -> snapshot.serverPyUnitTest?.takeIf { snapshot.host != ownSnapshot.host } }
+        ?.withPeerArtifactUrl(localPreview)
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
     val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
@@ -313,7 +345,6 @@ private fun opsSummary(
         detail = if (serverPyReady) "$serverPyTransport bridge ready." else "$serverPyTransport bridge unavailable.",
     )
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
-    val serverPyUnit = latestTestRun(serverPyUnitFile)
     val backendHistory = runHistory(historyFile)
     val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
     val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
@@ -410,9 +441,13 @@ private fun hostSnapshot(
         serverPyReady = serverPyReady,
         serverPyTransport = if (serverPyRuntimeLabel == localRuntimeLabel) "TCP 1453" else "UDS",
         serverPySelfTest = serverPySelfTest,
+        serverPyUnitTest = latestTestRun(defaultServerPyUnitFile),
         arcanaSignals = arcanaSignals(backendRuntimeLabel),
     )
 }
+
+private fun TestRunSummaryDto.withPeerArtifactUrl(localPreview: Boolean): TestRunSummaryDto =
+    if (localPreview && url?.startsWith("/") == true) copy(url = "https://ops.sdfgsdfg.net$url") else this
 
 private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
     val url = if (localPreview) qHostSnapshotUrl else macHostSnapshotUrl

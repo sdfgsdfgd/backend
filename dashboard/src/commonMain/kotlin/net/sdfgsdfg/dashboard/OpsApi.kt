@@ -1,6 +1,7 @@
 package net.sdfgsdfg.dashboard
 
 import kotlinx.serialization.json.Json
+import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 
 internal val dashboardJson = Json {
@@ -11,5 +12,17 @@ internal expect fun loadOpsSummary(
     onLoaded: (OpsSummaryDto) -> Unit,
     onFailed: (String) -> Unit,
 )
+
+internal enum class OpsSocketStatus { CONNECTING, CONNECTED, DISCONNECTED }
+
+internal data class OpsSocketState(
+    val status: OpsSocketStatus = OpsSocketStatus.CONNECTING,
+    val latencyMs: Long? = null,
+)
+
+internal expect fun connectOpsSocket(
+    onMessage: (OpsSocketMessageDto) -> Unit,
+    onState: (OpsSocketState) -> Unit,
+): () -> Unit
 
 internal expect fun openOpsUrl(url: String)

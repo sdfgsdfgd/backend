@@ -298,6 +298,7 @@ private suspend fun runServerPyUnitTests(logFile: File): Int {
     )
     serverPyUnitFile.writeText(json.encodeToString(run))
     appendRunHistory(serverPyUnitHistoryFile, run)
+    OpsSocketHub.broadcastSummary()
     return exit
 }
 

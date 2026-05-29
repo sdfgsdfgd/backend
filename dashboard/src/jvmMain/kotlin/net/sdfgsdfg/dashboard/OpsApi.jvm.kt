@@ -1,6 +1,7 @@
 package net.sdfgsdfg.dashboard
 
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import java.awt.Desktop
 import java.net.URI
 import java.net.http.HttpClient
@@ -30,6 +31,14 @@ internal actual fun openOpsUrl(url: String) {
     runCatching {
         if (Desktop.isDesktopSupported()) Desktop.getDesktop().browse(URI.create(opsUrl(url)))
     }
+}
+
+internal actual fun connectOpsSocket(
+    onMessage: (OpsSocketMessageDto) -> Unit,
+    onState: (OpsSocketState) -> Unit,
+): () -> Unit {
+    onState(OpsSocketState(OpsSocketStatus.DISCONNECTED))
+    return {}
 }
 
 private fun fetchOpsSummary(): OpsSummaryDto {
