@@ -221,7 +221,7 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
     val processRows = signals.filterNot { it.isActiveProcessSummary() }
     val processKeys = processRows.map { "${it.label}-${it.meta}-${it.timestampMs}-${it.detail}" }
     val freshKeys = rememberFreshKeys(processKeys)
-    var expanded by remember { mutableStateOf(true) }
+    var expanded by remember { mutableStateOf(readDashboardPref("ops.home.activeExpanded")?.toBooleanStrictOrNull() ?: true) }
 
     Column(
         modifier = Modifier.animateContentSize(animationSpec = tween(320, easing = FastOutSlowInEasing)),
@@ -232,7 +232,10 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
                 signal = it,
                 generatedAtMs = generatedAtMs,
                 expanded = expanded,
-                onClick = { expanded = !expanded },
+                onClick = {
+                    expanded = !expanded
+                    writeDashboardPref("ops.home.activeExpanded", expanded.toString())
+                },
             )
         }
         AnimatedVisibility(

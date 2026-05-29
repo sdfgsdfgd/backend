@@ -26,3 +26,7 @@ internal expect fun connectOpsSocket(
 ): () -> Unit
 
 internal expect fun openOpsUrl(url: String)
+
+internal expect fun readDashboardPref(key: String): String?
+
+internal expect fun writeDashboardPref(key: String, value: String?)

@@ -33,6 +33,11 @@ internal actual fun openOpsUrl(url: String) {
     }
 }
 
+internal actual fun readDashboardPref(key: String): String? = null
+
+internal actual fun writeDashboardPref(key: String, value: String?) {
+}
+
 internal actual fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,

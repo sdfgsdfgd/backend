@@ -305,7 +305,7 @@ private fun ArtifactStrip(primaryUrl: String?, artifacts: List<OpsArtifactDto>) 
 @Composable
 private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
     val repos = summary.repos.filter { it.id in historyRepoIds }
-    var enabled by remember { mutableStateOf(historyRepoIds.toSet()) }
+    var enabled by remember { mutableStateOf(readHistoryRepoFilter()) }
     var visibleLimit by remember { mutableStateOf(12) }
     val eventsByRepo = repos.associateWith { repo ->
         (repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
@@ -345,7 +345,10 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
                     label = "${id.displayRepoName()} ${counts[id] ?: 0}",
                     color = id.historyColor(),
                     enabled = id in enabled,
-                    onClick = { enabled = if (id in enabled) enabled - id else enabled + id },
+                    onClick = {
+                        enabled = if (id in enabled) enabled - id else enabled + id
+                        writeDashboardPref(historyRepoFilterPrefKey, enabled.joinToString(","))
+                    },
                 )
             }
         }
@@ -357,6 +360,13 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
 }
 
 private val historyRepoIds = listOf("backend", "server_py", "arcana")
+private const val historyRepoFilterPrefKey = "ops.ci.enabledRepos"
+
+private fun readHistoryRepoFilter(): Set<String> = readDashboardPref(historyRepoFilterPrefKey)
+    ?.split(',')
+    ?.filter { it in historyRepoIds }
+    ?.toSet()
+    ?: historyRepoIds.toSet()
 
 @Composable
 private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {

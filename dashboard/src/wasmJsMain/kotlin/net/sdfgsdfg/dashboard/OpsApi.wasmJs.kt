@@ -1,5 +1,6 @@
 package net.sdfgsdfg.dashboard
 
+import kotlinx.browser.localStorage
 import kotlinx.browser.window
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -46,6 +47,15 @@ internal actual fun loadOpsSummary(
 
 internal actual fun openOpsUrl(url: String) {
     window.open(opsUrl(url), "_blank")
+}
+
+internal actual fun readDashboardPref(key: String): String? =
+    runCatching { localStorage.getItem(key) }.getOrNull()
+
+internal actual fun writeDashboardPref(key: String, value: String?) {
+    runCatching {
+        if (value == null) localStorage.removeItem(key) else localStorage.setItem(key, value)
+    }
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)

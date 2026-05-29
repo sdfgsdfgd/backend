@@ -36,7 +36,11 @@ internal enum class DashboardTab(val label: String) {
     Home("Home"),
     Ci("CI Results"),
     Issues("Issues"),
-    Arcana("Arcana Sessions"),
+    Arcana("Arcana Sessions");
+
+    companion object {
+        fun fromStoredName(value: String) = entries.firstOrNull { it.name == value }
+    }
 }
 
 internal sealed interface OpsLoadState {
@@ -50,7 +54,7 @@ fun DashboardApp(
     arrowShiftSignal: Int = 0,
     focusedArrowKeys: Boolean = true,
 ) {
-    var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
+    var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     var socketState by remember { mutableStateOf(OpsSocketState()) }
     val focusRequester = remember { FocusRequester() }
@@ -85,7 +89,7 @@ fun DashboardApp(
     }
     LaunchedEffect(arrowShiftSignal) {
         val shift = arrowShiftSignal - handledArrowShiftSignal
-        if (shift != 0) selectedTab = selectedTab.shift(shift)
+        if (shift != 0) selectedTab = selectedTab.shift(shift).also { writeDashboardPref("ops.tab", it.name) }
         handledArrowShiftSignal = arrowShiftSignal
     }
     val surfaceModifier = Modifier
@@ -106,8 +110,8 @@ fun DashboardApp(
                 surfaceModifier.onPreviewKeyEvent {
                     if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (it.key) {
-                        Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); true }
-                        Key.DirectionRight -> { selectedTab = selectedTab.shift(1); true }
+                        Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                        Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
                         else -> false
                     }
                 }
@@ -130,7 +134,7 @@ fun DashboardApp(
                     item {
                         Header(
                             selectedTab = selectedTab,
-                            onTabSelected = { selectedTab = it },
+                            onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
                             socketState = socketState,
                         )
                         if (loadState is OpsLoadState.Loading) {
