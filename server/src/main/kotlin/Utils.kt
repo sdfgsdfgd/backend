@@ -98,8 +98,10 @@ suspend fun String.shell(
  *  distInstall dir  or  custom folder within repo, via shadowJar or whatever
  *
  */
-fun resolveLogDir() = File(System.getProperty("user.dir"), "0_scripts/logs").takeIf { it.mkdirs() || it.exists() }
-    ?: error("Failed to create/access log directory: ${System.getProperty("user.dir")}/0_scripts/logs")
+fun resolveLogDir() = (System.getenv("LOG_DIR")?.takeIf { it.isNotBlank() }?.let(::File)
+    ?: File(System.getProperty("user.dir"), "0_scripts/logs"))
+    .takeIf { it.mkdirs() || it.exists() }
+    ?: error("Failed to create/access log directory")
 
 /**
  * Streams lines from a BufferedReader as a Flow.

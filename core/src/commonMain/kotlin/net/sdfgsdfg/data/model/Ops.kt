@@ -43,6 +43,7 @@ data class TestRunSummaryDto(
     @SerialName("duration_ms") val durationMs: Double? = null,
     val detail: String? = null,
     val url: String? = null,
+    @SerialName("coverage_pct") val coveragePct: Double? = null,
 )
 
 @Serializable
@@ -72,6 +73,7 @@ data class ArcanaIngestDto(
     val label: String = "arcana publisher",
     @SerialName("timestamp_ms") val timestampMs: Long? = null,
     @SerialName("duration_ms") val durationMs: Double? = null,
+    @SerialName("coverage_pct") val coveragePct: Double? = null,
     val detail: String? = null,
     val url: String? = null,
     val issues: IssueSummaryDto = IssueSummaryDto(),

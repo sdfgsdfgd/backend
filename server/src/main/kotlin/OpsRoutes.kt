@@ -55,6 +55,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.abs
 
 private val opsJson = Json {
@@ -71,23 +72,28 @@ private val psStartFormatter = DateTimeFormatter.ofPattern("EEE MMM d HH:mm:ss y
 
 private val defaultArcanaIngestFile = File(resolveLogDir(), "arcana-ingest.json")
 private val serverPySelfTestFile = File(resolveLogDir(), "server-py-selftest.json")
+private val defaultServerPyUnitFile = File(resolveLogDir(), "server-py-unit.json")
 private val deployHistoryFile = File(resolveLogDir(), "deploy-history.jsonl")
 private val defaultArcanaIngestHistoryFile = File(resolveLogDir(), "arcana-ingest-history.jsonl")
 internal val serverPySelfTestHistoryFile = File(resolveLogDir(), "server-py-selftest-history.jsonl")
+private val defaultServerPyUnitHistoryFile = File(resolveLogDir(), "server-py-unit-history.jsonl")
 private val homeDir = File(System.getProperty("user.home"))
-private val backendRepo = homeDir.resolve("Desktop/kotlin/backend")
+private val backendRepo = File(".").canonicalFile
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
 private val serverPySocket = File("/tmp/server_py/server_py.sock")
 private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
-private val publicIngressUrl = "https://sdfgsdfg.net/test"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
+private const val serverPyUnitArtifactUrl = "/api/ops/artifacts/server-py-unit.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
 private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
+private val backendFullSuiteLock = Any()
+private var backendFullSuiteCache: CachedTestRun? = null
+private const val githubWorkflowCacheMs = 10 * 60 * 1_000L
 private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
 private const val macHostSnapshotUrl = "http://192.168.1.2/api/ops/host-snapshot"
@@ -100,6 +106,17 @@ private const val activeProcessesLabel = "active"
 
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
 private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long, val misses: Int = 0)
+private data class CachedTestRun(val expiresAtMs: Long, val run: TestRunSummaryDto)
+private data class TestTotals(val tests: Int, val failures: Int, val errors: Int, val skipped: Int, val durationMs: Double, val coveragePct: Double? = null) {
+    val passed: Int = (tests - failures - errors - skipped).coerceAtLeast(0)
+    val status: OpsStatusDto = if (failures + errors > 0) OpsStatusDto.FAIL else OpsStatusDto.OK
+    val detail: String = buildList {
+        add("$passed/$tests passed")
+        if (failures > 0) add("$failures failed")
+        if (errors > 0) add("$errors errors")
+        if (skipped > 0) add("$skipped skipped")
+    }.joinToString(" · ")
+}
 
 private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
@@ -110,8 +127,11 @@ fun Route.opsRoutes(
     arcanaIngestHistoryFile: File = defaultArcanaIngestHistoryFile,
     selfTestArtifactFile: File = serverPySelfTestFile,
     selfTestHistoryFile: File = serverPySelfTestHistoryFile,
+    serverPyUnitFile: File = defaultServerPyUnitFile,
+    serverPyUnitHistoryFile: File = defaultServerPyUnitHistoryFile,
     deployHistorySourceFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
+    backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
     enablePeerSnapshots: Boolean = false,
     peerSnapshot: (Boolean) -> OpsHostSnapshotDto? = ::peerHostSnapshot,
 ) {
@@ -140,7 +160,7 @@ fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, arcanaIngestHistoryFile, selfTestArtifactFile, selfTestHistoryFile, deployHistorySourceFile, githubIssues, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
+        call.respond(opsSummary(localPreview, arcanaIngestTargetFile, arcanaIngestHistoryFile, selfTestArtifactFile, selfTestHistoryFile, serverPyUnitFile, serverPyUnitHistoryFile, deployHistorySourceFile, githubIssues, backendFullSuite, if (enablePeerSnapshots) peerSnapshot(localPreview) else null))
     }
 
     get("/api/ops/host-snapshot") {
@@ -174,6 +194,10 @@ fun Route.opsRoutes(
 
     get(serverPySelfTestArtifactUrl) {
         call.respondJsonArtifact(selfTestArtifactFile)
+    }
+
+    get(serverPyUnitArtifactUrl) {
+        call.respondJsonArtifact(serverPyUnitFile)
     }
 
     get(arcanaIngestArtifactUrl) {
@@ -261,8 +285,11 @@ private fun opsSummary(
     arcanaHistoryFile: File = defaultArcanaIngestHistoryFile,
     selfTestFile: File = serverPySelfTestFile,
     selfTestHistoryFile: File = serverPySelfTestHistoryFile,
+    serverPyUnitFile: File = defaultServerPyUnitFile,
+    serverPyUnitHistoryFile: File = defaultServerPyUnitHistoryFile,
     historyFile: File = deployHistoryFile,
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
+    backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
     peerSnapshot: OpsHostSnapshotDto? = null,
 ): OpsSummaryDto {
     val ownServerPySelfTest = latestServerPySelfTest(selfTestFile)?.toOpsSelfTestSummary()
@@ -286,21 +313,24 @@ private fun opsSummary(
         detail = if (serverPyReady) "$serverPyTransport bridge ready." else "$serverPyTransport bridge unavailable.",
     )
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
+    val serverPyUnit = latestTestRun(serverPyUnitFile)
     val backendHistory = runHistory(historyFile)
     val backendIssues = repoIssues(backendRepo, "backend", githubIssues)
     val serverPyIssues = repoIssues(serverPyRepo, "server_py", githubIssues)
     val backendCurrentRun = TestRunSummaryDto(
-        label = if (localPreview) "local preview" else "deploy smoke",
+        label = if (localPreview) "local preview" else "deploy gate",
         status = OpsStatusDto.OK,
         detail = if (localPreview) {
             "Local health probes passed."
         } else {
-            "Deploy health probes passed."
+            "verifyServer, dashboard build-if-needed, installServer, local smoke."
         },
     )
     val backendLatestRun = if (localPreview) backendCurrentRun else backendHistory.firstOrNull() ?: backendCurrentRun
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
-    val serverPyHistory = runHistory(selfTestHistoryFile).ifEmpty { listOfNotNull(serverPySelfTest?.toRunSummary()) }
+    val serverPyHistory = (runHistory(selfTestHistoryFile) + runHistory(serverPyUnitHistoryFile))
+        .sortedByDescending { it.timestampMs ?: 0L }
+        .ifEmpty { listOfNotNull(serverPySelfTest?.toRunSummary(), serverPyUnit) }
     val arcanaHistory = runHistory(arcanaHistoryFile).ifEmpty { listOfNotNull(arcanaLatestRun) }
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
@@ -322,7 +352,7 @@ private fun opsSummary(
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
                 latestRun = backendLatestRun,
-                runs = backendRuns(backendLatestRun),
+                runs = backendRuns(backendLatestRun, backendFullSuite()),
                 history = backendHistory,
                 issues = backendIssues,
                 signals = emptyList(),
@@ -335,7 +365,7 @@ private fun opsSummary(
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
                 latestRun = serverPyLatestRun,
-                runs = serverPyRuns(serverPySelfTest, serverPyLatestRun),
+                runs = serverPyRuns(serverPySelfTest, serverPyUnit, serverPyLatestRun),
                 history = serverPyHistory,
                 selfTest = serverPySelfTest,
                 issues = serverPyIssues,
@@ -353,7 +383,7 @@ private fun opsSummary(
                 history = arcanaHistory,
                 issues = arcanaIssues,
                 signals = arcanaSignals,
-                note = arcanaIngest?.detail ?: "RSI/session ingestion is intentionally deferred.",
+                note = arcanaIngest?.detail,
             ),
         ),
     )
@@ -476,6 +506,12 @@ private fun latestServerPySelfTest(file: File = serverPySelfTestFile): SelfTestR
     file.takeIf { it.exists() }
         ?.readText()
         ?.let { opsJson.decodeFromString<SelfTestResultDto>(it) }
+}.getOrNull()
+
+private fun latestTestRun(file: File): TestRunSummaryDto? = runCatching {
+    file.takeIf { it.exists() }
+        ?.readText()
+        ?.let { opsJson.decodeFromString<TestRunSummaryDto>(it) }
 }.getOrNull()
 
 private fun latestArcanaIngest(file: File = defaultArcanaIngestFile): ArcanaIngestDto? = runCatching {
@@ -664,6 +700,7 @@ private fun runHistory(file: File, limit: Int = 80): List<TestRunSummaryDto> = r
                 timestampMs = item.long("timestamp_ms"),
                 durationMs = item.double("duration_ms"),
                 detail = item.text("detail") ?: item.text("mode"),
+                coveragePct = item.double("coverage_pct"),
             )
         }
         ?.take(limit)
@@ -675,15 +712,134 @@ internal fun appendRunHistory(file: File, run: TestRunSummaryDto) = runCatching 
     file.appendText(opsJson.encodeToString(run) + "\n")
 }
 
-private fun backendRuns(latestRun: TestRunSummaryDto) = listOf(
-    latestRun,
-    TestRunSummaryDto("server checks", OpsStatusDto.OK, detail = "Gradle server checks passed.", url = backendFullSuiteUrl),
-    TestRunSummaryDto("public ingress", OpsStatusDto.WIP, detail = "External probe stays outside restart gating.", url = publicIngressUrl),
-)
+private fun backendRuns(latestRun: TestRunSummaryDto, fullSuite: TestRunSummaryDto): List<TestRunSummaryDto> {
+    val serverChecks = backendTestTotals()
+    return listOf(
+        latestRun,
+        TestRunSummaryDto(
+            "unit tests",
+            serverChecks?.status ?: OpsStatusDto.UNKNOWN,
+            durationMs = serverChecks?.durationMs,
+            detail = serverChecks?.detail ?: "No backend test result XML found.",
+            coveragePct = serverChecks?.coveragePct,
+        ),
+        fullSuite,
+    )
+}
 
-private fun serverPyRuns(selfTest: SelfTestSummaryDto?, latestRun: TestRunSummaryDto) = buildList {
-    add(latestRun.copy(url = selfTest?.workflowUrl ?: serverPyLiveSelftestUrl))
+private fun backendFullSuiteRun(): TestRunSummaryDto {
+    val now = System.currentTimeMillis()
+    synchronized(backendFullSuiteLock) {
+        backendFullSuiteCache?.takeIf { it.expiresAtMs > now }?.run?.let { return it }
+        val run = fetchBackendFullSuiteRun().getOrDefault(TestRunSummaryDto(
+            "full suite",
+            OpsStatusDto.UNKNOWN,
+            detail = "Latest GitHub umbrella status unavailable.",
+            url = backendFullSuiteUrl,
+        ))
+        backendFullSuiteCache = CachedTestRun(now + githubWorkflowCacheMs, run)
+        return run
+    }
+}
+
+private fun fetchBackendFullSuiteRun() = runCatching {
+    val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/backend/actions/workflows/full-suite.yml/runs?per_page=1"))
+        .timeout(Duration.ofSeconds(2))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "sdfgsdfg-backend-ops")
+        .build()
+    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() !in 200..299) error("GitHub workflow HTTP ${response.statusCode()}")
+    val run = opsJson.parseToJsonElement(response.body()).jsonObject["workflow_runs"]?.jsonArray?.firstOrNull()?.jsonObject
+        ?: error("No backend full-suite runs")
+    val started = run.instantMs("run_started_at") ?: run.instantMs("created_at")
+    val updated = run.instantMs("updated_at")
+    TestRunSummaryDto(
+        label = "full suite",
+        status = githubRunStatus(run),
+        timestampMs = started,
+        durationMs = started?.let { start -> updated?.minus(start)?.toDouble() },
+        detail = "backend-local, server_py contract/live, Arcana smoke, public ingress, dashboard web/desktop.",
+        url = run.text("html_url") ?: backendFullSuiteUrl,
+    )
+}
+
+private fun githubRunStatus(run: JsonObject) = when (run.text("status")) {
+    "completed" -> when (run.text("conclusion")) {
+        "success" -> OpsStatusDto.OK
+        "failure", "cancelled", "timed_out", "action_required" -> OpsStatusDto.FAIL
+        "neutral", "skipped" -> OpsStatusDto.WARN
+        else -> OpsStatusDto.UNKNOWN
+    }
+    "queued", "in_progress", "waiting", "requested", "pending" -> OpsStatusDto.WIP
+    else -> OpsStatusDto.UNKNOWN
+}
+
+private fun backendTestTotals(repo: File = backendRepo): TestTotals? = runCatching {
+    val files = listOf(
+        repo.resolve("core/build/test-results/jvmTest"),
+        repo.resolve("server/build/test-results/test"),
+    ).flatMap { dir ->
+        dir.listFiles { file -> file.isFile && file.name.startsWith("TEST-") && file.extension == "xml" }.orEmpty().toList()
+    }
+    files.mapNotNull { it.testTotals() }
+        .takeIf { it.isNotEmpty() }
+        ?.reduce { a, b ->
+            TestTotals(
+                tests = a.tests + b.tests,
+                failures = a.failures + b.failures,
+                errors = a.errors + b.errors,
+                skipped = a.skipped + b.skipped,
+                durationMs = a.durationMs + b.durationMs,
+                coveragePct = a.coveragePct ?: b.coveragePct,
+            )
+        }
+        ?.let { it.copy(coveragePct = backendCoveragePct(repo)) }
+}.getOrNull()
+
+private fun File.testTotals(): TestTotals? = runCatching {
+    val root = xmlRoot()
+    TestTotals(
+        tests = root.getAttribute("tests").toInt(),
+        failures = root.getAttribute("failures").toInt(),
+        errors = root.getAttribute("errors").toInt(),
+        skipped = root.getAttribute("skipped").toInt(),
+        durationMs = root.getAttribute("time").toDouble() * 1_000.0,
+    )
+}.getOrNull()
+
+private fun backendCoveragePct(repo: File = backendRepo): Double? = repo.resolve("server/build/reports/jacoco/test/jacocoTestReport.xml").coveragePct()
+
+private fun File.coveragePct(): Double? = runCatching {
+    val counters = xmlRoot().getElementsByTagName("counter")
+    (0 until counters.length)
+        .map { counters.item(it).attributes }
+        .lastOrNull { it.getNamedItem("type")?.nodeValue == "LINE" }
+        ?.let {
+            val missed = it.getNamedItem("missed").nodeValue.toDouble()
+            val covered = it.getNamedItem("covered").nodeValue.toDouble()
+            (covered * 100.0 / (missed + covered)).takeIf { pct -> pct.isFinite() }
+        }
+}.getOrNull()
+
+private fun File.xmlRoot() = DocumentBuilderFactory.newInstance()
+    .apply { runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) } }
+    .newDocumentBuilder()
+    .parse(this)
+    .documentElement
+
+private fun List<OpsStatusDto>.ciStatus() = when {
+    OpsStatusDto.FAIL in this -> OpsStatusDto.FAIL
+    OpsStatusDto.WARN in this -> OpsStatusDto.WARN
+    OpsStatusDto.WIP in this -> OpsStatusDto.WIP
+    OpsStatusDto.UNKNOWN in this -> OpsStatusDto.UNKNOWN
+    else -> OpsStatusDto.OK
+}
+
+private fun serverPyRuns(selfTest: SelfTestSummaryDto?, unit: TestRunSummaryDto?, latestRun: TestRunSummaryDto) = buildList {
+    unit?.let { add(it.copy(url = it.url ?: serverPyUnitArtifactUrl)) }
     if (selfTest == null) return@buildList
+    add(latestRun.copy(label = "live e2e selftest", url = selfTest.workflowUrl ?: serverPyLiveSelftestUrl))
     if (selfTest.caseCount > 0) {
         add(TestRunSummaryDto(
             label = "model matrix",
@@ -691,19 +847,11 @@ private fun serverPyRuns(selfTest: SelfTestSummaryDto?, latestRun: TestRunSummar
             detail = "${selfTest.casePassCount}/${selfTest.caseCount} model cases passing.",
         ))
     }
-    add(TestRunSummaryDto("selftest artifact", OpsStatusDto.OK, detail = "Dashboard renders the latest selftest JSON and workflow link.", url = serverPySelfTestArtifactUrl))
 }
 
 private fun arcanaRuns(latestRun: TestRunSummaryDto?, ingest: ArcanaIngestDto?) = buildList {
     latestRun?.let(::add)
     addAll(ingest?.runs.orEmpty())
-    if (ingest == null) {
-        add(TestRunSummaryDto("pytest unit spine", OpsStatusDto.WIP, detail = "arcana-smoke has not published a q pytest summary yet."))
-    }
-    addAll(listOf(
-        TestRunSummaryDto("issue/session schema", OpsStatusDto.WIP, detail = "Waits for Arcana-owned .arcana/issues.json and session output contracts."),
-        TestRunSummaryDto("RSI sessions", OpsStatusDto.WIP, detail = "Deferred until issue and CI surfaces can receive output."),
-    ))
 }
 
 internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
@@ -817,6 +965,7 @@ private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
     durationMs = durationMs,
     detail = detail,
     url = url,
+    coveragePct = coveragePct,
 )
 
 internal fun SelfTestSummaryDto.toRunSummary() = TestRunSummaryDto(

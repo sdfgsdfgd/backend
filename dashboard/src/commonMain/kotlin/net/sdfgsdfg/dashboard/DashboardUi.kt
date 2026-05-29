@@ -67,7 +67,7 @@ internal val amber = Color(0xFFFFC86B)
 internal val rose = Color(0xFFFF7474)
 internal val liveProcessCount = Regex("""(\d+) (arcana|codex) live""")
 internal const val OPS_SUMMARY_REFRESH_MS = 45_000L
-internal const val UPDATE_FLASH_MS = 2_400L
+internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
 
 
 internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
@@ -390,14 +390,12 @@ internal fun IssueSummaryDto.badgeSpec() = BadgeSpec(
     strong = active > 0,
 )
 
-internal fun RepoHealthDto.statusBadge(): BadgeSpec? = if (id == "arcana") null else BadgeSpec(status.name, status.color(), strong = true)
-
 internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
-    "backend" -> runs.firstOrNull { it.label == "server checks" }
-        ?.let { listOf(BadgeSpec("TEST: verifyServer ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+    "backend" -> runs.firstOrNull { it.label == "unit tests" }
+        ?.let { listOf(BadgeSpec("TEST: unit ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
         .orEmpty()
     "server_py" -> selfTest
-        ?.let { listOf(BadgeSpec("TEST: selftest ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
+        ?.let { listOf(BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN)) }
         .orEmpty()
     else -> emptyList()
 }

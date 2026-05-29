@@ -9,11 +9,14 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import net.sdfgsdfg.data.model.OpsStatusDto
+import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
 
 private val webhookDeployMutex = Mutex()
@@ -31,6 +34,9 @@ private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADE
     .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
 private const val SERVER_PY_REPO_DIR = "/home/x/Desktop/py/server_py"
 private const val SERVER_PY_READY_CMD = "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
+private const val SERVER_PY_UNIT_ARTIFACT_URL = "/api/ops/artifacts/server-py-unit.json"
+private val serverPyUnitFile = File(resolveLogDir(), "server-py-unit.json")
+private val serverPyUnitHistoryFile = File(resolveLogDir(), "server-py-unit-history.jsonl")
 private val gitShaRegex = Regex("[0-9a-f]{40}")
 
 private data class DeploymentProfile(
@@ -259,7 +265,40 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         for (command in profile.commands) {
             runWebhookCommand(matchedSlug, command, deploymentLog)
         }
+        if (matchedSlug == "server-py") runServerPyUnitTests(deploymentLog)
     }
+}
+
+private suspend fun runServerPyUnitTests(logFile: File): Int {
+    val startedAtMs = System.currentTimeMillis()
+    val started = System.nanoTime()
+    val stdout = mutableListOf<String>()
+    val stderr = mutableListOf<String>()
+    val exit = runWebhookCommand(
+        slug = "server-py-unit",
+        command = "cd $SERVER_PY_REPO_DIR || exit 1; venv/bin/python -m pip show coverage >/dev/null 2>&1 || venv/bin/python -m pip install coverage || exit 1; set +e; venv/bin/python -m coverage erase; venv/bin/python -m coverage run --source=. --omit='tests/*' -m pytest -m unit -q; rc=${'$'}?; venv/bin/python -m coverage report --format=total || true; exit ${'$'}rc",
+        logFile = logFile,
+        stdoutLines = stdout,
+        stderrLines = stderr,
+    )
+    val lines = stdout + stderr
+    val status = if (exit == 0) OpsStatusDto.OK else OpsStatusDto.FAIL
+    val summary = lines.asReversed()
+        .map(String::trim)
+        .firstOrNull { line -> line.contains(" passed") || line.contains(" failed") || line.contains(" error") }
+        ?: "pytest exit=$exit"
+    val run = TestRunSummaryDto(
+        label = "unit tests",
+        status = status,
+        timestampMs = startedAtMs,
+        durationMs = (System.nanoTime() - started) / 1_000_000.0,
+        detail = summary,
+        url = SERVER_PY_UNIT_ARTIFACT_URL,
+        coveragePct = lines.coveragePct(),
+    )
+    serverPyUnitFile.writeText(json.encodeToString(run))
+    appendRunHistory(serverPyUnitHistoryFile, run)
+    return exit
 }
 
 private suspend fun runWebhookCommand(
@@ -301,6 +340,9 @@ private fun String.escapeJson(): String = buildString {
         }
     }
 }
+
+private fun List<String>.coveragePct(): Double? = asReversed()
+    .firstNotNullOfOrNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
 
 private fun serverPyHeadCmd(headSha: String, wait: Boolean): String =
     if (wait)

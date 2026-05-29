@@ -103,6 +103,7 @@ class CoreDtoSerializationTest {
                             status = OpsStatusDto.OK,
                             timestampMs = 9L,
                             durationMs = 12.0,
+                            coveragePct = 88.8,
                         ),
                         runs = listOf(
                             TestRunSummaryDto(
@@ -177,6 +178,7 @@ class CoreDtoSerializationTest {
         assertEquals(listOf("remote q", "local"), repo.getValue("runtime_labels").jsonArray.map { it.jsonPrimitive.content })
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
+        assertEquals(88.8, run.getValue("coverage_pct").jsonPrimitive.double)
         assertEquals("public ingress", pyramidRun.getValue("label").jsonPrimitive.content)
         assertEquals("deploy abc1234", historyRun.getValue("label").jsonPrimitive.content)
         assertEquals(13L, historyRun.getValue("timestamp_ms").jsonPrimitive.long)
@@ -205,6 +207,7 @@ class CoreDtoSerializationTest {
         assertFalse("runtimeLabel" in repo)
         assertFalse("runtimeLabels" in repo)
         assertFalse("latestRun" in repo)
+        assertFalse("coveragePct" in run)
         assertFalse("selfTest" in repo)
         assertFalse("timestampLabel" in selfTest)
         assertFalse("zenState" in selfTest)
@@ -219,6 +222,7 @@ class CoreDtoSerializationTest {
                     label = "pytest local publisher",
                     timestampMs = 21L,
                     durationMs = 123.0,
+                    coveragePct = 77.7,
                     detail = "unit spine passed",
                     issues = IssueSummaryDto(
                         todo = 2,
@@ -232,10 +236,12 @@ class CoreDtoSerializationTest {
         ).jsonObject
         assertEquals(21L, ingest.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(123.0, ingest.getValue("duration_ms").jsonPrimitive.double)
+        assertEquals(77.7, ingest.getValue("coverage_pct").jsonPrimitive.double)
         assertEquals("arcana", ingest.getValue("issues").jsonObject.getValue("sources").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content)
         assertEquals("pytest unit", ingest.getValue("runs").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
         assertFalse("timestampMs" in ingest)
         assertFalse("durationMs" in ingest)
+        assertFalse("coveragePct" in ingest)
 
         val hostSnapshot = json.parseToJsonElement(
             json.encodeToString(

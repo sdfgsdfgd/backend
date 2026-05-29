@@ -6,6 +6,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
@@ -184,7 +185,13 @@ fun arcanaSmoke() {
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r requirements.txt
         fi
-        .venv/bin/python -m pytest $qArcanaTests -q
+        .venv/bin/python -m pip show coverage >/dev/null 2>&1 || .venv/bin/python -m pip install coverage
+        .venv/bin/python -m coverage erase
+        set +e
+        .venv/bin/python -m coverage run --source=. --omit='z_tests_n_benchmarks/*' -m pytest $qArcanaTests -q
+        rc=${'$'}?
+        .venv/bin/python -m coverage report --format=total || true
+        exit ${'$'}rc
         """.trimIndent(),
         check = false,
     )
@@ -195,19 +202,26 @@ fun arcanaSmoke() {
         ?: "pytest exit=${result.code}"
     val status = if (result.code == 0) "OK" else "FAIL"
     val detail = "$summary on q @$head"
-    val payload = listOf(
+    val coveragePct = result.out.lineSequence()
+        .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
+        .lastOrNull()
+    val coverageField = coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" }
+    val runFields = listOfNotNull(
+        "\"label\":${qArcanaTests.jsonString()}",
+        "\"status\":${status.jsonString()}",
+        "\"duration_ms\":$durationMs",
+        "\"detail\":${summary.jsonString()}",
+        "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
+        coverageField,
+    )
+    val payload = listOfNotNull(
         "\"status\":${status.jsonString()}",
         "\"label\":\"q arcana unit pytest\"",
         "\"duration_ms\":$durationMs",
         "\"detail\":${detail.jsonString()}",
         "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
-        "\"runs\":[{${listOf(
-            "\"label\":${qArcanaTests.jsonString()}",
-            "\"status\":${status.jsonString()}",
-            "\"duration_ms\":$durationMs",
-            "\"detail\":${summary.jsonString()}",
-            "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
-        ).joinToString(",")}}]",
+        coverageField,
+        "\"runs\":[{${runFields.joinToString(",")}}]",
     ).joinToString(prefix = "{", postfix = "}")
     qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
     if (result.code != 0) fail("q arcana pytest failed: $summary")
@@ -247,7 +261,7 @@ fun appendDeployHistory(
     mode: String,
     durationMs: Long,
     status: String = "OK",
-    detail: String = "verifyServer, dashboard artifact, installServer, local smoke",
+    detail: String = "verifyServer, dashboard build-if-needed, installServer, local smoke",
 ) {
     val head = q("git rev-parse --short HEAD 2>/dev/null || true").ifBlank { "unknown" }
     deployHistory.appendText(

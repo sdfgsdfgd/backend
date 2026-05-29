@@ -128,15 +128,16 @@ private fun RepoGrid(repos: List<RepoHealthDto>, generatedAtMs: Long) {
 
 @Composable
 private fun RepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
+    val status = repo.runtimeStatus()
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(shape, repo.status.color(), glowAlpha = 0.11f, borderAlpha = 0.42f)
+            .glassSurface(shape, status.color(), glowAlpha = 0.11f, borderAlpha = 0.42f)
             .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        RepoCardContent(repo, generatedAtMs)
+        RepoCardContent(repo, generatedAtMs, status)
     }
 }
 
@@ -162,9 +163,9 @@ private fun RunSignal(run: TestRunSummaryDto, generatedAtMs: Long) {
 }
 
 @Composable
-private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
+private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: OpsStatusDto) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        StatusDot(repo.status)
+        StatusDot(status)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -178,7 +179,7 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                repo.statusBadge()?.let { PanelBadge(it) }
+                if (repo.id != "arcana") PanelBadge(BadgeSpec(status.name, status.color(), strong = true))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeSpec())
@@ -191,6 +192,14 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long) {
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
     }
+}
+
+private fun RepoHealthDto.runtimeStatus() = when (id) {
+    "backend" -> OpsStatusDto.OK
+    "server_py" -> if (signals.any { it.status == OpsStatusDto.OK }) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
+    "arcana" -> signals.firstOrNull { it.isActiveProcessSummary() }?.status
+        ?: if (signals.any { it.status == OpsStatusDto.OK }) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
+    else -> status
 }
 
 @Composable

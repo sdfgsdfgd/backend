@@ -1,17 +1,5 @@
 package net.sdfgsdfg.dashboard
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +17,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -72,8 +58,7 @@ internal fun CiResults(loadState: OpsLoadState, atPageBottom: Boolean = false) {
 
 @Composable
 private fun CiHeader(summary: OpsSummaryDto) {
-    val remoteCi = summary.repos.count { it.id == "backend" || it.id == "server_py" }
-    val ok = summary.repos.count { it.status == OpsStatusDto.OK }
+    val ok = summary.repos.count { it.ciStatus() == OpsStatusDto.OK }
     val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
@@ -85,11 +70,10 @@ private fun CiHeader(summary: OpsSummaryDto) {
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("CI Results", color = text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("backend + server_py remote CI, Arcana local pytest evidence.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
+            Text("Test evidence across backend, server_py, and Arcana.", color = muted, fontSize = 13.sp, lineHeight = 18.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusPill("$ok/${summary.repos.size} OK", if (ok == summary.repos.size) green else amber)
-            StatusPill("$remoteCi remote CI", cyan)
         }
     }
 }
@@ -115,58 +99,112 @@ private fun VerificationGrid(summary: OpsSummaryDto) {
 @Composable
 private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
     val runs = repo.ciRuns()
+    val status = repo.ciStatus()
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .glassSurface(shape, repo.status.color(), glowAlpha = 0.09f, borderAlpha = 0.32f)
+            .glassSurface(shape, status.color(), glowAlpha = 0.09f, borderAlpha = 0.32f)
             .padding(15.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatusDot(repo.status)
+            StatusDot(status)
             Column(modifier = Modifier.weight(1f)) {
                 Text(repo.name, color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(repo.ciRole(), color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            StatusPill(repo.status.name, repo.status.color())
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            repo.ciBadges().forEach { PanelBadge(it) }
+            StatusPill(status.name, status.color())
         }
         if (repo.id == "server_py") {
+            runs.filterNot { it.label in setOf("live e2e selftest", "model matrix") }.takeWhile { it.label != "full suite" }.forEach { run ->
+                CiEvidenceCard(
+                    title = run.evidenceTitle(repo.id),
+                    status = run.status,
+                    generatedAtMs = generatedAtMs,
+                    timestampMs = run.timestampMs,
+                    durationMs = run.durationMs,
+                    subtitle = run.evidenceSubtitle(repo.id),
+                    detail = run.evidenceDetail(repo.id),
+                    fields = run.evidenceFields(repo.id, generatedAtMs),
+                    artifactUrl = run.url,
+                )
+            }
             ServerPySelfTestSummary(repo.selfTest, generatedAtMs)
+            runs.firstOrNull { it.label == "full suite" }?.let { run ->
+                CiEvidenceCard(
+                    title = run.evidenceTitle(repo.id),
+                    status = run.status,
+                    generatedAtMs = generatedAtMs,
+                    timestampMs = run.timestampMs,
+                    durationMs = run.durationMs,
+                    subtitle = run.evidenceSubtitle(repo.id),
+                    detail = run.evidenceDetail(repo.id),
+                    fields = run.evidenceFields(repo.id, generatedAtMs),
+                    artifactUrl = run.url,
+                )
+            }
         } else {
-            runs.forEach { CiRunRow(it, generatedAtMs) }
-            if (repo.id == "arcana") ArcanaCoverage(repo, generatedAtMs)
+            if (runs.isEmpty()) PlaceholderTile("test evidence unavailable")
+            runs.forEach { run ->
+                CiEvidenceCard(
+                    title = run.evidenceTitle(repo.id),
+                    status = run.status,
+                    generatedAtMs = generatedAtMs,
+                    timestampMs = run.timestampMs.takeUnless { repo.id == "arcana" },
+                    durationMs = run.durationMs.takeUnless { repo.id == "arcana" },
+                    subtitle = run.evidenceSubtitle(repo.id),
+                    detail = run.evidenceDetail(repo.id),
+                    fields = run.evidenceFields(repo.id, generatedAtMs),
+                    artifactUrl = run.url,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun CiRunRow(run: TestRunSummaryDto, generatedAtMs: Long) {
-    Row(
+private fun CiEvidenceCard(
+    title: String,
+    status: OpsStatusDto,
+    generatedAtMs: Long,
+    timestampMs: Long? = null,
+    durationMs: Double? = null,
+    subtitle: String? = null,
+    detail: String? = null,
+    fields: List<FieldSpec> = emptyList(),
+    artifactUrl: String? = null,
+    artifacts: List<OpsArtifactDto> = emptyList(),
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFF0D141B))
-            .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.22f)), RoundedCornerShape(7.dp))
+            .border(BorderStroke(1.dp, status.evidenceColor().copy(alpha = 0.24f)), RoundedCornerShape(7.dp))
             .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        StatusDot(run.status)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(run.label, modifier = Modifier.weight(1f), color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                subtitle?.let { Text(it, color = muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
-            run.detail?.let {
-                Text(it, color = muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            run.url?.let { url ->
-                Text(url, modifier = Modifier.clickable { openOpsUrl(url) }, color = cyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            EvidenceTail(status, generatedAtMs, timestampMs, durationMs)
         }
+        if (fields.isNotEmpty()) FieldGrid(fields)
+        detail?.let { Text(it, color = Color(0xFFD3DCE8), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+        ArtifactStrip(artifactUrl, artifacts)
+    }
+}
+
+@Composable
+private fun EvidenceTail(status: OpsStatusDto, generatedAtMs: Long, timestampMs: Long?, durationMs: Double?) {
+    val duration = durationMs?.durationLabel()
+    if (timestampMs == null && duration == null && status == OpsStatusDto.OK) return
+    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+        timestampMs?.let { AgePill(it, generatedAtMs) }
+        duration?.let { Text(it, color = status.evidenceColor(), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        if (status != OpsStatusDto.OK) Text(status.name, color = status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -176,67 +214,48 @@ private fun ServerPySelfTestSummary(selfTest: SelfTestSummaryDto?, generatedAtMs
         PlaceholderTile("selftest artifact unavailable")
         return
     }
+    val failures = listOfNotNull(
+        "conversation failed".takeIf { !selfTest.ok },
+        "expectation missed".takeIf { !selfTest.satisfiedExpectation },
+        "model matrix ${selfTest.casePassCount}/${selfTest.caseCount}".takeIf { selfTest.casePassCount != selfTest.caseCount },
+    ).joinToString(" · ")
     val fields = listOf(
-        FieldSpec("conversation", if (selfTest.ok) "pass" else "fail"),
-        FieldSpec("expectation", if (selfTest.satisfiedExpectation) "met" else "missed"),
         FieldSpec("models", "${selfTest.casePassCount}/${selfTest.caseCount}"),
         FieldSpec("total", selfTest.latencyMs.durationLabel()),
         FieldSpec("ask", selfTest.askLatencyMs.durationLabel()),
         FieldSpec("audit", selfTest.auditLatencyMs.durationLabel()),
     )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(7.dp))
-            .background(Color(0xFF0D141B))
-            .border(BorderStroke(1.dp, selfTest.status.color().copy(alpha = 0.24f)), RoundedCornerShape(7.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("last selftest", color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text(selfTest.timestampLabel ?: selfTest.timestampMs?.relativeFrom(generatedAtMs) ?: "timestamp unknown", color = muted, fontSize = 11.sp)
-            }
-            StatusPill("TEST: selftest ${selfTest.status.name}", selfTest.status.color())
-        }
-        FieldGrid(fields)
-        (selfTest.rawError ?: selfTest.textExcerpt).takeIf { it.isNotBlank() }?.let {
-            Text(it, color = Color(0xFFD3DCE8), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        }
-        ArtifactStrip(selfTest.workflowUrl, selfTest.artifacts)
-        selfTest.zenFields().takeIf { it.isNotEmpty() }?.let { FieldGrid(it) }
-    }
-}
-
-@Composable
-private fun ArcanaCoverage(repo: RepoHealthDto, generatedAtMs: Long) {
-    val latest = repo.latestRun ?: return
-    val detail = latest.detail.orEmpty()
-    val fields = listOfNotNull(
-        detail.substringBefore(" passed", missingDelimiterValue = "").takeIf { it.all(Char::isDigit) }?.let { FieldSpec("unit tests", "$it passed") },
-        latest.durationMs?.durationLabel()?.let { FieldSpec("duration", it) },
-        latest.timestampMs?.relativeFrom(generatedAtMs)?.let { FieldSpec("last", it) },
-        detail.substringAfter("@", missingDelimiterValue = "").takeIf { it.isNotBlank() }?.let { FieldSpec("commit", it) },
+    CiEvidenceCard(
+        title = "live e2e selftest",
+        status = selfTest.status,
+        generatedAtMs = generatedAtMs,
+        timestampMs = null,
+        durationMs = null,
+        subtitle = selfTest.timestampLabel ?: selfTest.timestampMs?.relativeFrom(generatedAtMs) ?: "timestamp unknown",
+        detail = listOfNotNull(
+            failures.takeIf { it.isNotBlank() },
+            (selfTest.rawError ?: selfTest.textExcerpt).takeIf { it.isNotBlank() },
+        ).joinToString("\n").takeIf { it.isNotBlank() },
+        fields = fields + selfTest.zenFields(),
+        artifactUrl = selfTest.workflowUrl,
+        artifacts = selfTest.artifacts,
     )
-    if (fields.isEmpty()) return
-    FieldGrid(fields)
 }
 
 @Composable
 private fun FieldGrid(fields: List<FieldSpec>) {
     BoxWithConstraints {
         if (maxWidth < 620.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 fields.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         row.forEach { field -> Box(modifier = Modifier.weight(1f)) { FactTile(field) } }
                         if (row.size == 1) Box(modifier = Modifier.weight(1f))
                     }
                 }
             }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 fields.forEach { field -> Box(modifier = Modifier.weight(1f)) { FactTile(field) } }
             }
         }
@@ -251,8 +270,8 @@ private fun FactTile(field: FieldSpec) {
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF101821))
             .border(BorderStroke(1.dp, Color(0xFF202B38)), RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(field.name.uppercase(), color = muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(field.value, color = text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -261,9 +280,9 @@ private fun FactTile(field: FieldSpec) {
 }
 
 @Composable
-private fun ArtifactStrip(workflowUrl: String?, artifacts: List<OpsArtifactDto>) {
+private fun ArtifactStrip(primaryUrl: String?, artifacts: List<OpsArtifactDto>) {
     val links = buildList {
-        workflowUrl?.let { add(OpsArtifactDto(name = "GitHub workflow", url = it)) }
+        primaryUrl?.let { add(OpsArtifactDto(name = if (it.startsWith("http")) "GitHub workflow" else it.substringAfterLast('/'), url = it)) }
         addAll(artifacts)
     }
     if (links.isEmpty()) return
@@ -306,7 +325,6 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(shape, green, glowAlpha = 0.06f, borderAlpha = 0.26f)
-            .animateContentSize(animationSpec = tween(320, easing = FastOutSlowInEasing))
             .padding(15.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -329,23 +347,7 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
         }
         if (events.isEmpty()) PlaceholderTile("no runs selected")
         visibleEvents.forEachIndexed { index, (repo, run) ->
-            val rowKey = eventKeys[index]
-            key(rowKey) {
-                val visibleState = remember {
-                    MutableTransitionState(false).apply { targetState = true }
-                }
-                AnimatedVisibility(
-                    visibleState = visibleState,
-                    enter = fadeIn(tween(420, easing = FastOutSlowInEasing)) +
-                        scaleIn(tween(420, easing = FastOutSlowInEasing), initialScale = 0.97f, transformOrigin = TransformOrigin(0.5f, 0f)) +
-                        expandVertically(tween(460, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
-                        slideInVertically(tween(460, easing = FastOutSlowInEasing)) { -it / 2 },
-                    exit = fadeOut(tween(160, easing = FastOutSlowInEasing)) +
-                        shrinkVertically(tween(220, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
-                ) {
-                    RunHistoryRow(repo, run, summary.generatedAtMs, fresh = rowKey in freshKeys)
-                }
-            }
+            RunHistoryRow(repo, run, summary.generatedAtMs, fresh = eventKeys[index] in freshKeys)
         }
     }
 }
@@ -378,11 +380,7 @@ private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onC
 
 @Composable
 private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false) {
-    val flash by animateFloatAsState(
-        targetValue = if (fresh) 1f else 0f,
-        animationSpec = tween(if (fresh) 180 else 840, easing = FastOutSlowInEasing),
-        label = "run-row-flash",
-    )
+    val flash = if (fresh) 1f else 0f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -390,7 +388,6 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
             .background(Color(0xFF0D141B))
             .background(run.status.color().copy(alpha = flash * 0.11f))
             .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.24f + flash * 0.32f)), RoundedCornerShape(7.dp))
-            .animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
@@ -400,13 +397,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${repo.name} / ${run.label}", modifier = Modifier.weight(1f), color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                AnimatedVisibility(
-                    visible = fresh,
-                    enter = fadeIn(tween(180, easing = FastOutSlowInEasing)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.86f),
-                    exit = fadeOut(tween(280, easing = FastOutSlowInEasing)),
-                ) {
-                    UpdatePill(run.status.color())
-                }
+                if (fresh) UpdatePill(run.status.color())
                 RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
             }
             run.detail?.let {
@@ -417,9 +408,9 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
 }
 
 private fun RepoHealthDto.ciRole() = when (id) {
-    "backend" -> "deploy verify + Gradle checks"
-    "server_py" -> "GitHub selftest + model matrix"
-    "arcana" -> "local pytest coverage"
+    "backend" -> "deploy gate + unit tests + umbrella suite"
+    "server_py" -> "unit tests + live e2e"
+    "arcana" -> "unit tests; integration/e2e slots ready"
     else -> role
 }
 
@@ -432,28 +423,55 @@ private fun String.historyColor() = when (this) {
     else -> muted
 }
 
-private fun RepoHealthDto.ciBadges(): List<BadgeSpec> = when (id) {
-    "backend" -> listOfNotNull(
-        BadgeSpec("remote CI", cyan, strong = true),
-        latestRun?.let { BadgeSpec("verifyServer ${it.status.name}", it.status.color(), strong = it.status == OpsStatusDto.OK) },
-        runs.firstOrNull { it.label == "server checks" }?.let { BadgeSpec("Gradle ${it.status.name}", it.status.color(), strong = it.status == OpsStatusDto.OK) },
+private fun TestRunSummaryDto.evidenceTitle(repoId: String) = when {
+    repoId == "arcana" -> "unit tests"
+    label.startsWith("deploy ") || label == "deploy gate" -> "deploy gate"
+    label == "full suite" -> "full suite"
+    label == "unit tests" -> "unit tests"
+    else -> label
+}
+
+private fun TestRunSummaryDto.evidenceSubtitle(repoId: String) = when {
+    repoId == "arcana" -> label
+    label.startsWith("deploy ") -> label
+    label == "full suite" && repoId == "backend" -> "weekly GitHub umbrella"
+    else -> null
+}
+
+private fun TestRunSummaryDto.evidenceDetail(repoId: String) = detail.takeUnless { repoId == "arcana" }
+
+private fun TestRunSummaryDto.arcanaFields(generatedAtMs: Long): List<FieldSpec> {
+    val detail = detail.orEmpty()
+    return listOfNotNull(
+        detail.substringBefore(" passed", missingDelimiterValue = "").takeIf { it.isNotBlank() && it.all(Char::isDigit) }?.let { FieldSpec("unit tests", "$it passed") },
+        durationMs?.durationLabel()?.let { FieldSpec("duration", it) },
+        timestampMs?.relativeFrom(generatedAtMs)?.let { FieldSpec("last", it) },
+        detail.substringAfter("@", missingDelimiterValue = "").takeIf { it.isNotBlank() }?.let { FieldSpec("commit", it) },
     )
-    "server_py" -> listOfNotNull(
-        BadgeSpec("remote CI", cyan, strong = true),
-        selfTest?.let { BadgeSpec("selftest ${it.status.name}", it.status.color(), strong = it.status == OpsStatusDto.OK) },
-        selfTest?.let { BadgeSpec("${it.casePassCount}/${it.caseCount} models", if (it.casePassCount == it.caseCount) green else rose, strong = true) },
-    )
-    "arcana" -> listOf(
-        BadgeSpec("local tests", cyan, strong = true),
-        BadgeSpec(status.name, status.color(), strong = status == OpsStatusDto.OK),
-    )
-    else -> emptyList()
+}
+
+private fun TestRunSummaryDto.evidenceFields(repoId: String, generatedAtMs: Long): List<FieldSpec> =
+    (if (repoId == "arcana") arcanaFields(generatedAtMs) else emptyList()) +
+        listOfNotNull(coveragePct?.let { FieldSpec("coverage", it.percentLabel()) })
+
+private fun OpsStatusDto.evidenceColor() = if (this == OpsStatusDto.OK) cyan else color()
+
+private fun RepoHealthDto.ciStatus(): OpsStatusDto {
+    val statuses = ciRuns().filterNot { it.label == "full suite" }.map { it.status }
+        .ifEmpty { listOf(if (id == "server_py") selfTest?.status ?: OpsStatusDto.UNKNOWN else latestRun?.status ?: OpsStatusDto.UNKNOWN) }
+    return when {
+        OpsStatusDto.FAIL in statuses -> OpsStatusDto.FAIL
+        OpsStatusDto.WARN in statuses -> OpsStatusDto.WARN
+        OpsStatusDto.WIP in statuses -> OpsStatusDto.WIP
+        OpsStatusDto.UNKNOWN in statuses -> OpsStatusDto.UNKNOWN
+        else -> OpsStatusDto.OK
+    }
 }
 
 private fun RepoHealthDto.ciRuns(): List<TestRunSummaryDto> = when (id) {
-    "backend" -> listOfNotNull(latestRun) + runs.filter { it.label == "server checks" }
-    "server_py" -> emptyList()
-    "arcana" -> runs.filter { it.isArcanaTestRun() && it.label != latestRun?.label }.ifEmpty { listOfNotNull(latestRun) }
+    "backend" -> listOfNotNull(latestRun) + runs.filter { it.label in setOf("unit tests", "full suite") }
+    "server_py" -> runs.filter { it.label in setOf("unit tests", "live e2e selftest", "model matrix") }
+    "arcana" -> listOfNotNull(latestRun).filter { it.isArcanaTestRun() }.ifEmpty { runs.filter { it.isArcanaTestRun() } }
     else -> runs.ifEmpty { listOfNotNull(latestRun) }
 }.distinctBy { it.label to it.timestampMs }
 
@@ -482,3 +500,5 @@ private fun Double.round1(): String {
     val rounded = kotlin.math.round(this * 10.0) / 10.0
     return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
+
+private fun Double.percentLabel() = "${round1()}%"
