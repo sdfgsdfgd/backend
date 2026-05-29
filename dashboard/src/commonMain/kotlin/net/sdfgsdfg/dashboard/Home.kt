@@ -190,7 +190,6 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: Op
             }
         }
     }
-    if (repo.id != "backend" && repo.id != "server_py") repo.latestRun?.let { RunSignal(it, generatedAtMs) }
     val visibleSignals = if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
