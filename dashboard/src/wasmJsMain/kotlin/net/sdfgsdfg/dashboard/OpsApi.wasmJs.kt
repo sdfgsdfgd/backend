@@ -5,11 +5,13 @@ import kotlinx.browser.window
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlin.js.ExperimentalWasmJsInterop
+import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import org.w3c.dom.MessageEvent
 import org.w3c.dom.WebSocket
 import org.w3c.fetch.Response
+import org.w3c.xhr.XMLHttpRequest
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun loadOpsSummary(
@@ -43,6 +45,34 @@ internal actual fun loadOpsSummary(
             null
         },
     )
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun mutateIssue(
+    request: IssueMutationRequestDto,
+    onLoaded: (OpsSummaryDto) -> Unit,
+    onFailed: (String) -> Unit,
+) {
+    val body = dashboardJson.encodeToString(request)
+    val url = opsUrl("/api/ops/issues")
+    XMLHttpRequest().apply {
+        open("POST", url)
+        setRequestHeader("Content-Type", "application/json")
+        onload = {
+            if (status.toInt() in 200..299) {
+                runCatching { dashboardJson.decodeFromString<OpsSummaryDto>(responseText) }
+                    .fold(onLoaded, { onFailed("POST $url decoded badly: ${it.message}") })
+            } else {
+                onFailed("POST $url failed with $status ${responseText.take(120)}")
+            }
+            null
+        }
+        onerror = {
+            onFailed("POST $url failed before response")
+            null
+        }
+        send(body)
+    }
 }
 
 internal actual fun openOpsUrl(url: String) {

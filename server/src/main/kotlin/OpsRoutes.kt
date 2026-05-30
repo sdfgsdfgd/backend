@@ -22,13 +22,19 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import net.sdfgsdfg.data.model.ArcanaIngestDto
+import net.sdfgsdfg.data.model.IssueEventChangeDto
+import net.sdfgsdfg.data.model.IssueEventDto
+import net.sdfgsdfg.data.model.IssueItemDto
+import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.OpsHostSnapshotDto
@@ -58,6 +64,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.abs
 
@@ -84,6 +91,7 @@ private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = File(".").canonicalFile
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 private val arcanaRepo = homeDir.resolve("Desktop/py/arcana")
+private val issueRepoRoots = mapOf("backend" to backendRepo, "server_py" to serverPyRepo, "arcana" to arcanaRepo)
 private val serverPySocket = File("/tmp/server_py/server_py.sock")
 private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
@@ -123,6 +131,7 @@ private data class TestTotals(val tests: Int, val failures: Int, val errors: Int
 
 private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
+private val issueMutationLock = Any()
 
 fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
@@ -218,6 +227,26 @@ fun Route.opsRoutes(
         appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
         OpsSocketHub.broadcastSummary()
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
+    }
+
+    post("/api/ops/issues") {
+        if (!call.clientInfo().isLocal) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@post
+        }
+
+        val mutation = runCatching {
+            opsJson.decodeFromString<IssueMutationRequestDto>(call.receiveText())
+        }.getOrElse {
+            call.respondText("Invalid issue mutation JSON", status = HttpStatusCode.BadRequest)
+            return@post
+        }
+        runCatching { mutateLocalIssue(mutation) }.getOrElse {
+            call.respondText(it.message ?: "Issue mutation failed", status = HttpStatusCode.BadRequest)
+            return@post
+        }
+        OpsSocketHub.broadcastSummary()
+        call.respond(summary())
     }
 
     get(serverPySelfTestArtifactUrl) {
@@ -906,17 +935,154 @@ private fun arcanaRuns(latestRun: TestRunSummaryDto?, ingest: ArcanaIngestDto?) 
 
 internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
     val file = repoRoot.resolve(".arcana/issues.json")
+    val events = issueEvents(repoRoot.resolve(".arcana/issues.events.jsonl"), "arcana", "Arcana issues")
     if (file.isFile) {
         issueObjects(opsJson.parseToJsonElement(file.readText()))
-            .mapNotNull { issue -> issue.statusText() }
-            .fold(IssueSummaryDto()) { summary, status -> summary.with(status) }
+            .mapNotNull { issue -> issue.issueItem("arcana", "Arcana issues") }
+            .fold(IssueSummaryDto(events = events)) { summary, issue -> summary.with(issue.status, issue) }
     } else {
-        IssueSummaryDto()
+        IssueSummaryDto(events = events)
     }
 }.getOrDefault(IssueSummaryDto()).withSource("arcana", "Arcana issues")
 
 private fun repoIssues(repoRoot: File, githubRepo: String, githubIssues: (String) -> IssueSummaryDto) =
     localArcanaIssues(repoRoot) + githubIssues(githubRepo)
+
+private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(issueMutationLock) {
+    val repoRoot = issueRepoRoots[request.repo] ?: error("Unknown repo: ${request.repo}")
+    val status = request.status.normalizedIssueStatus() ?: error("Invalid status: ${request.status}")
+    val issuesFile = repoRoot.resolve(".arcana/issues.json")
+    val eventsFile = repoRoot.resolve(".arcana/issues.events.jsonl")
+    val now = System.currentTimeMillis()
+    val body = request.body?.trim()
+    val issues = issuesFile.issueObjects().toMutableList()
+    val index = request.id?.let { id -> issues.indexOfFirst { it["id"]?.jsonPrimitive?.contentOrNull == id } } ?: -1
+
+    fun event(name: String, issue: JsonObject, before: JsonObject? = null) = buildJsonObject {
+        put("event_id", "EVT-${now.toString(16)}-${UUID.randomUUID().toString().take(8)}")
+        put("ts_ms", now)
+        put("event", name)
+        put("id", issue["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
+        put("title", issue["title"]?.jsonPrimitive?.contentOrNull.orEmpty())
+        put("status", issue["status"]?.jsonPrimitive?.contentOrNull ?: status)
+        put("actor", "dashboard")
+        put("host", java.net.InetAddress.getLocalHost().hostName)
+        val changes = before?.issueChanges(issue).orEmpty()
+        if (changes.isNotEmpty()) put("changes", JsonObject(changes))
+    }
+
+    val createdOrUpdated = when (request.op.lowercase()) {
+        "create" -> {
+            val (title, description) = body.issueTextParts()
+            val issue = buildIssueObject(
+                id = request.repo.nextIssueId(issues),
+                title = title,
+                status = status,
+                description = description,
+                createdAt = now,
+                updatedAt = now,
+            )
+            issues += issue
+            issue to event("created", issue)
+        }
+        "update", "move" -> {
+            if (index < 0) error("Issue not found: ${request.id}")
+            val before = issues[index]
+            val (title, description) = body?.issueTextParts() ?: (before["title"]?.jsonPrimitive?.contentOrNull.orEmpty() to before["description"]?.jsonPrimitive?.contentOrNull.orEmpty())
+            val issue = before.updatedIssueObject(title, status, description, now)
+            issues[index] = issue
+            issue to event(if (status == "done" && before.statusText() != "done") "completed" else "updated", issue, before)
+        }
+        "delete" -> {
+            if (index < 0) error("Issue not found: ${request.id}")
+            val removed = issues.removeAt(index)
+            removed to event("deleted", removed)
+        }
+        else -> error("Invalid issue op: ${request.op}")
+    }
+    issuesFile.writeIssueObjects(issues)
+    eventsFile.appendIssueEvent(createdOrUpdated.second)
+}
+
+private fun File.issueObjects(): List<JsonObject> = runCatching {
+    takeIf { it.isFile }
+        ?.readText()
+        ?.let { opsJson.parseToJsonElement(it).jsonObject["issues"] as? JsonArray }
+        ?.filterIsInstance<JsonObject>()
+        ?: emptyList()
+}.getOrDefault(emptyList())
+
+private fun File.writeIssueObjects(issues: List<JsonObject>) {
+    parentFile?.mkdirs()
+    writeText(opsJson.encodeToString(buildJsonObject {
+        put("version", 1)
+        put("issues", JsonArray(issues))
+    }))
+}
+
+private fun File.appendIssueEvent(event: JsonObject) {
+    parentFile?.mkdirs()
+    appendText(opsJson.encodeToString(event) + "\n")
+}
+
+private fun String?.issueTextParts(): Pair<String, String> {
+    val lines = orEmpty().trim().lines()
+    val title = lines.firstOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: error("Issue text is required")
+    return title to lines.drop(1).joinToString("\n").trim()
+}
+
+private fun String.nextIssueId(issues: List<JsonObject>): String {
+    val prefix = issueRepoPrefix()
+    val used = issues.mapIndexed { index, issue ->
+        issue.text("id")?.issueNumber(prefix) ?: index
+    }.toSet()
+    val number = (0..999).firstOrNull { it !in used } ?: error("Issue id space exhausted for $prefix")
+    return "$prefix-${number.toString().padStart(3, '0')}"
+}
+
+private fun String.issueRepoPrefix() = when (this) {
+    "arcana" -> "ARC"
+    "backend" -> "BCK"
+    "server_py" -> "SPY"
+    else -> take(3).uppercase(Locale.ENGLISH).padEnd(3, 'X')
+}
+
+private fun String.issueNumber(prefix: String): Int? =
+    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.length == 3 && it.all(Char::isDigit) }?.toIntOrNull()
+
+private fun buildIssueObject(id: String, title: String, status: String, description: String, createdAt: Long, updatedAt: Long) = buildJsonObject {
+    put("id", id)
+    put("title", title)
+    put("status", status)
+    put("description", description)
+    put("notes", "")
+    put("created_at_ms", createdAt)
+    put("updated_at_ms", updatedAt)
+    if (status == "done") put("completed_at_ms", updatedAt)
+}
+
+private fun JsonObject.updatedIssueObject(title: String, status: String, description: String, now: Long) = buildJsonObject {
+    val notes = this@updatedIssueObject["notes"]?.jsonPrimitive?.contentOrNull.orEmpty()
+    put("id", this@updatedIssueObject["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
+    put("title", title)
+    put("status", status)
+    put("description", description)
+    put("notes", notes.takeUnless { it.isNotBlank() && description.contains(it) }.orEmpty())
+    put("created_at_ms", this@updatedIssueObject["created_at_ms"]?.jsonPrimitive?.longOrNull ?: now)
+    put("updated_at_ms", now)
+    if (status == "done") put("completed_at_ms", now)
+}
+
+private fun JsonObject.issueChanges(after: JsonObject): Map<String, JsonElement> = listOf("title", "status", "description", "notes")
+    .mapNotNull { field ->
+        val from = this[field]?.jsonPrimitive?.contentOrNull
+        val to = after[field]?.jsonPrimitive?.contentOrNull
+        if (from == to) null else field to buildJsonObject {
+            from?.let { put("from", it) }
+            to?.let { put("to", it) }
+        }
+    }
+    .toMap()
 
 private fun githubIssues(repo: String): IssueSummaryDto {
     val now = System.currentTimeMillis()
@@ -947,7 +1113,10 @@ private fun fetchGithubIssues(repo: String) = runCatching {
 internal fun githubIssueSummary(element: JsonElement): IssueSummaryDto = (element as? JsonArray)
     ?.filterIsInstance<JsonObject>()
     ?.filter { "pull_request" !in it }
-    ?.fold(IssueSummaryDto()) { summary, issue -> summary.with(githubIssueStatus(issue)) }
+    ?.fold(IssueSummaryDto()) { summary, issue ->
+        val status = githubIssueStatus(issue)
+        summary.with(status, issue.githubIssueItem(status))
+    }
     ?: IssueSummaryDto()
 
 private fun githubIssueStatus(issue: JsonObject): String {
@@ -969,17 +1138,88 @@ private fun issueObjects(element: JsonElement): List<JsonObject> = when (element
     else -> emptyList()
 }
 
+private fun issueEvents(file: File, source: String, sourceLabel: String): List<IssueEventDto> = runCatching {
+    file.takeIf { it.isFile }
+        ?.readLines()
+        ?.takeLast(80)
+        ?.mapNotNull { line ->
+            runCatching { opsJson.parseToJsonElement(line).jsonObject.issueEvent(source, sourceLabel) }.getOrNull()
+        }
+        ?: emptyList()
+}.getOrDefault(emptyList())
+
+private fun JsonObject.issueItem(source: String, sourceLabel: String) = statusText()?.normalizedIssueStatus()?.let { status ->
+    IssueItemDto(
+        id = text("id") ?: return@let null,
+        title = text("title").orEmpty(),
+        status = status,
+        source = source,
+        sourceLabel = sourceLabel,
+        url = text("url"),
+        description = text("description").orEmpty(),
+        notes = text("notes").orEmpty(),
+        createdAtMs = long("created_at_ms"),
+        updatedAtMs = long("updated_at_ms"),
+        completedAtMs = long("completed_at_ms"),
+    )
+}
+
+private fun JsonObject.githubIssueItem(status: String): IssueItemDto? {
+    val id = text("number")?.let { "#$it" } ?: text("id") ?: return null
+    return IssueItemDto(
+        id = id,
+        title = text("title").orEmpty(),
+        status = status.normalizedIssueStatus() ?: "todo",
+        source = "github",
+        sourceLabel = "GitHub Issues",
+        url = text("html_url") ?: text("url"),
+    )
+}
+
+private fun JsonObject.issueEvent(source: String, sourceLabel: String): IssueEventDto? {
+    val eventId = text("event_id") ?: return null
+    return IssueEventDto(
+        eventId = eventId,
+        tsMs = long("ts_ms"),
+        event = text("event").orEmpty(),
+        id = text("id").orEmpty(),
+        title = text("title").orEmpty(),
+        status = text("status").orEmpty(),
+        actor = text("actor"),
+        host = text("host"),
+        source = source,
+        sourceLabel = sourceLabel,
+        changes = (this["changes"] as? JsonObject).orEmpty().mapValues { (_, change) ->
+            val obj = change as? JsonObject
+            IssueEventChangeDto(obj?.text("from"), obj?.text("to"))
+        },
+    )
+}
+
 private fun JsonObject.statusText(): String? = sequenceOf("status", "state")
     .mapNotNull { this[it]?.jsonPrimitive?.contentOrNull }
     .firstOrNull()
 
-private fun IssueSummaryDto.with(status: String): IssueSummaryDto = when (status.trim().lowercase().replace("-", "_")) {
-    "todo", "to_do", "open", "new" -> copy(todo = todo + 1)
-    "wip", "doing", "in_progress", "progress" -> copy(wip = wip + 1)
-    "blocked", "blocker" -> copy(blocked = blocked + 1)
-    "review", "in_review", "reviewing" -> copy(review = review + 1)
-    "done", "complete", "completed", "closed" -> copy(done = done + 1)
-    else -> this
+private fun IssueSummaryDto.with(status: String, item: IssueItemDto? = null): IssueSummaryDto {
+    val normalized = status.normalizedIssueStatus() ?: return this
+    val counted = when (normalized) {
+        "todo" -> copy(todo = todo + 1)
+        "wip" -> copy(wip = wip + 1)
+        "blocked" -> copy(blocked = blocked + 1)
+        "review" -> copy(review = review + 1)
+        "done" -> copy(done = done + 1)
+        else -> this
+    }
+    return item?.let { counted.copy(items = counted.items + it.copy(status = normalized)) } ?: counted
+}
+
+private fun String.normalizedIssueStatus() = when (trim().lowercase().replace("-", "_")) {
+    "todo", "to_do", "open", "new" -> "todo"
+    "wip", "doing", "in_progress", "progress" -> "wip"
+    "blocked", "blocker" -> "blocked"
+    "review", "in_review", "reviewing" -> "review"
+    "done", "complete", "completed", "closed" -> "done"
+    else -> null
 }
 
 private fun IssueSummaryDto.hasAny(): Boolean = active + done > 0
@@ -1006,6 +1246,8 @@ private operator fun IssueSummaryDto.plus(other: IssueSummaryDto) = IssueSummary
     review = review + other.review,
     done = done + other.done,
     sources = sources + other.sources,
+    items = items + other.items,
+    events = (events + other.events).sortedByDescending { it.tsMs ?: 0L }.take(80),
 )
 
 private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(

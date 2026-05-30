@@ -6,17 +6,20 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -35,34 +39,42 @@ import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 
-@Composable
-internal fun CiResults(loadState: OpsLoadState, atPageBottom: Boolean = false) {
+internal fun LazyListScope.ciItems(loadState: OpsLoadState, pageWidth: Dp, historyState: CiHistoryState?) {
     when (loadState) {
-        OpsLoadState.Loading -> WorkSurface(
-            title = "CI Results",
-            detail = "Waiting for ops summary.",
-            items = listOf("backend", "server_py", "arcana"),
-        )
-        is OpsLoadState.Failed -> WorkSurface(
-            title = "CI Results Unavailable",
-            detail = loadState.message,
-            items = listOf("/api/ops/summary", "backend control plane", "dashboard API"),
-        )
-        is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            CiHeader(loadState.summary)
-            VerificationGrid(loadState.summary)
-            RunHistoryPanel(loadState.summary, atPageBottom)
+        OpsLoadState.Loading -> item(key = "ci-loading") {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                WorkSurface(
+                    title = "CI Results",
+                    detail = "Waiting for ops summary.",
+                    items = listOf("backend", "server_py", "arcana"),
+                )
+            }
+        }
+        is OpsLoadState.Failed -> item(key = "ci-failed") {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                WorkSurface(
+                    title = "CI Results Unavailable",
+                    detail = loadState.message,
+                    items = listOf("/api/ops/summary", "backend control plane", "dashboard API"),
+                )
+            }
+        }
+        is OpsLoadState.Ready -> {
+            item(key = "ci-header") {
+                CiHeader(loadState.summary, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp))
+            }
+            verificationItems(loadState.summary, pageWidth)
+            historyState?.let { historyItems(it, loadState.summary.generatedAtMs) }
         }
     }
 }
 
 @Composable
-private fun CiHeader(summary: OpsSummaryDto) {
-    val ok = summary.repos.count { it.ciStatus() == OpsStatusDto.OK }
+private fun CiHeader(summary: OpsSummaryDto, modifier: Modifier = Modifier) {
+    val ok = remember(summary.repos) { summary.repos.count { it.ciStatus() == OpsStatusDto.OK } }
     val shape = RoundedCornerShape(8.dp)
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .glassSurface(shape, cyan, glowAlpha = 0.08f, borderAlpha = 0.28f)
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -78,18 +90,28 @@ private fun CiHeader(summary: OpsSummaryDto) {
     }
 }
 
-@Composable
-private fun VerificationGrid(summary: OpsSummaryDto) {
+private fun LazyListScope.verificationItems(summary: OpsSummaryDto, pageWidth: Dp) {
     val repos = summary.repos
-    BoxWithConstraints {
-        if (maxWidth < 980.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                repos.forEach { CiRepoCard(it, summary.generatedAtMs, modifier = Modifier.fillMaxWidth()) }
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    if (pageWidth < 980.dp) {
+        itemsIndexed(repos, key = { _, repo -> "ci-repo-${repo.id}" }) { index, repo ->
+            val bottom = if (index == repos.lastIndex) 14.dp else 12.dp
+            CiRepoCard(
+                repo = repo,
+                generatedAtMs = summary.generatedAtMs,
+                fieldCompact = pageWidth < 620.dp,
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = bottom),
+            )
+        }
+    } else {
+        item(key = "ci-repo-grid") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 repos.forEach { repo ->
-                    CiRepoCard(repo, summary.generatedAtMs, modifier = Modifier.weight(1f))
+                    key(repo.id) {
+                        CiRepoCard(repo, summary.generatedAtMs, fieldCompact = true, modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -97,9 +119,13 @@ private fun VerificationGrid(summary: OpsSummaryDto) {
 }
 
 @Composable
-private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
-    val runs = repo.ciRuns()
-    val status = repo.ciStatus()
+private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: Boolean, modifier: Modifier = Modifier) {
+    val runs = remember(repo) { repo.ciRuns() }
+    val status = remember(repo) { repo.ciStatus() }
+    val serverPyEvidence = remember(runs) {
+        runs.filterNot { it.label in setOf("live e2e selftest", "model matrix") }.takeWhile { it.label != "full suite" }
+    }
+    val serverPyFullSuite = remember(runs) { runs.firstOrNull { it.label == "full suite" } }
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
@@ -116,47 +142,56 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modif
             StatusPill(status.name, status.color())
         }
         if (repo.id == "server_py") {
-            runs.filterNot { it.label in setOf("live e2e selftest", "model matrix") }.takeWhile { it.label != "full suite" }.forEach { run ->
-                CiEvidenceCard(
-                    title = run.evidenceTitle(repo.id),
-                    status = run.status,
-                    generatedAtMs = generatedAtMs,
-                    timestampMs = run.timestampMs,
-                    durationMs = run.durationMs,
-                    subtitle = run.evidenceSubtitle(repo.id),
-                    detail = run.evidenceDetail(repo.id),
-                    fields = run.evidenceFields(repo.id, generatedAtMs),
-                    artifactUrl = run.url,
-                )
+            serverPyEvidence.forEach { run ->
+                key(run.evidenceKey()) {
+                    CiEvidenceCard(
+                        title = run.evidenceTitle(repo.id),
+                        status = run.status,
+                        generatedAtMs = generatedAtMs,
+                        timestampMs = run.timestampMs,
+                        durationMs = run.durationMs,
+                        subtitle = run.evidenceSubtitle(repo.id),
+                        detail = run.evidenceDetail(repo.id),
+                        fields = run.evidenceFields(repo.id, generatedAtMs),
+                        fieldCompact = fieldCompact,
+                        artifactUrl = run.url,
+                    )
+                }
             }
-            ServerPySelfTestSummary(repo.selfTest, generatedAtMs)
-            runs.firstOrNull { it.label == "full suite" }?.let { run ->
-                CiEvidenceCard(
-                    title = run.evidenceTitle(repo.id),
-                    status = run.status,
-                    generatedAtMs = generatedAtMs,
-                    timestampMs = run.timestampMs,
-                    durationMs = run.durationMs,
-                    subtitle = run.evidenceSubtitle(repo.id),
-                    detail = run.evidenceDetail(repo.id),
-                    fields = run.evidenceFields(repo.id, generatedAtMs),
-                    artifactUrl = run.url,
-                )
+            ServerPySelfTestSummary(repo.selfTest, generatedAtMs, fieldCompact)
+            serverPyFullSuite?.let { run ->
+                key(run.evidenceKey()) {
+                    CiEvidenceCard(
+                        title = run.evidenceTitle(repo.id),
+                        status = run.status,
+                        generatedAtMs = generatedAtMs,
+                        timestampMs = run.timestampMs,
+                        durationMs = run.durationMs,
+                        subtitle = run.evidenceSubtitle(repo.id),
+                        detail = run.evidenceDetail(repo.id),
+                        fields = run.evidenceFields(repo.id, generatedAtMs),
+                        fieldCompact = fieldCompact,
+                        artifactUrl = run.url,
+                    )
+                }
             }
         } else {
             if (runs.isEmpty()) PlaceholderTile("test evidence unavailable")
             runs.forEach { run ->
-                CiEvidenceCard(
-                    title = run.evidenceTitle(repo.id),
-                    status = run.status,
-                    generatedAtMs = generatedAtMs,
-                    timestampMs = run.timestampMs.takeUnless { repo.id == "arcana" },
-                    durationMs = run.durationMs.takeUnless { repo.id == "arcana" },
-                    subtitle = run.evidenceSubtitle(repo.id),
-                    detail = run.evidenceDetail(repo.id),
-                    fields = run.evidenceFields(repo.id, generatedAtMs),
-                    artifactUrl = run.url,
-                )
+                key(run.evidenceKey()) {
+                    CiEvidenceCard(
+                        title = run.evidenceTitle(repo.id),
+                        status = run.status,
+                        generatedAtMs = generatedAtMs,
+                        timestampMs = run.timestampMs.takeUnless { repo.id == "arcana" },
+                        durationMs = run.durationMs.takeUnless { repo.id == "arcana" },
+                        subtitle = run.evidenceSubtitle(repo.id),
+                        detail = run.evidenceDetail(repo.id),
+                        fields = run.evidenceFields(repo.id, generatedAtMs),
+                        fieldCompact = fieldCompact,
+                        artifactUrl = run.url,
+                    )
+                }
             }
         }
     }
@@ -172,6 +207,7 @@ private fun CiEvidenceCard(
     subtitle: String? = null,
     detail: String? = null,
     fields: List<FieldSpec> = emptyList(),
+    fieldCompact: Boolean,
     artifactUrl: String? = null,
     artifacts: List<OpsArtifactDto> = emptyList(),
 ) {
@@ -191,7 +227,7 @@ private fun CiEvidenceCard(
             }
             EvidenceTail(status, generatedAtMs, timestampMs, durationMs)
         }
-        if (fields.isNotEmpty()) FieldGrid(fields)
+        if (fields.isNotEmpty()) FieldGrid(fields, fieldCompact)
         detail?.let { Text(it, color = Color(0xFFD3DCE8), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
         ArtifactStrip(artifactUrl, artifacts)
     }
@@ -209,7 +245,7 @@ private fun EvidenceTail(status: OpsStatusDto, generatedAtMs: Long, timestampMs:
 }
 
 @Composable
-private fun ServerPySelfTestSummary(selfTest: SelfTestSummaryDto?, generatedAtMs: Long) {
+private fun ServerPySelfTestSummary(selfTest: SelfTestSummaryDto?, generatedAtMs: Long, fieldCompact: Boolean) {
     if (selfTest == null) {
         PlaceholderTile("selftest artifact unavailable")
         return
@@ -237,26 +273,34 @@ private fun ServerPySelfTestSummary(selfTest: SelfTestSummaryDto?, generatedAtMs
             (selfTest.rawError ?: selfTest.textExcerpt).takeIf { it.isNotBlank() },
         ).joinToString("\n").takeIf { it.isNotBlank() },
         fields = fields + selfTest.zenFields(),
+        fieldCompact = fieldCompact,
         artifactUrl = selfTest.workflowUrl,
         artifacts = selfTest.artifacts,
     )
 }
 
 @Composable
-private fun FieldGrid(fields: List<FieldSpec>) {
-    BoxWithConstraints {
-        if (maxWidth < 620.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                fields.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        row.forEach { field -> Box(modifier = Modifier.weight(1f)) { FactTile(field) } }
-                        if (row.size == 1) Box(modifier = Modifier.weight(1f))
+private fun FieldGrid(fields: List<FieldSpec>, compact: Boolean) {
+    if (compact) {
+        val rows = remember(fields) { fields.chunked(2) }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            rows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEach { field ->
+                        key(field.name) {
+                            Box(modifier = Modifier.weight(1f)) { FactTile(field) }
+                        }
                     }
+                    if (row.size == 1) Box(modifier = Modifier.weight(1f))
                 }
             }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                fields.forEach { field -> Box(modifier = Modifier.weight(1f)) { FactTile(field) } }
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            fields.forEach { field ->
+                key(field.name) {
+                    Box(modifier = Modifier.weight(1f)) { FactTile(field) }
+                }
             }
         }
     }
@@ -281,53 +325,107 @@ private fun FactTile(field: FieldSpec) {
 
 @Composable
 private fun ArtifactStrip(primaryUrl: String?, artifacts: List<OpsArtifactDto>) {
-    val links = buildList {
-        primaryUrl?.let { add(OpsArtifactDto(name = if (it.startsWith("http")) "GitHub workflow" else it.substringAfterLast('/'), url = it)) }
-        addAll(artifacts)
+    val links = remember(primaryUrl, artifacts) {
+        buildList {
+            primaryUrl?.let { add(OpsArtifactDto(name = if (it.startsWith("http")) "GitHub workflow" else it.substringAfterLast('/'), url = it)) }
+            addAll(artifacts)
+        }
     }
     if (links.isEmpty()) return
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         links.forEach { artifact ->
-            val url = artifact.url
-            Text(
-                artifact.name,
-                modifier = if (url == null) Modifier else Modifier.clickable { openOpsUrl(url) },
-                color = if (url == null) muted else cyan,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            key("${artifact.name}-${artifact.url}") {
+                val url = artifact.url
+                Text(
+                    artifact.name,
+                    modifier = if (url == null) Modifier else Modifier.clickable { openOpsUrl(url) },
+                    color = if (url == null) muted else cyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
-    val repos = summary.repos.filter { it.id in historyRepoIds }
+internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boolean): CiHistoryState? {
+    if (summary == null) return null
     var enabled by remember { mutableStateOf(readHistoryRepoFilter()) }
     var visibleLimit by remember { mutableStateOf(12) }
-    val eventsByRepo = repos.associateWith { repo ->
-        (repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
-            .distinctBy { it.label to it.timestampMs }
+    val repos = remember(summary.repos) { summary.repos.filter { it.id in historyRepoIds } }
+    val eventsByRepo = remember(repos) {
+        repos.associateWith { repo ->
+            (repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
+                .distinctBy { it.label to it.timestampMs }
+        }
     }
-    val counts = eventsByRepo.entries.associate { (repo, runs) -> repo.id to runs.size }
-    val allEvents = eventsByRepo
-        .flatMap { (repo, runs) -> runs.map { repo to it } }
-        .sortedByDescending { it.second.timestampMs ?: 0L }
-    val events = allEvents.filter { it.first.id in enabled }
-    val visibleEvents = events.take(visibleLimit)
-    if (allEvents.isEmpty()) return
-    val eventKeys = visibleEvents.map { (repo, run) -> "${repo.id}-${run.label}-${run.timestampMs}" }
+    val counts = remember(eventsByRepo) { eventsByRepo.entries.associate { (repo, runs) -> repo.id to runs.size } }
+    val allEvents = remember(eventsByRepo) {
+        eventsByRepo
+            .flatMap { (repo, runs) -> runs.map { repo to it } }
+            .sortedByDescending { it.second.timestampMs ?: 0L }
+    }
+    if (allEvents.isEmpty()) return null
+    val events = remember(allEvents, enabled) { allEvents.filter { it.first.id in enabled } }
+    val visibleEvents = remember(events, visibleLimit) {
+        events.take(visibleLimit).map { (repo, run) -> CiHistoryEvent(repo, run, run.historyKey(repo)) }
+    }
+    val eventKeys = remember(visibleEvents) { visibleEvents.map { it.key } }
     val freshKeys = rememberFreshKeys(eventKeys)
     LaunchedEffect(atPageBottom, events.size, visibleLimit) {
         if (atPageBottom && visibleLimit < events.size) visibleLimit = (visibleLimit + 12).coerceAtMost(events.size)
     }
+    return CiHistoryState(
+        counts = counts,
+        enabled = enabled,
+        visibleEvents = visibleEvents,
+        total = events.size,
+        freshKeys = freshKeys,
+        onToggleRepo = { id ->
+            enabled = if (id in enabled) enabled - id else enabled + id
+            writeDashboardPref(historyRepoFilterPrefKey, enabled.joinToString(","))
+        },
+    )
+}
 
+internal data class CiHistoryState(
+    val counts: Map<String, Int>,
+    val enabled: Set<String>,
+    val visibleEvents: List<CiHistoryEvent>,
+    val total: Int,
+    val freshKeys: Set<String>,
+    val onToggleRepo: (String) -> Unit,
+)
+
+internal data class CiHistoryEvent(
+    val repo: RepoHealthDto,
+    val run: TestRunSummaryDto,
+    val key: String,
+)
+
+private fun LazyListScope.historyItems(state: CiHistoryState, generatedAtMs: Long) {
+    item(key = "ci-history-header") {
+        RunHistoryHeader(state, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
+    }
+    items(state.visibleEvents, key = { event -> "ci-history-${event.key}" }) { event ->
+        RunHistoryRow(
+            repo = event.repo,
+            run = event.run,
+            generatedAtMs = generatedAtMs,
+            fresh = event.key in state.freshKeys,
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun RunHistoryHeader(state: CiHistoryState, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .glassSurface(shape, green, glowAlpha = 0.06f, borderAlpha = 0.26f)
             .padding(15.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -337,25 +435,21 @@ private fun RunHistoryPanel(summary: OpsSummaryDto, atPageBottom: Boolean) {
                 Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text("Unified backend, server_py, and Arcana CI evidence.", color = muted, fontSize = 12.sp)
             }
-            StatusPill("${visibleEvents.size}/${events.size} shown", green)
+            StatusPill("${state.visibleEvents.size}/${state.total} shown", green)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             historyRepoIds.forEach { id ->
-                HistoryFilterPill(
-                    label = "${id.displayRepoName()} ${counts[id] ?: 0}",
-                    color = id.historyColor(),
-                    enabled = id in enabled,
-                    onClick = {
-                        enabled = if (id in enabled) enabled - id else enabled + id
-                        writeDashboardPref(historyRepoFilterPrefKey, enabled.joinToString(","))
-                    },
-                )
+                key(id) {
+                    HistoryFilterPill(
+                        label = "${id.displayRepoName()} ${state.counts[id] ?: 0}",
+                        color = id.historyColor(),
+                        enabled = id in state.enabled,
+                        onClick = { state.onToggleRepo(id) },
+                    )
+                }
             }
         }
-        if (events.isEmpty()) PlaceholderTile("no runs selected")
-        visibleEvents.forEachIndexed { index, (repo, run) ->
-            RunHistoryRow(repo, run, summary.generatedAtMs, fresh = eventKeys[index] in freshKeys)
-        }
+        if (state.visibleEvents.isEmpty()) PlaceholderTile("no runs selected")
     }
 }
 
@@ -393,12 +487,11 @@ private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onC
 }
 
 @Composable
-private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false) {
+private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false, modifier: Modifier = Modifier) {
     val flash = if (fresh) 1f else 0f
     val running = run.status == OpsStatusDto.WIP
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFF0D141B))
             .background(run.status.color().copy(alpha = flash * 0.11f))
@@ -431,6 +524,10 @@ private fun RepoHealthDto.ciRole() = when (id) {
 }
 
 private fun String.displayRepoName() = if (this == "server_py") "server_py" else replaceFirstChar { it.uppercase() }
+
+private fun TestRunSummaryDto.evidenceKey() = "$label-$timestampMs-$status"
+
+private fun TestRunSummaryDto.historyKey(repo: RepoHealthDto) = "${repo.id}-$label-$timestampMs"
 
 private fun String.historyColor() = when (this) {
     "backend" -> green

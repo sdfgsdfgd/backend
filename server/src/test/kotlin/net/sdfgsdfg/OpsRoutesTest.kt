@@ -615,15 +615,16 @@ class OpsRoutesTest {
             {
               "version": 1,
               "issues": [
-                { "id": "backend-1", "status": "todo" },
-                { "id": "backend-2", "status": "WIP" },
-                { "id": "backend-3", "state": "blocked" },
-                { "id": "backend-4", "status": "review" },
-                { "id": "backend-5", "status": "done" }
+                { "id": "backend-1", "title": "triage", "status": "todo", "created_at_ms": 10, "updated_at_ms": 11 },
+                { "id": "backend-2", "title": "active", "status": "WIP" },
+                { "id": "backend-3", "title": "stuck", "state": "blocked" },
+                { "id": "backend-4", "title": "check", "status": "review" },
+                { "id": "backend-5", "title": "closed", "status": "done", "completed_at_ms": 20 }
               ]
             }
             """.trimIndent(),
         )
+        File(arcanaDir, "issues.events.jsonl").writeText("""{"event_id":"EVT-1","ts_ms":11,"event":"updated","id":"backend-1","title":"triage","status":"todo"}""" + "\n")
 
         val issues = localArcanaIssues(repo)
         assertEquals(1, issues.todo)
@@ -634,6 +635,10 @@ class OpsRoutesTest {
         assertEquals(4, issues.active)
         assertEquals("arcana", issues.sources.single().id)
         assertEquals(4, issues.sources.single().active)
+        assertEquals(5, issues.items.size)
+        assertEquals("backend-2", issues.items.first { it.status == "wip" }.id)
+        assertEquals(10L, issues.items.first().createdAtMs)
+        assertEquals("updated", issues.events.single().event)
     }
 
     @Test
@@ -641,10 +646,10 @@ class OpsRoutesTest {
         val issues = githubIssueSummary(json.parseToJsonElement(
             """
             [
-              { "number": 1, "labels": [] },
-              { "number": 2, "labels": [{ "name": "blocked" }] },
-              { "number": 3, "labels": [{ "name": "in progress" }] },
-              { "number": 4, "labels": [{ "name": "review" }] },
+              { "number": 1, "title": "plain", "html_url": "https://github.test/1", "labels": [] },
+              { "number": 2, "title": "blocked", "labels": [{ "name": "blocked" }] },
+              { "number": 3, "title": "progress", "labels": [{ "name": "in progress" }] },
+              { "number": 4, "title": "review", "labels": [{ "name": "review" }] },
               { "number": 5, "pull_request": {}, "labels": [{ "name": "blocked" }] }
             ]
             """.trimIndent(),
@@ -655,6 +660,9 @@ class OpsRoutesTest {
         assertEquals(1, issues.blocked)
         assertEquals(1, issues.review)
         assertEquals(4, issues.active)
+        assertEquals(4, issues.items.size)
+        assertEquals("#1", issues.items.first().id)
+        assertEquals("github", issues.items.first().source)
     }
 
     @Test

@@ -229,6 +229,27 @@ class CoreDtoSerializationTest {
                         wip = 1,
                         done = 3,
                         sources = listOf(IssueSourceSummaryDto("arcana", "Arcana issues", todo = 2, wip = 1, done = 3)),
+                        items = listOf(
+                            IssueItemDto(
+                                id = "ISS-1",
+                                title = "stabilize issue DTO",
+                                status = "wip",
+                                source = "arcana",
+                                createdAtMs = 31L,
+                                updatedAtMs = 32L,
+                            ),
+                        ),
+                        events = listOf(
+                            IssueEventDto(
+                                eventId = "EVT-1",
+                                tsMs = 33L,
+                                event = "updated",
+                                id = "ISS-1",
+                                title = "stabilize issue DTO",
+                                status = "wip",
+                                changes = mapOf("status" to IssueEventChangeDto("todo", "wip")),
+                            ),
+                        ),
                     ),
                     runs = listOf(TestRunSummaryDto("pytest unit", OpsStatusDto.OK)),
                 ),
@@ -237,7 +258,17 @@ class CoreDtoSerializationTest {
         assertEquals(21L, ingest.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(123.0, ingest.getValue("duration_ms").jsonPrimitive.double)
         assertEquals(77.7, ingest.getValue("coverage_pct").jsonPrimitive.double)
-        assertEquals("arcana", ingest.getValue("issues").jsonObject.getValue("sources").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content)
+        val ingestIssues = ingest.getValue("issues").jsonObject
+        val ingestIssue = ingestIssues.getValue("items").jsonArray.first().jsonObject
+        val ingestEvent = ingestIssues.getValue("events").jsonArray.first().jsonObject
+        val ingestChange = ingestEvent.getValue("changes").jsonObject.getValue("status").jsonObject
+        assertEquals("arcana", ingestIssues.getValue("sources").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content)
+        assertEquals(31L, ingestIssue.getValue("created_at_ms").jsonPrimitive.long)
+        assertEquals(32L, ingestIssue.getValue("updated_at_ms").jsonPrimitive.long)
+        assertEquals("EVT-1", ingestEvent.getValue("event_id").jsonPrimitive.content)
+        assertEquals(33L, ingestEvent.getValue("ts_ms").jsonPrimitive.long)
+        assertEquals("todo", ingestChange.getValue("from").jsonPrimitive.content)
+        assertEquals("wip", ingestChange.getValue("to").jsonPrimitive.content)
         assertEquals("pytest unit", ingest.getValue("runs").jsonArray.first().jsonObject.getValue("label").jsonPrimitive.content)
         assertFalse("timestampMs" in ingest)
         assertFalse("durationMs" in ingest)

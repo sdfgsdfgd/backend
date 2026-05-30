@@ -138,6 +138,8 @@ data class IssueSummaryDto(
     val review: Int = 0,
     val done: Int = 0,
     val sources: List<IssueSourceSummaryDto> = emptyList(),
+    val items: List<IssueItemDto> = emptyList(),
+    val events: List<IssueEventDto> = emptyList(),
 ) {
     val active: Int
         get() = todo + wip + blocked + review
@@ -157,3 +159,48 @@ data class IssueSourceSummaryDto(
     val active: Int
         get() = todo + wip + blocked + review
 }
+
+@Serializable
+data class IssueItemDto(
+    val id: String,
+    val title: String = "",
+    val status: String = "todo",
+    val source: String = "arcana",
+    @SerialName("source_label") val sourceLabel: String = "Arcana issues",
+    val url: String? = null,
+    val description: String = "",
+    val notes: String = "",
+    @SerialName("created_at_ms") val createdAtMs: Long? = null,
+    @SerialName("updated_at_ms") val updatedAtMs: Long? = null,
+    @SerialName("completed_at_ms") val completedAtMs: Long? = null,
+)
+
+@Serializable
+data class IssueMutationRequestDto(
+    val op: String,
+    val repo: String,
+    val id: String? = null,
+    val status: String = "todo",
+    val body: String? = null,
+)
+
+@Serializable
+data class IssueEventDto(
+    @SerialName("event_id") val eventId: String,
+    @SerialName("ts_ms") val tsMs: Long? = null,
+    val event: String = "",
+    val id: String = "",
+    val title: String = "",
+    val status: String = "",
+    val actor: String? = null,
+    val host: String? = null,
+    val source: String = "arcana",
+    @SerialName("source_label") val sourceLabel: String = "Arcana issues",
+    val changes: Map<String, IssueEventChangeDto> = emptyMap(),
+)
+
+@Serializable
+data class IssueEventChangeDto(
+    @SerialName("from") val fromValue: String? = null,
+    @SerialName("to") val toValue: String? = null,
+)

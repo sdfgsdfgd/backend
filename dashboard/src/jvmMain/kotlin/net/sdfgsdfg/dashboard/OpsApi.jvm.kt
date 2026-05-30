@@ -1,5 +1,7 @@
 package net.sdfgsdfg.dashboard
 
+import kotlinx.serialization.encodeToString
+import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import java.awt.Desktop
@@ -44,6 +46,34 @@ internal actual fun connectOpsSocket(
 ): () -> Unit {
     onState(OpsSocketState(OpsSocketStatus.DISCONNECTED))
     return {}
+}
+
+internal actual fun mutateIssue(
+    request: IssueMutationRequestDto,
+    onLoaded: (OpsSummaryDto) -> Unit,
+    onFailed: (String) -> Unit,
+) {
+    Thread({
+        runCatching {
+            val endpoint = activeOpsApiBase ?: configuredOpsApiBase() ?: "http://127.0.0.1"
+            val response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder()
+                    .uri(URI.create("$endpoint/api/ops/issues"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(dashboardJson.encodeToString(request)))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            if (response.statusCode() !in 200..299) error("POST $endpoint/api/ops/issues failed with ${response.statusCode()}")
+            dashboardJson.decodeFromString<OpsSummaryDto>(response.body())
+        }.fold(
+            onSuccess = { SwingUtilities.invokeLater { onLoaded(it) } },
+            onFailure = { SwingUtilities.invokeLater { onFailed(it.message ?: "Issue mutation failed") } },
+        )
+    }, "ops-issue-mutator").apply {
+        isDaemon = true
+        start()
+    }
 }
 
 private fun fetchOpsSummary(): OpsSummaryDto {

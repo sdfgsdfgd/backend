@@ -71,7 +71,7 @@ internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
 
 
 internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
-internal data class IssueLaneSpec(val label: String, val color: Color, val count: (RepoHealthDto) -> Int)
+internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (RepoHealthDto) -> Int)
 internal data class BadgeSpec(val label: String, val color: Color, val strong: Boolean = false)
 
 @Composable
@@ -374,13 +374,15 @@ internal fun StatusDot(status: OpsStatusDto) {
 internal fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
     .flatMap { it.issues.sources }
     .groupBy { it.id }
-    .map { (id, sources) ->
+    .mapNotNull { (id, sources) ->
+        val active = sources.sumOf { it.active }
+        if (active == 0) return@mapNotNull null
         val label = when (id) {
             "arcana" -> "Arcana"
             "github" -> "GitHub"
             else -> sources.firstOrNull()?.label ?: id
         }
-        "$label ${sources.sumOf { it.active }}"
+        "$label $active"
     }
     .joinToString(" · ")
 
@@ -454,6 +456,7 @@ internal fun Modifier.glassSurface(
     accent: Color,
     glowAlpha: Float,
     borderAlpha: Float,
+    neutralBorderAlpha: Float = 0.17f,
 ): Modifier = this
     .surfaceDepth(shape, accent, glowAlpha)
     .background(Color.Black.copy(alpha = 0.62f), shape)
@@ -490,7 +493,7 @@ internal fun Modifier.glassSurface(
             alpha = 0.42f,
         ),
     )
-    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.17f)), shape)
+    .border(BorderStroke(1.dp, Color.White.copy(alpha = neutralBorderAlpha)), shape)
     .border(BorderStroke(1.dp, accent.copy(alpha = borderAlpha)), shape)
 
 internal fun OpsStatusDto.color(): Color = when (this) {

@@ -24,7 +24,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,6 +33,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -61,45 +62,55 @@ import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 
-@Composable
-internal fun Home(loadState: OpsLoadState) {
+internal fun LazyListScope.homeItems(loadState: OpsLoadState, pageWidth: Dp) {
     when (loadState) {
-        OpsLoadState.Loading -> LoadingPanel()
-        is OpsLoadState.Failed -> WorkSurface(
-            title = "Ops Summary Unavailable",
-            detail = loadState.message,
-            items = listOf("/api/ops/summary", "backend service", "local preview route"),
-        )
-        is OpsLoadState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SummaryStrip(loadState.summary)
-            RepoGrid(loadState.summary.repos, loadState.summary.generatedAtMs)
+        OpsLoadState.Loading -> item(key = "home-loading") {
+            LoadingPanel(pageWidth, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        }
+        is OpsLoadState.Failed -> item(key = "home-failed") {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                WorkSurface(
+                    title = "Ops Summary Unavailable",
+                    detail = loadState.message,
+                    items = listOf("/api/ops/summary", "backend service", "local preview route"),
+                )
+            }
+        }
+        is OpsLoadState.Ready -> {
+            item(key = "home-summary") {
+                SummaryStrip(loadState.summary, pageWidth, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
+            }
+            repoItems(loadState.summary.repos, loadState.summary.generatedAtMs, pageWidth)
         }
     }
 }
 
 @Composable
-private fun SummaryStrip(summary: OpsSummaryDto) {
-    val ok = summary.repos.count { it.status == OpsStatusDto.OK }
-    val activeIssues = summary.repos.sumOf { it.issues.active }
-    val alerts = summary.repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
-    val wip = summary.repos.count { it.status == OpsStatusDto.WIP }
-
-    BoxWithConstraints {
-        val vertical = maxWidth < 760.dp
-        val metrics = listOf(
+private fun SummaryStrip(summary: OpsSummaryDto, pageWidth: Dp, modifier: Modifier = Modifier) {
+    val repos = summary.repos
+    val metrics = remember(repos) {
+        val ok = repos.count { it.status == OpsStatusDto.OK }
+        val activeIssues = repos.sumOf { it.issues.active }
+        val alerts = repos.count { it.status in setOf(OpsStatusDto.WARN, OpsStatusDto.FAIL, OpsStatusDto.UNKNOWN) }
+        val wip = repos.count { it.status == OpsStatusDto.WIP }
+        listOf(
             FieldSpec("repos", summary.repos.size.toString()),
             FieldSpec("healthy", ok.toString()),
             FieldSpec("alerts", alerts.toString()),
             FieldSpec("wip", wip.toString()),
-            FieldSpec("active issues", activeIssues.toString(), issueSourceBreakdown(summary.repos)),
+            FieldSpec("active issues", activeIssues.toString(), issueSourceBreakdown(repos)),
         )
-        if (vertical) {
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                metrics.forEach { MetricCard(it) }
+    }
+    if (pageWidth < 760.dp) {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            metrics.forEach { metric ->
+                key(metric.name) { MetricCard(metric) }
             }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                metrics.forEach { metric ->
+        }
+    } else {
+        Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            metrics.forEach { metric ->
+                key(metric.name) {
                     Box(modifier = Modifier.weight(1f)) {
                         MetricCard(metric)
                     }
@@ -109,17 +120,27 @@ private fun SummaryStrip(summary: OpsSummaryDto) {
     }
 }
 
-@Composable
-private fun RepoGrid(repos: List<RepoHealthDto>, generatedAtMs: Long) {
-    BoxWithConstraints {
-        if (maxWidth < 980.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                repos.forEach { RepoCard(it, generatedAtMs, modifier = Modifier.fillMaxWidth()) }
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun LazyListScope.repoItems(repos: List<RepoHealthDto>, generatedAtMs: Long, pageWidth: Dp) {
+    val stacked = pageWidth < 980.dp
+    if (stacked) {
+        itemsIndexed(repos, key = { _, repo -> "home-repo-${repo.id}" }) { index, repo ->
+            val bottom = if (index == repos.lastIndex) 0.dp else 10.dp
+            RepoCard(
+                repo = repo,
+                generatedAtMs = generatedAtMs,
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = bottom),
+            )
+        }
+    } else {
+        item(key = "home-repo-grid") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 repos.forEach { repo ->
-                    RepoCard(repo, generatedAtMs, modifier = Modifier.weight(1f))
+                    key(repo.id) {
+                        RepoCard(repo, generatedAtMs, modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -164,12 +185,19 @@ private fun RunSignal(run: TestRunSummaryDto, generatedAtMs: Long) {
 
 @Composable
 private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: OpsStatusDto) {
+    val runtimeBadges = remember(repo) { repo.runtimeBadges() }
+    val testBadges = remember(repo) { repo.testBadges() }
+    val visibleSignals = remember(repo) {
+        if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
+    }
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         StatusDot(status)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(repo.name, color = text, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                repo.runtimeBadges().forEach { PanelBadge(it) }
+                runtimeBadges.forEach { badge ->
+                    key(badge.label) { PanelBadge(badge) }
+                }
                 Text(
                     repo.role,
                     modifier = Modifier.weight(1f),
@@ -181,16 +209,16 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: Op
                 )
                 if (repo.id != "arcana") PanelBadge(BadgeSpec(status.name, status.color(), strong = true))
             }
-            val testBadges = repo.testBadges()
             if (testBadges.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                testBadges.forEach { PanelBadge(it) }
+                testBadges.forEach { badge ->
+                    key(badge.label) { PanelBadge(badge) }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 PanelBadge(repo.issues.badgeSpec())
             }
         }
     }
-    val visibleSignals = if (repo.id == "server_py") repo.signals.filterNot { it.label == "transport" } else repo.signals
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
     }
@@ -210,15 +238,17 @@ private fun SignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
         modifier = Modifier.animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing)),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        signals.forEach { SignalRow(it, generatedAtMs) }
+        signals.forEach { signal ->
+            key(signal.signalKey()) { SignalRow(signal, generatedAtMs) }
+        }
     }
 }
 
 @Composable
 private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
-    val summary = signals.firstOrNull { it.isActiveProcessSummary() }
-    val processRows = signals.filterNot { it.isActiveProcessSummary() }
-    val processKeys = processRows.map { "${it.label}-${it.meta}-${it.timestampMs}-${it.detail}" }
+    val summary = remember(signals) { signals.firstOrNull { it.isActiveProcessSummary() } }
+    val processRows = remember(signals) { signals.filterNot { it.isActiveProcessSummary() } }
+    val processKeys = remember(processRows) { processRows.map { it.signalKey() } }
     val freshKeys = rememberFreshKeys(processKeys)
     var expanded by remember { mutableStateOf(readDashboardPref("ops.home.activeExpanded")?.toBooleanStrictOrNull() ?: true) }
 
@@ -275,7 +305,7 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
 
 @Composable
 private fun ActiveSignalRow(signal: OpsSignalDto, generatedAtMs: Long, expanded: Boolean, onClick: () -> Unit) {
-    val groups = signal.activeProcessGroups()
+    val groups = remember(signal.detail, signal.meta) { signal.activeProcessGroups() }
     val shape = RoundedCornerShape(7.dp)
     Row(
         modifier = Modifier
@@ -299,9 +329,13 @@ private fun ActiveSignalRow(signal: OpsSignalDto, generatedAtMs: Long, expanded:
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     groups.forEach { (host, badges) ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(host, color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            badges.forEach { PanelBadge(it) }
+                        key(host) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(host, color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                badges.forEach { badge ->
+                                    key(badge.label) { PanelBadge(badge) }
+                                }
+                            }
                         }
                     }
                 }
@@ -351,8 +385,12 @@ private fun SignalRow(
 @Composable
 private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: Boolean = false) {
     val shape = RoundedCornerShape(7.dp)
-    val command = signal.detail?.takeIf { signal.label == "arcana" }?.arcanaCommandParts()
-    val expandable = command != null || (signal.detail?.let { it.length > 130 || "\n" in it } == true)
+    val command = remember(signal.label, signal.detail) {
+        signal.detail?.takeIf { signal.label == "arcana" }?.arcanaCommandParts()
+    }
+    val expandable = remember(command, signal.detail) {
+        command != null || (signal.detail?.let { it.length > 130 || "\n" in it } == true)
+    }
     var expanded by remember(signal.label, signal.meta, signal.timestampMs, signal.detail) { mutableStateOf(false) }
     val flash by animateFloatAsState(
         targetValue = if (fresh) 1f else 0f,
@@ -407,8 +445,9 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: B
                 Text(headline, color = Color(0xFFD9E6F2), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val knobs = if (expanded) commandKnobs else commandKnobs.take(6)
                 if (knobs.isNotEmpty()) {
+                    val knobRows = remember(knobs) { knobs.chunked(3) }
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        knobs.chunked(3).forEach { row ->
+                        knobRows.forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
                                 row.forEach { knob ->
                                     val color = if (" " in knob) cyan else green
@@ -464,6 +503,8 @@ private fun OpsSignalDto.activeProcessGroups(): List<Pair<String, List<BadgeSpec
         badges.takeIf { it.isNotEmpty() }?.let { host to it }
     }
 
+private fun OpsSignalDto.signalKey() = "$label-$meta-$timestampMs-$detail"
+
 private fun String.arcanaCommandParts(): Pair<String, List<String>> {
     fun compact(value: String, max: Int) = value.replace(Regex("\\s+"), " ")
         .trim()
@@ -511,7 +552,7 @@ private fun MetricCard(metric: FieldSpec) {
 }
 
 @Composable
-private fun LoadingPanel() {
+private fun LoadingPanel(pageWidth: Dp, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "loading-skeleton")
     val pulse by transition.animateFloat(
         initialValue = 0.35f,
@@ -519,9 +560,9 @@ private fun LoadingPanel() {
         animationSpec = infiniteRepeatable(animation = tween(900, easing = LinearEasing), repeatMode = RepeatMode.Reverse),
         label = "loading-skeleton-pulse",
     )
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         LoadingHero(pulse)
-        LoadingRepoGrid(pulse)
+        LoadingRepoGrid(pulse, pageWidth)
     }
 }
 
@@ -551,17 +592,20 @@ private fun LoadingHero(pulse: Float) {
 }
 
 @Composable
-private fun LoadingRepoGrid(pulse: Float) {
-    BoxWithConstraints {
-        if (maxWidth < 980.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                listOf("backend", "server_py", "arcana").forEachIndexed { index, repo ->
+private fun LoadingRepoGrid(pulse: Float, pageWidth: Dp) {
+    val repos = remember { listOf("backend", "server_py", "arcana") }
+    if (pageWidth < 980.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            repos.forEachIndexed { index, repo ->
+                key(repo) {
                     LoadingRepoCard(repo, pulse = (pulse + index * 0.12f).coerceAtMost(1f), modifier = Modifier.fillMaxWidth())
                 }
             }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                listOf("backend", "server_py", "arcana").forEachIndexed { index, repo ->
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            repos.forEachIndexed { index, repo ->
+                key(repo) {
                     LoadingRepoCard(repo, pulse = (pulse + index * 0.12f).coerceAtMost(1f), modifier = Modifier.weight(1f).heightIn(min = 270.dp))
                 }
             }

@@ -4,8 +4,10 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -57,6 +59,7 @@ fun DashboardApp(
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     var socketState by remember { mutableStateOf(OpsSocketState()) }
+    var issueEditorActive by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
@@ -89,8 +92,11 @@ fun DashboardApp(
     }
     LaunchedEffect(arrowShiftSignal) {
         val shift = arrowShiftSignal - handledArrowShiftSignal
-        if (shift != 0) selectedTab = selectedTab.shift(shift).also { writeDashboardPref("ops.tab", it.name) }
+        if (shift != 0 && !issueEditorActive) selectedTab = selectedTab.shift(shift).also { writeDashboardPref("ops.tab", it.name) }
         handledArrowShiftSignal = arrowShiftSignal
+    }
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != DashboardTab.Issues) issueEditorActive = false
     }
     val surfaceModifier = Modifier
         .fillMaxSize()
@@ -109,6 +115,7 @@ fun DashboardApp(
             modifier = if (focusedArrowKeys) {
                 surfaceModifier.onPreviewKeyEvent {
                     if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (issueEditorActive) return@onPreviewKeyEvent false
                     when (it.key) {
                         Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
                         Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
@@ -122,8 +129,11 @@ fun DashboardApp(
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val pageBottomGutter = maxHeight * 0.28f
+                val pageWidth = maxWidth
                 OpsWallpaper()
                 val listState = rememberLazyListState()
+                val ciSummary = if (selectedTab == DashboardTab.Ci) (loadState as? OpsLoadState.Ready)?.summary else null
+                val ciHistoryState = rememberCiHistoryState(ciSummary, atPageBottom = !listState.canScrollForward)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -141,23 +151,42 @@ fun DashboardApp(
                             TopLoadTrace()
                         }
                     }
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 14.dp),
-                        ) {
-                            when (selectedTab) {
-                                DashboardTab.Home -> Home(loadState)
-                                DashboardTab.Ci -> CiResults(loadState, atPageBottom = !listState.canScrollForward)
-                                DashboardTab.Issues -> Issues(loadState)
-                                DashboardTab.Arcana -> WorkSurface(
+                    item(key = "tab-content-top") {
+                        Spacer(Modifier.height(14.dp))
+                    }
+                    when (selectedTab) {
+                        DashboardTab.Home -> homeItems(loadState, pageWidth)
+                        DashboardTab.Ci -> ciItems(loadState, pageWidth, ciHistoryState)
+                        DashboardTab.Issues -> item(key = "issues") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                            ) {
+                                Issues(
+                                    loadState = loadState,
+                                    pageWidth = pageWidth,
+                                    onSummary = { loadState = OpsLoadState.Ready(it) },
+                                    onEditorActiveChanged = { issueEditorActive = it },
+                                )
+                            }
+                        }
+                        DashboardTab.Arcana -> item(key = "arcana") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                            ) {
+                                WorkSurface(
                                     title = "Arcana Sessions",
                                     detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
                                     items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
                                 )
                             }
                         }
+                    }
+                    item(key = "tab-content-bottom") {
+                        Spacer(Modifier.height(14.dp))
                     }
                 }
             }
