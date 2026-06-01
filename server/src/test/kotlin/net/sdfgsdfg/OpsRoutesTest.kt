@@ -290,6 +290,23 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsIssueMutationRouteIsAvailableOnOpsHost() = testApplication {
+        application {
+            installOpsRouteTestPlugins()
+            routing { opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
+        }
+
+        val response = client.post("/api/ops/issues") {
+            header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("not-json")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals("Invalid issue mutation JSON", response.body<String>())
+    }
+
+    @Test
     fun opsSummaryMergesPeerHostSnapshotWhenEnabled() = testApplication {
         val dir = createTempDirectory().toFile()
         val missingSelfTestFile = File(dir, "server-py-selftest.json")

@@ -230,7 +230,7 @@ fun Route.opsRoutes(
     }
 
     post("/api/ops/issues") {
-        if (!call.clientInfo().isLocal) {
+        if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@post
         }
