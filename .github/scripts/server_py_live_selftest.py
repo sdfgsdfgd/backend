@@ -48,8 +48,8 @@ def trigger_selftest() -> dict | None:
             return payload
     except urllib.error.HTTPError as error:
         preview = error.read().decode("utf-8", errors="replace")[:1_200]
-        if error.code == 524:
-            print("[server-py-live-selftest] trigger timed out at edge; polling status endpoint.", flush=True)
+        if error.code in {520, 524}:
+            print(f"[server-py-live-selftest] trigger returned HTTP {error.code}; polling status endpoint.", flush=True)
             return None
         fail_payload = {
             "ok": False,

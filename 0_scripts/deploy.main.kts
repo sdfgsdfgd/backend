@@ -27,6 +27,7 @@ val deployHistory: File = logs.resolve("deploy-history.jsonl").apply { if (!exis
 val buildLog: File = logs.resolve("build.log").apply { if (!exists()) createNewFile() }
 val appLog: File = logs.resolve("app.log").apply { if (!exists()) createNewFile() }
 val lockFile: File = logs.resolve("deploy.lock")
+val runtimeLockFile: File = logs.resolve("webhook-runtime.lock")
 val scriptPath: String = "0_scripts/deploy.main.kts"
 val scriptFile: File = root.resolve(scriptPath)
 val syncFromEnv: String = "BACKEND_DEPLOY_SYNC_FROM"
@@ -485,6 +486,21 @@ fun <T> withLock(block: () -> T): T =
         lock.use { block() }
     }
 
+fun <T> withRuntimeSwapLock(block: () -> T): T {
+    log("◆", "runtime swap waiting for webhook-sensitive work")
+    val started = System.nanoTime()
+    RandomAccessFile(runtimeLockFile, "rw").channel.use { channel ->
+        val lock = channel.lock()
+        try {
+            log("✓", "runtime swap lock acquired in ${(System.nanoTime() - started) / 1_000_000}ms")
+            return block()
+        } finally {
+            lock.release()
+            log("✓", "runtime swap lock released")
+        }
+    }
+}
+
 fun installAndForeground(start: Long, mode: String): Nothing {
     log("◆", "using foreground process mode")
     stopPort()
@@ -512,10 +528,12 @@ fun deploy() {
             when (mode) {
                 "runtime" -> {
                     log("✓", "verification passed; runtime systemd unit detected")
-                    systemctl("stop")
-                    gradle(":installServer")
-                    startService()
-                    localSmoke()
+                    withRuntimeSwapLock {
+                        systemctl("stop")
+                        gradle(":installServer")
+                        startService()
+                        localSmoke()
+                    }
                 }
                 "legacy" -> {
                     if (!insideBackendService()) {

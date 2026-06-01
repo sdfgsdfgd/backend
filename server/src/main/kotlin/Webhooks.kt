@@ -146,10 +146,11 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
          * Lock order is deliberate:
          * - wait for the requested git HEAD before taking webhookDeployMutex, so
          *   an early selftest cannot block the deploy that will produce that HEAD;
-         * - take webhookDeployMutex, which queues behind any in-flight deploy;
+         * - take webhookDeployMutex for in-process deploy hooks;
          * - take webhookSelfTestMutex, so multiple live audits never overlap;
          * - recheck HEAD under the lock, then wait for the UDS socket and call
-         *   /api/selftest/run.
+         *   /api/selftest/run, which holds webhook-runtime.lock while backend
+         *   deploy's detached runtime swap waits before stopping backend.service.
          */
         val selfTestPayload = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
         val newChatFlag = selfTestPayload?.get("new_chat")?.jsonPrimitive?.booleanOrNull

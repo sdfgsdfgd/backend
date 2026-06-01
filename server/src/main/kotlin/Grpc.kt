@@ -24,6 +24,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -39,6 +40,7 @@ import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
 import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
+import java.io.RandomAccessFile
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -82,6 +84,7 @@ private val heartbeatJson = Json {
 
 private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
+private val webhookRuntimeLockFile = File(resolveLogDir(), "webhook-runtime.lock")
 private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
 private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
 private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
@@ -348,50 +351,55 @@ fun Route.grpc() {
             .setHeadSha(headSha.orEmpty())
             .build()
 
-        val result = runCatching { botStub.selfTest(req) }
-        val dto = result.fold(
-            onSuccess = {
-                SelfTestResultDto(
-                    ok = it.ok,
-                    textExcerpt = it.textExcerpt,
-                    rawError = it.rawError.takeIf(String::isNotBlank),
-                    latencyMs = it.latencyMs,
-                    askLatencyMs = it.askLatencyMs,
-                    auditLatencyMs = it.auditLatencyMs,
-                    satisfiedExpectation = it.satisfiedExpectation,
-                    retried = it.retried,
-                    cases = it.casesList.map { case ->
-                        SelfTestCaseDto(
-                            name = case.name,
-                            ok = case.ok,
-                            latencyMs = case.latencyMs,
-                            note = case.note.takeIf(String::isNotBlank)
-                        )
-                    },
-                    workflowUrl = workflowUrl,
-                    headSha = headSha,
-                    timestampMs = System.currentTimeMillis()
-                )
-            },
-            onFailure = { err ->
-                application.log.error("[gRPC] [selftest] failed", err)
-                SelfTestResultDto(
-                    ok = false,
-                    textExcerpt = "",
-                    rawError = err.message ?: err::class.simpleName,
-                    latencyMs = 0.0,
-                    satisfiedExpectation = false,
-                    retried = false,
-                    workflowUrl = workflowUrl,
-                    headSha = headSha,
-                    timestampMs = System.currentTimeMillis()
-                )
-            }
-        )
+        application.log.info("[gRPC] [selftest] waiting for webhook runtime lock path='${webhookRuntimeLockFile.absolutePath}'")
+        withWebhookRuntimeLock(onAcquired = { waitedMs ->
+            application.log.info("[gRPC] [selftest] webhook runtime lock acquired waited_ms=$waitedMs")
+        }) {
+            val result = runCatching { botStub.selfTest(req) }
+            val dto = result.fold(
+                onSuccess = {
+                    SelfTestResultDto(
+                        ok = it.ok,
+                        textExcerpt = it.textExcerpt,
+                        rawError = it.rawError.takeIf(String::isNotBlank),
+                        latencyMs = it.latencyMs,
+                        askLatencyMs = it.askLatencyMs,
+                        auditLatencyMs = it.auditLatencyMs,
+                        satisfiedExpectation = it.satisfiedExpectation,
+                        retried = it.retried,
+                        cases = it.casesList.map { case ->
+                            SelfTestCaseDto(
+                                name = case.name,
+                                ok = case.ok,
+                                latencyMs = case.latencyMs,
+                                note = case.note.takeIf(String::isNotBlank)
+                            )
+                        },
+                        workflowUrl = workflowUrl,
+                        headSha = headSha,
+                        timestampMs = System.currentTimeMillis()
+                    )
+                },
+                onFailure = { err ->
+                    application.log.error("[gRPC] [selftest] failed", err)
+                    SelfTestResultDto(
+                        ok = false,
+                        textExcerpt = "",
+                        rawError = err.message ?: err::class.simpleName,
+                        latencyMs = 0.0,
+                        satisfiedExpectation = false,
+                        retried = false,
+                        workflowUrl = workflowUrl,
+                        headSha = headSha,
+                        timestampMs = System.currentTimeMillis()
+                    )
+                }
+            )
 
-        val enriched = dto.withZenStatus()
-        persistSelfTestResult(enriched)
-        call.respond(enriched)
+            val enriched = dto.withZenStatus()
+            persistSelfTestResult(enriched)
+            call.respond(enriched)
+        }
     }
 
     get("/api/selftest/status") {
@@ -421,6 +429,25 @@ private fun loadLastSelfTestResult(): SelfTestResultDto? = runCatching {
         heartbeatJson.decodeFromString<SelfTestResultDto>(selfTestResultFile.readText())
     }
 }.getOrNull()
+
+private suspend fun <T> withWebhookRuntimeLock(onAcquired: (Long) -> Unit, block: suspend () -> T): T {
+    val started = System.nanoTime()
+    val file = withContext(Dispatchers.IO) {
+        webhookRuntimeLockFile.parentFile?.mkdirs()
+        RandomAccessFile(webhookRuntimeLockFile, "rw")
+    }
+    try {
+        val lock = withContext(Dispatchers.IO) { file.channel.lock() }
+        try {
+            onAcquired((System.nanoTime() - started) / 1_000_000)
+            return block()
+        } finally {
+            withContext(Dispatchers.IO) { lock.release() }
+        }
+    } finally {
+        withContext(Dispatchers.IO) { file.close() }
+    }
+}
 
 private fun loadZenAutofixStatus(): JsonObject? = runCatching {
     if (!zenAutofixStatusFile.exists()) {
