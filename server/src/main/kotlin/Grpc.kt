@@ -231,7 +231,7 @@ fun Route.grpc() {
         application.log.info(
             "[gRPC][$requestId][$rpcId] init POST /api/ask model=${body.model.orEmpty()} " +
                 "new_chat=${body.newChat} want_tts=${body.wantTts} deepseek=${body.deepseek} " +
-                "deepseek_search=${body.deepseekSearch} one_time=${body.oneTime} session_id=${body.sessionId.orEmpty()} " +
+                "deepseek_search=${body.deepseekSearch} one_time=${body.oneTime} no_pace=${body.noPace} session_id=${body.sessionId.orEmpty()} " +
                 "new_tab=${body.newTab} end_session=${body.endSession} prompt_chars=${body.prompt.length} " +
                 "client=${client.clientIp} remote=${client.remoteIp} cf=${call.request.headers["CF-Connecting-IP"].orEmpty()} " +
                 "xff=${call.request.headers["X-Forwarded-For"].orEmpty()} ray=${call.request.headers["CF-Ray"].orEmpty()} " +
@@ -246,6 +246,7 @@ fun Route.grpc() {
             .setDeepseek(body.deepseek)
             .setDeepseekSearch(body.deepseekSearch)
             .setOneTime(body.oneTime)
+            .setNoPace(body.noPace)
             .setSessionId(body.sessionId.orEmpty())
             .setNewTab(body.newTab)
             .setEndSession(body.endSession)

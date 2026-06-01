@@ -59,6 +59,7 @@ message AskRequest {
     string session_id = 8;
     bool new_tab = 9;
     bool end_session = 10;
+    bool no_pace = 11;
 }
 
 message AskReply {

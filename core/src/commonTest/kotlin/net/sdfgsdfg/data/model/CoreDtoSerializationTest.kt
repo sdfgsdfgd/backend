@@ -25,6 +25,7 @@ class CoreDtoSerializationTest {
                 prompt = "ping",
                 requestId = "req-1",
                 deepseekSearch = true,
+                noPace = true,
                 sessionId = "session-1",
             ),
         )
@@ -33,9 +34,11 @@ class CoreDtoSerializationTest {
         assertEquals("req-1", obj.getValue("request_id").jsonPrimitive.content)
         assertEquals("session-1", obj.getValue("session_id").jsonPrimitive.content)
         assertEquals(true, obj.getValue("deepseek_search").jsonPrimitive.boolean)
+        assertEquals(true, obj.getValue("no_pace").jsonPrimitive.boolean)
         assertFalse("requestId" in obj)
         assertFalse("sessionId" in obj)
         assertFalse("deepseekSearch" in obj)
+        assertFalse("noPace" in obj)
     }
 
     @Test
