@@ -400,11 +400,16 @@ fun dirtyIn(paths: List<String>): Boolean =
         .lineSequence()
         .any(String::isNotBlank)
 
-fun dashboardWebBuildReason(from: String, to: String): String? = when {
-    !dashboardWebArtifact.isFile -> "missing artifact"
-    changedIn(from, to, dashboardWebInputs) -> "dashboard inputs changed"
-    dirtyIn(dashboardWebInputs) -> "dirty dashboard inputs"
-    else -> null
+fun dashboardWebBuildReason(from: String, to: String): String? {
+    if (!dashboardWebArtifact.isFile) return "missing artifact"
+    if (changedIn(from, to, dashboardWebInputs)) return "dashboard inputs changed"
+    if (dirtyIn(dashboardWebInputs)) return "dirty dashboard inputs"
+    val artifactMs = dashboardWebArtifact.lastModified()
+    val stale = dashboardWebInputs.asSequence()
+        .map(root::resolve)
+        .flatMap { if (it.isDirectory) it.walkTopDown().onEnter { dir -> dir.name != "build" } else sequenceOf(it) }
+        .any { it.isFile && it.lastModified() > artifactMs }
+    return if (stale) "dashboard artifact older than inputs" else null
 }
 
 fun buildDashboardWebIfNeeded(from: String, to: String) {
