@@ -956,13 +956,13 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
     val now = System.currentTimeMillis()
     val body = request.body?.trim()
     val issues = issuesFile.issueObjects().toMutableList()
-    val index = request.id?.let { id -> issues.indexOfFirst { it["id"]?.jsonPrimitive?.contentOrNull == id } } ?: -1
+    val index = request.id?.let { id -> issues.indexOfFirst { it.issueKey() == id } } ?: -1
 
     fun event(name: String, issue: JsonObject, before: JsonObject? = null) = buildJsonObject {
         put("event_id", "EVT-${now.toString(16)}-${UUID.randomUUID().toString().take(8)}")
         put("ts_ms", now)
         put("event", name)
-        put("id", issue["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
+        put("key", issue.issueKey().orEmpty())
         put("title", issue["title"]?.jsonPrimitive?.contentOrNull.orEmpty())
         put("status", issue["status"]?.jsonPrimitive?.contentOrNull ?: status)
         put("actor", "dashboard")
@@ -975,7 +975,7 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
         "create" -> {
             val (title, description) = body.issueTextParts()
             val issue = buildIssueObject(
-                id = request.repo.nextIssueId(issues),
+                key = request.repo.nextIssueKey(issues),
                 title = title,
                 status = status,
                 description = description,
@@ -1031,12 +1031,10 @@ private fun String?.issueTextParts(): Pair<String, String> {
     return title to lines.drop(1).joinToString("\n").trim()
 }
 
-private fun String.nextIssueId(issues: List<JsonObject>): String {
+private fun String.nextIssueKey(issues: List<JsonObject>): String {
     val prefix = issueRepoPrefix()
-    val used = issues.mapIndexed { index, issue ->
-        issue.text("id")?.issueNumber(prefix) ?: index
-    }.toSet()
-    val number = (0..999).firstOrNull { it !in used } ?: error("Issue id space exhausted for $prefix")
+    val used = issues.mapNotNull { it.issueKey()?.issueNumber(prefix) }.toSet()
+    val number = generateSequence(1) { it + 1 }.first { it !in used }
     return "$prefix-${number.toString().padStart(3, '0')}"
 }
 
@@ -1048,10 +1046,10 @@ private fun String.issueRepoPrefix() = when (this) {
 }
 
 private fun String.issueNumber(prefix: String): Int? =
-    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.length == 3 && it.all(Char::isDigit) }?.toIntOrNull()
+    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }?.toIntOrNull()
 
-private fun buildIssueObject(id: String, title: String, status: String, description: String, createdAt: Long, updatedAt: Long) = buildJsonObject {
-    put("id", id)
+private fun buildIssueObject(key: String, title: String, status: String, description: String, createdAt: Long, updatedAt: Long) = buildJsonObject {
+    put("key", key)
     put("title", title)
     put("status", status)
     put("description", description)
@@ -1063,7 +1061,7 @@ private fun buildIssueObject(id: String, title: String, status: String, descript
 
 private fun JsonObject.updatedIssueObject(title: String, status: String, description: String, now: Long) = buildJsonObject {
     val notes = this@updatedIssueObject["notes"]?.jsonPrimitive?.contentOrNull.orEmpty()
-    put("id", this@updatedIssueObject["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
+    put("key", this@updatedIssueObject.issueKey().orEmpty())
     put("title", title)
     put("status", status)
     put("description", description)
@@ -1150,7 +1148,7 @@ private fun issueEvents(file: File, source: String, sourceLabel: String): List<I
 
 private fun JsonObject.issueItem(source: String, sourceLabel: String) = statusText()?.normalizedIssueStatus()?.let { status ->
     IssueItemDto(
-        id = text("id") ?: return@let null,
+        id = issueKey() ?: return@let null,
         title = text("title").orEmpty(),
         status = status,
         source = source,
@@ -1182,7 +1180,7 @@ private fun JsonObject.issueEvent(source: String, sourceLabel: String): IssueEve
         eventId = eventId,
         tsMs = long("ts_ms"),
         event = text("event").orEmpty(),
-        id = text("id").orEmpty(),
+        id = issueKey().orEmpty(),
         title = text("title").orEmpty(),
         status = text("status").orEmpty(),
         actor = text("actor"),
@@ -1195,6 +1193,8 @@ private fun JsonObject.issueEvent(source: String, sourceLabel: String): IssueEve
         },
     )
 }
+
+private fun JsonObject.issueKey(): String? = text("key") ?: text("id")
 
 private fun JsonObject.statusText(): String? = sequenceOf("status", "state")
     .mapNotNull { this[it]?.jsonPrimitive?.contentOrNull }

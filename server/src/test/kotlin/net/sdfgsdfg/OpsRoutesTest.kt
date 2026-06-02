@@ -632,16 +632,16 @@ class OpsRoutesTest {
             {
               "version": 1,
               "issues": [
-                { "id": "backend-1", "title": "triage", "status": "todo", "created_at_ms": 10, "updated_at_ms": 11 },
-                { "id": "backend-2", "title": "active", "status": "WIP" },
-                { "id": "backend-3", "title": "stuck", "state": "blocked" },
-                { "id": "backend-4", "title": "check", "status": "review" },
-                { "id": "backend-5", "title": "closed", "status": "done", "completed_at_ms": 20 }
+                { "key": "BCK-001", "title": "triage", "status": "todo", "created_at_ms": 10, "updated_at_ms": 11 },
+                { "key": "BCK-002", "title": "active", "status": "WIP" },
+                { "key": "BCK-003", "title": "stuck", "state": "blocked" },
+                { "key": "BCK-004", "title": "check", "status": "review" },
+                { "key": "BCK-005", "title": "closed", "status": "done", "completed_at_ms": 20 }
               ]
             }
             """.trimIndent(),
         )
-        File(arcanaDir, "issues.events.jsonl").writeText("""{"event_id":"EVT-1","ts_ms":11,"event":"updated","id":"backend-1","title":"triage","status":"todo"}""" + "\n")
+        File(arcanaDir, "issues.events.jsonl").writeText("""{"event_id":"EVT-1","ts_ms":11,"event":"updated","key":"BCK-001","title":"triage","status":"todo"}""" + "\n")
 
         val issues = localArcanaIssues(repo)
         assertEquals(1, issues.todo)
@@ -653,9 +653,10 @@ class OpsRoutesTest {
         assertEquals("arcana", issues.sources.single().id)
         assertEquals(4, issues.sources.single().active)
         assertEquals(5, issues.items.size)
-        assertEquals("backend-2", issues.items.first { it.status == "wip" }.id)
+        assertEquals("BCK-002", issues.items.first { it.status == "wip" }.id)
         assertEquals(10L, issues.items.first().createdAtMs)
         assertEquals("updated", issues.events.single().event)
+        assertEquals("BCK-001", issues.events.single().id)
     }
 
     @Test
