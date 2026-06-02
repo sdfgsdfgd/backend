@@ -636,7 +636,8 @@ class OpsRoutesTest {
                 { "key": "BCK-002", "title": "active", "status": "WIP" },
                 { "key": "BCK-003", "title": "stuck", "state": "blocked" },
                 { "key": "BCK-004", "title": "check", "status": "review" },
-                { "key": "BCK-005", "title": "closed", "status": "done", "completed_at_ms": 20 }
+                { "key": "BCK-005", "title": "closed", "status": "done", "completed_at_ms": 20 },
+                { "key": "BCK-006", "title": "removed", "status": "trash" }
               ]
             }
             """.trimIndent(),
@@ -649,10 +650,11 @@ class OpsRoutesTest {
         assertEquals(1, issues.blocked)
         assertEquals(1, issues.review)
         assertEquals(1, issues.done)
+        assertEquals(1, issues.trash)
         assertEquals(4, issues.active)
         assertEquals("arcana", issues.sources.single().id)
         assertEquals(4, issues.sources.single().active)
-        assertEquals(5, issues.items.size)
+        assertEquals(6, issues.items.size)
         assertEquals("BCK-002", issues.items.first { it.status == "wip" }.id)
         assertEquals(10L, issues.items.first().createdAtMs)
         assertEquals("updated", issues.events.single().event)

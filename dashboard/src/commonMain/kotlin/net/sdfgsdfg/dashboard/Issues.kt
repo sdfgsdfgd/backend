@@ -111,7 +111,7 @@ internal fun Issues(
                     laneBounds = laneBounds,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
-                    onDelete = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id, status = issue.status)) },
+                    onDelete = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
                     onDragStart = { repo, lane, issue, issueCode, bounds, grabOffset ->
                         drag = IssueDragState(
                             repo = repo,
@@ -361,7 +361,7 @@ private fun IssueItemTicket(
                 )
             },
         hovered = hovered && !activeDrag,
-        onDelete = if (issue.source == "arcana") { { onDelete(repo, issue) } } else null,
+        onDelete = if (issue.source == "arcana" && issue.status != "trash") { { onDelete(repo, issue) } } else null,
     )
 }
 
@@ -605,11 +605,11 @@ private fun RepoHealthDto.issueRepoPrefix() = when (id) {
     else -> name.take(3).uppercase().padEnd(3, 'X')
 }
 
-private fun String.issueRepoPrefixOrNull() = takeIf { length == 7 && this[3] == '-' && take(3).all(Char::isLetter) }
+private fun String.issueRepoPrefixOrNull() = takeIf { length > 4 && this[3] == '-' && take(3).all(Char::isLetter) && drop(4).all(Char::isDigit) }
     ?.take(3)
 
 private fun String.issueNumberOrNull(prefix: String) =
-    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.length == 3 && it.all(Char::isDigit) }?.toIntOrNull()
+    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }?.toIntOrNull()
 
 private fun Map<String, Rect>.targetAt(pointer: Offset): Pair<String, String>? {
     entries.firstOrNull { (_, bounds) -> bounds.contains(pointer) }?.key?.laneTargetOrNull()?.let { return it }
@@ -641,4 +641,5 @@ private val issueLanes = listOf(
     IssueLaneSpec("WIP", "wip", cyan) { it.issues.wip },
     IssueLaneSpec("REVIEW", "review", amber) { it.issues.review },
     IssueLaneSpec("DONE", "done", green) { it.issues.done },
+    IssueLaneSpec("TRASH", "trash", muted) { it.issues.trash },
 )
