@@ -994,7 +994,7 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
             issues[index] = issue
             issue to event(if (status == "done" && before.statusText() != "done") "completed" else "updated", issue, before)
         }
-        "delete", "trash" -> {
+        "trash" -> {
             if (index < 0) error("Issue not found: ${request.id}")
             val before = issues[index]
             val issue = before.updatedIssueObject(
@@ -1005,6 +1005,11 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
             )
             issues[index] = issue
             issue to event("trashed", issue, before)
+        }
+        "delete" -> {
+            if (index < 0) error("Issue not found: ${request.id}")
+            val issue = issues.removeAt(index)
+            issue to event("deleted", issue)
         }
         else -> error("Invalid issue op: ${request.op}")
     }

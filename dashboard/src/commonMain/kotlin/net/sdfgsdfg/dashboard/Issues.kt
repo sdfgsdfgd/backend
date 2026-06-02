@@ -84,7 +84,11 @@ internal fun Issues(
 
     fun mutate(request: IssueMutationRequestDto) = mutateIssue(
         request = request,
-        onLoaded = { onSummary(it); error = null },
+        onLoaded = { summary ->
+            onSummary(summary)
+            archiveRepo = archiveRepo?.let { open -> summary.repos.firstOrNull { it.id == open.id } }
+            error = null
+        },
         onFailed = { error = it },
     )
     LaunchedEffect(editor != null) {
@@ -118,7 +122,8 @@ internal fun Issues(
                     laneBounds = laneBounds,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
-                    onDelete = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
+                    onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
+                    onDeleteIssue = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
                     onArchive = { archiveRepo = it },
                     onDragStart = { repo, lane, issue, issueCode, bounds, grabOffset ->
                         drag = IssueDragState(
@@ -172,7 +177,13 @@ internal fun Issues(
             },
         )
     }
-    archiveRepo?.let { repo -> ArchiveDialog(repo) { archiveRepo = null } }
+    archiveRepo?.let { repo ->
+        ArchiveDialog(
+            repo = repo,
+            onDelete = { issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
+            onDismiss = { archiveRepo = null },
+        )
+    }
 }
 
 @Composable
@@ -185,7 +196,8 @@ private fun IssuePanels(
     laneBounds: MutableMap<String, Rect>,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
+    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchive: (RepoHealthDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
@@ -195,7 +207,7 @@ private fun IssuePanels(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onDelete, onArchive, onDragStart, onDrag, onDragEnd)
+                IssuePanel(repo, generatedAtMs, pageWidth, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onDragStart, onDrag, onDragEnd)
             }
         }
     }
@@ -211,7 +223,8 @@ private fun IssuePanel(
     laneBounds: MutableMap<String, Rect>,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
+    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchive: (RepoHealthDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
@@ -254,7 +267,7 @@ private fun IssuePanel(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onDelete, onDragStart, onDrag, onDragEnd, modifier = Modifier.fillMaxWidth())
+                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -262,7 +275,7 @@ private fun IssuePanel(
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onDelete, onDragStart, onDrag, onDragEnd, modifier = Modifier.weight(1f))
+                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -279,7 +292,8 @@ private fun IssueLane(
     laneBounds: MutableMap<String, Rect>,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
+    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
@@ -321,7 +335,7 @@ private fun IssueLane(
         }
         items.forEach { issue ->
             key(issue.id) {
-                IssueItemTicket(lane, repo, issue, repo.issueCode(issue), generatedAtMs, onEdit, onDelete, onDragStart, onDrag, onDragEnd)
+                IssueItemTicket(lane, repo, issue, repo.issueCode(issue), generatedAtMs, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd)
             }
         }
         countBackfill.takeIf { it > 0 }?.let { IssueCountTicket(lane, repo, it) }
@@ -336,7 +350,8 @@ private fun IssueItemTicket(
     issueCode: String,
     generatedAtMs: Long,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
+    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
@@ -375,7 +390,8 @@ private fun IssueItemTicket(
                 )
             },
         hovered = hovered && !activeDrag,
-        onDelete = if (issue.source == "arcana" && issue.status != "trash") { { onDelete(repo, issue) } } else null,
+        onArchive = if (issue.source == "arcana" && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
+        onDelete = if (issue.source == "arcana") { { onDeleteIssue(repo, issue) } } else null,
     )
 }
 
@@ -410,6 +426,7 @@ private fun IssueTicketCard(
     generatedAtMs: Long,
     modifier: Modifier = Modifier,
     hovered: Boolean = false,
+    onArchive: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
     val timestamp = issue.updatedAtMs ?: issue.createdAtMs ?: issue.completedAtMs
@@ -439,7 +456,12 @@ private fun IssueTicketCard(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             timestamp?.let { AgePill(it, generatedAtMs) }
-            onDelete?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
+            if (onArchive != null || onDelete != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    onArchive?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
+                    onDelete?.let { DeleteButton(onClick = it) }
+                }
+            }
         }
     }
 }
@@ -605,7 +627,35 @@ private fun ArchiveButton(
 }
 
 @Composable
-private fun ArchiveDialog(repo: RepoHealthDto, onDismiss: () -> Unit) {
+private fun DeleteButton(onClick: () -> Unit) {
+    val color = Color(0xFFE7A1A1)
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.13f), color.copy(alpha = 0.10f), Color.Black.copy(alpha = 0.24f))))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.46f)), shape)
+            .clickable(onClick = onClick)
+            .padding(5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(18.dp)) {
+            val stroke = 1.35.dp.toPx()
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            drawCircle(color.copy(alpha = 0.18f), radius = size.minDimension * 0.43f, center = Offset(cx, cy))
+            drawCircle(color.copy(alpha = 0.72f), radius = size.minDimension * 0.35f, center = Offset(cx, cy), style = Stroke(stroke))
+            drawLine(color.copy(alpha = 0.92f), Offset(cx, size.height * 0.14f), Offset(cx, size.height * 0.86f), strokeWidth = stroke * 1.25f)
+            drawLine(color.copy(alpha = 0.92f), Offset(size.width * 0.18f, cy), Offset(size.width * 0.82f, cy), strokeWidth = stroke * 1.25f)
+            drawLine(Color.White.copy(alpha = 0.26f), Offset(size.width * 0.36f, size.height * 0.32f), Offset(size.width * 0.64f, size.height * 0.68f), strokeWidth = stroke)
+            drawLine(Color.White.copy(alpha = 0.26f), Offset(size.width * 0.64f, size.height * 0.32f), Offset(size.width * 0.36f, size.height * 0.68f), strokeWidth = stroke)
+        }
+    }
+}
+
+@Composable
+private fun ArchiveDialog(repo: RepoHealthDto, onDelete: (IssueItemDto) -> Unit, onDismiss: () -> Unit) {
     val archived = remember(repo.issues.items) { repo.issues.items.filter { it.status == "trash" } }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -622,17 +672,21 @@ private fun ArchiveDialog(repo: RepoHealthDto, onDismiss: () -> Unit) {
                 }
                 archived.take(14).forEach { issue ->
                     key(issue.id) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(7.dp))
                                 .background(Brush.horizontalGradient(listOf(panelRaised, cyan.copy(alpha = 0.045f))))
                                 .border(BorderStroke(1.dp, cyan.copy(alpha = 0.20f)), RoundedCornerShape(7.dp))
                                 .padding(9.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("${repo.issueCode(issue)} · ${issue.title.ifBlank { issue.id }}", color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(issue.description.ifBlank { issue.notes }.ifBlank { " " }, color = Color(0xFFB9C5D2), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${repo.issueCode(issue)} · ${issue.title.ifBlank { issue.id }}", color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(issue.description.ifBlank { issue.notes }.ifBlank { " " }, color = Color(0xFFB9C5D2), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            DeleteButton { onDelete(issue) }
                         }
                     }
                 }
@@ -641,7 +695,7 @@ private fun ArchiveDialog(repo: RepoHealthDto, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }
 
@@ -761,5 +815,4 @@ private val issueLanes = listOf(
     IssueLaneSpec("WIP", "wip", cyan) { it.issues.wip },
     IssueLaneSpec("REVIEW", "review", amber) { it.issues.review },
     IssueLaneSpec("DONE", "done", green) { it.issues.done },
-    IssueLaneSpec("TRASH", "trash", muted) { it.issues.trash },
 )
