@@ -1,6 +1,7 @@
 package net.sdfgsdfg.dashboard
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -33,10 +35,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -69,6 +75,7 @@ internal fun Issues(
     onEditorActiveChanged: (Boolean) -> Unit = {},
 ) {
     var editor by remember { mutableStateOf<IssueEditorState?>(null) }
+    var archiveRepo by remember { mutableStateOf<RepoHealthDto?>(null) }
     var drag by remember { mutableStateOf<IssueDragState?>(null) }
     var dragTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -112,6 +119,7 @@ internal fun Issues(
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
                     onDelete = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
+                    onArchive = { archiveRepo = it },
                     onDragStart = { repo, lane, issue, issueCode, bounds, grabOffset ->
                         drag = IssueDragState(
                             repo = repo,
@@ -164,6 +172,7 @@ internal fun Issues(
             },
         )
     }
+    archiveRepo?.let { repo -> ArchiveDialog(repo) { archiveRepo = null } }
 }
 
 @Composable
@@ -177,6 +186,7 @@ private fun IssuePanels(
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchive: (RepoHealthDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
@@ -185,7 +195,7 @@ private fun IssuePanels(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onDelete, onDragStart, onDrag, onDragEnd)
+                IssuePanel(repo, generatedAtMs, pageWidth, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onDelete, onArchive, onDragStart, onDrag, onDragEnd)
             }
         }
     }
@@ -202,6 +212,7 @@ private fun IssuePanel(
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onDelete: (RepoHealthDto, IssueItemDto) -> Unit,
+    onArchive: (RepoHealthDto) -> Unit,
     onDragStart: (RepoHealthDto, IssueLaneSpec, IssueItemDto, String, Rect, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
@@ -233,7 +244,10 @@ private fun IssuePanel(
                 }
             }
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { onArchive(repo) }
+                    StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
+                }
             }
         }
         if (pageWidth < 1180.dp) {
@@ -425,7 +439,7 @@ private fun IssueTicketCard(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             timestamp?.let { AgePill(it, generatedAtMs) }
-            onDelete?.let { MiniActionPill("-", rose, it) }
+            onDelete?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
         }
     }
 }
@@ -523,6 +537,112 @@ private fun MiniActionPill(label: String, color: Color, onClick: () -> Unit) {
     ) {
         Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
+}
+
+@Composable
+private fun ArchiveButton(
+    color: Color = Color(0xFFE8B96B),
+    compact: Boolean = false,
+    count: Int? = null,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(999.dp)
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.16f),
+                        color.copy(alpha = 0.12f),
+                        Color.Black.copy(alpha = 0.20f),
+                    ),
+                ),
+            )
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.46f)), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 4.dp else 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Canvas(modifier = Modifier.size(if (compact) 12.dp else 13.dp)) {
+            val stroke = 1.dp.toPx()
+            val bodyTop = size.height * 0.34f
+            val body = Size(size.width * 0.78f, size.height * 0.52f)
+            val left = size.width * 0.11f
+            drawRoundRect(
+                brush = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), color.copy(alpha = 0.10f))),
+                topLeft = Offset(left, bodyTop),
+                size = body,
+                cornerRadius = CornerRadius(size.width * 0.10f, size.width * 0.10f),
+            )
+            drawRoundRect(
+                color = color.copy(alpha = 0.88f),
+                topLeft = Offset(left, bodyTop),
+                size = body,
+                cornerRadius = CornerRadius(size.width * 0.10f, size.width * 0.10f),
+                style = Stroke(stroke),
+            )
+            drawRoundRect(
+                color = color.copy(alpha = 0.72f),
+                topLeft = Offset(size.width * 0.20f, size.height * 0.18f),
+                size = Size(size.width * 0.60f, size.height * 0.18f),
+                cornerRadius = CornerRadius(size.width * 0.07f, size.width * 0.07f),
+                style = Stroke(stroke),
+            )
+            drawLine(color.copy(alpha = 0.90f), Offset(size.width * 0.24f, bodyTop), Offset(size.width * 0.76f, bodyTop), strokeWidth = stroke)
+            drawLine(color.copy(alpha = 0.92f), Offset(size.width * 0.39f, size.height * 0.56f), Offset(size.width * 0.61f, size.height * 0.56f), strokeWidth = stroke)
+        }
+        Text(
+            count?.let { "Archive $it" } ?: "Archive",
+            color = Color(0xFFF4E6C6),
+            fontSize = if (compact) 9.sp else 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ArchiveDialog(repo: RepoHealthDto, onDismiss: () -> Unit) {
+    val archived = remember(repo.issues.items) { repo.issues.items.filter { it.status == "trash" } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${repo.name} Archive", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                StatusPill("${archived.size}", if (archived.isEmpty()) muted else cyan)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (archived.isEmpty()) {
+                    Text("No archived tickets", color = muted, fontSize = 12.sp)
+                }
+                archived.take(14).forEach { issue ->
+                    key(issue.id) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(Brush.horizontalGradient(listOf(panelRaised, cyan.copy(alpha = 0.045f))))
+                                .border(BorderStroke(1.dp, cyan.copy(alpha = 0.20f)), RoundedCornerShape(7.dp))
+                                .padding(9.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text("${repo.issueCode(issue)} · ${issue.title.ifBlank { issue.id }}", color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(issue.description.ifBlank { issue.notes }.ifBlank { " " }, color = Color(0xFFB9C5D2), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                if (archived.size > 14) {
+                    Text("${archived.size - 14} more", color = muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("close") } },
+    )
 }
 
 @Composable
