@@ -7,6 +7,7 @@
 0_scripts/logs/**/*
 *.log
 *memory.md
+.db.json
 .arcana/
 __pycache__/
 *.py[cod]
