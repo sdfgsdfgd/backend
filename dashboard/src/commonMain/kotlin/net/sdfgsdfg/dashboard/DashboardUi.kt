@@ -442,7 +442,8 @@ internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
         }
         when {
             label == "local" && status != OpsStatusDto.OK -> null
-            label == "remote q" && status != OpsStatusDto.OK -> BadgeSpec(label, rose)
+            label == "remote q" && status != OpsStatusDto.OK &&
+                !(id == "arcana" && status == OpsStatusDto.UNKNOWN) -> BadgeSpec(label, rose)
             status == OpsStatusDto.OK -> BadgeSpec(label, green)
             else -> BadgeSpec(label, cyan)
         }
