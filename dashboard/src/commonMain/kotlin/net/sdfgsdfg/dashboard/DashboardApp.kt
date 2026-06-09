@@ -1,6 +1,7 @@
 package net.sdfgsdfg.dashboard
 
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -55,6 +56,8 @@ internal sealed interface OpsLoadState {
 fun DashboardApp(
     arrowShiftSignal: Int = 0,
     focusedArrowKeys: Boolean = true,
+    // CMP-10297 workaround: cumulative raw WheelEvent delta from wasmJsMain.
+    externalScrollPx: Float = 0f,
 ) {
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
@@ -63,6 +66,7 @@ fun DashboardApp(
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
+    var handledExternalScrollPx by remember { mutableStateOf(externalScrollPx) }
 
     DisposableEffect(Unit) {
         onDispose { mounted[0] = false }
@@ -132,6 +136,17 @@ fun DashboardApp(
                 val pageWidth = maxWidth
                 OpsWallpaper()
                 val listState = rememberLazyListState()
+                //region CMP-10297 scroll workaround
+                // TODO(CMP-10297): remove externalScrollPx, handledExternalScrollPx,
+                // scrollBy, and the wasmJsMain wheel bridge when Compose/Wasm
+                // preserves Chrome/macOS precision-trackpad fling deltas internally.
+                // https://youtrack.jetbrains.com/issue/CMP-10297
+                LaunchedEffect(externalScrollPx) {
+                    val delta = externalScrollPx - handledExternalScrollPx
+                    handledExternalScrollPx = externalScrollPx
+                    if (delta != 0f && !issueEditorActive) listState.scrollBy(delta)
+                }
+                //endregion
                 val ciSummary = if (selectedTab == DashboardTab.Ci) (loadState as? OpsLoadState.Ready)?.summary else null
                 val ciHistoryState = rememberCiHistoryState(ciSummary, atPageBottom = !listState.canScrollForward)
                 LazyColumn(

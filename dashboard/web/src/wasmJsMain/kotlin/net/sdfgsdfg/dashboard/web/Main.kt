@@ -12,12 +12,24 @@ import kotlinx.browser.window
 import net.sdfgsdfg.dashboard.DashboardApp
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
+import org.w3c.dom.events.WheelEvent
 import kotlin.js.ExperimentalWasmJsInterop
+
+//region CMP-10297 scroll workaround
+// Compose/Wasm currently caps Chrome/macOS precision-trackpad fling velocity,
+// so this wasm-only bridge forwards raw WheelEvent deltas to the LazyColumn.
+// TODO(CMP-10297): remove this region, wheelScrollPx, the wheel listener, and
+// the externalScrollPx bridge when Compose/Wasm preserves fling deltas itself.
+// https://youtrack.jetbrains.com/issue/CMP-10297
+private const val wheelDeltaLinePx = 16.0
+private const val wheelScrollGain = 1.35
+//endregion
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalWasmJsInterop::class)
 fun main() {
     ComposeViewport(viewportContainerId = "dashboard") {
         var arrowShiftSignal by remember { mutableStateOf(0) }
+        var wheelScrollPx by remember { mutableStateOf(0f) }
         DisposableEffect(Unit) {
             val listener = { event: Event ->
                 when ((event as? KeyboardEvent)?.key) {
@@ -34,7 +46,31 @@ fun main() {
             document.addEventListener("keydown", listener)
             onDispose { document.removeEventListener("keydown", listener) }
         }
-        DashboardApp(arrowShiftSignal = arrowShiftSignal, focusedArrowKeys = false)
+        //region CMP-10297 scroll workaround
+        DisposableEffect(Unit) {
+            val target = document.getElementById("dashboard") ?: document
+            val listener = { event: Event ->
+                val wheel = event as? WheelEvent
+                if (wheel != null && !wheel.ctrlKey) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    val modeScale = when (wheel.deltaMode) {
+                        1 -> wheelDeltaLinePx
+                        2 -> window.innerHeight.toDouble()
+                        else -> 1.0
+                    }
+                    wheelScrollPx += (wheel.deltaY * modeScale * wheelScrollGain).toFloat()
+                }
+            }
+            target.addEventListener("wheel", listener, true)
+            onDispose { target.removeEventListener("wheel", listener, true) }
+        }
+        //endregion
+        DashboardApp(
+            arrowShiftSignal = arrowShiftSignal,
+            focusedArrowKeys = false,
+            externalScrollPx = wheelScrollPx,
+        )
     }
     window.setTimeout({
         document.getElementById("boot")?.classList?.add("boot-done")
