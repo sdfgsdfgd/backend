@@ -252,18 +252,16 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
     val freshKeys = rememberFreshKeys(processKeys)
     var expanded by remember { mutableStateOf(readDashboardPref("ops.home.activeExpanded")?.toBooleanStrictOrNull() ?: true) }
 
-    Column(
-        modifier = Modifier.animateContentSize(animationSpec = tween(320, easing = FastOutSlowInEasing)),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         summary?.let {
             ActiveSignalRow(
                 signal = it,
                 generatedAtMs = generatedAtMs,
                 expanded = expanded,
                 onClick = {
-                    expanded = !expanded
-                    writeDashboardPref("ops.home.activeExpanded", expanded.toString())
+                    val next = !expanded
+                    expanded = next
+                    writeDashboardPref("ops.home.activeExpanded", next.toString())
                 },
             )
         }
@@ -276,10 +274,7 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
                 shrinkVertically(tween(220, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) +
                 slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it / 4 },
         ) {
-            Column(
-                modifier = Modifier.animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing)),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 processRows.forEachIndexed { index, process ->
                     val rowKey = processKeys[index]
                     key(rowKey) {

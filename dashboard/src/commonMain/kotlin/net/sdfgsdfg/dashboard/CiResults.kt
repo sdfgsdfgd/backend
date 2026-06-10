@@ -1,5 +1,14 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -377,6 +387,17 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boole
     }
     val eventKeys = remember(visibleEvents) { visibleEvents.map { it.key } }
     val freshKeys = rememberFreshKeys(eventKeys)
+    var knownEnterKeys by remember { mutableStateOf<Set<String>?>(null) }
+    var enterKeys by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(eventKeys) {
+        val current = eventKeys.toSet()
+        enterKeys = knownEnterKeys?.let { current - it } ?: current
+        knownEnterKeys = current
+        if (enterKeys.isNotEmpty()) {
+            delay(840)
+            enterKeys = emptySet()
+        }
+    }
     LaunchedEffect(atPageBottom, events.size, visibleLimit) {
         if (atPageBottom && visibleLimit < events.size) visibleLimit = (visibleLimit + 12).coerceAtMost(events.size)
     }
@@ -386,6 +407,7 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boole
         visibleEvents = visibleEvents,
         total = events.size,
         freshKeys = freshKeys,
+        enterKeys = enterKeys,
         onToggleRepo = { id ->
             val next = if (id in enabled) enabled - id else enabled + id
             enabled = next
@@ -400,6 +422,7 @@ internal data class CiHistoryState(
     val visibleEvents: List<CiHistoryEvent>,
     val total: Int,
     val freshKeys: Set<String>,
+    val enterKeys: Set<String>,
     val onToggleRepo: (String) -> Unit,
 )
 
@@ -413,14 +436,41 @@ private fun LazyListScope.historyItems(state: CiHistoryState, generatedAtMs: Lon
     item(key = "ci-history-header") {
         RunHistoryHeader(state, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
     }
+    item(key = "ci-history-empty") {
+        AnimatedVisibility(
+            visible = state.visibleEvents.isEmpty(),
+            modifier = Modifier.animateItem().fillMaxWidth(),
+            enter = fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                expandVertically(tween(260, easing = FastOutSlowInEasing), expandFrom = Alignment.Top),
+            exit = fadeOut(tween(140, easing = FastOutSlowInEasing)) +
+                shrinkVertically(tween(180, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+        ) {
+            Box(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                PlaceholderTile("no runs selected")
+            }
+        }
+    }
     items(state.visibleEvents, key = { event -> "ci-history-${event.key}" }) { event ->
-        RunHistoryRow(
-            repo = event.repo,
-            run = event.run,
-            generatedAtMs = generatedAtMs,
-            fresh = event.key in state.freshKeys,
-            modifier = Modifier.animateItem().fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-        )
+        val visibleState = remember(event.key) {
+            MutableTransitionState(event.key !in state.enterKeys).apply { targetState = true }
+        }
+        AnimatedVisibility(
+            visibleState = visibleState,
+            modifier = Modifier.animateItem().fillMaxWidth(),
+            enter = fadeIn(tween(660, easing = FastOutSlowInEasing)) +
+                expandVertically(tween(840, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+                slideInVertically(tween(840, easing = FastOutSlowInEasing)) { -it / 4 },
+            exit = fadeOut(tween(420, easing = FastOutSlowInEasing)) +
+                shrinkVertically(tween(570, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+        ) {
+            RunHistoryRow(
+                repo = event.repo,
+                run = event.run,
+                generatedAtMs = generatedAtMs,
+                fresh = event.key in state.freshKeys,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            )
+        }
     }
 }
 
@@ -452,7 +502,6 @@ private fun RunHistoryHeader(state: CiHistoryState, modifier: Modifier = Modifie
                 }
             }
         }
-        if (state.visibleEvents.isEmpty()) PlaceholderTile("no runs selected")
     }
 }
 
