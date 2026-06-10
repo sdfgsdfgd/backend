@@ -34,7 +34,9 @@ private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADE
     .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
 private const val SERVER_PY_REPO_DIR = "/home/x/Desktop/py/server_py"
 private const val SERVER_PY_READY_CMD = "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
+private const val SERVER_PY_SELF_TEST_ARTIFACT_URL = "/api/ops/artifacts/server-py-selftest.json"
 private const val SERVER_PY_UNIT_ARTIFACT_URL = "/api/ops/artifacts/server-py-unit.json"
+private const val ARCANA_INGEST_ARTIFACT_URL = "/api/ops/artifacts/arcana-ingest.json"
 private val serverPyUnitFile = File(resolveLogDir(), "server-py-unit.json")
 private val serverPyUnitHistoryFile = File(resolveLogDir(), "server-py-unit-history.jsonl")
 private val gitShaRegex = Regex("[0-9a-f]{40}")
@@ -174,6 +176,12 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         val selfTestCmd =
             """$SERVER_PY_READY_CMD && curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d $quotedPayloadBody http://127.0.0.1/api/selftest/run"""
 
+        broadcastRunStarted(
+            repoId = "server_py",
+            label = "live selftest",
+            detail = "Live browser/gRPC selftest running.",
+            url = workflowUrl ?: SERVER_PY_SELF_TEST_ARTIFACT_URL,
+        )
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         suspend fun run(command: String) = runWebhookCommand(matchedSlug, command, deploymentLog, stdoutLines, stderrLines)
@@ -242,6 +250,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
 
         val command = profile.commands.single()
+        broadcastRunStarted("arcana", "q arcana unit pytest", "Arcana pytest running on q.", ARCANA_INGEST_ARTIFACT_URL)
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         val exit = webhookArcanaSmokeMutex.withLock {
@@ -262,12 +271,35 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         status = HttpStatusCode.Accepted
     )
 
+    if (matchedSlug == "default") {
+        broadcastRunStarted(
+            repoId = "backend",
+            label = "deploy ${extractPushHeadSha(payload)?.take(7) ?: "pending"}",
+            detail = "verifyServer, dashboard build-if-needed, installServer, local smoke.",
+        )
+    }
     webhookDeployMutex.withLock {
         for (command in profile.commands) {
             runWebhookCommand(matchedSlug, command, deploymentLog)
         }
-        if (matchedSlug == "server-py") runServerPyUnitTests(deploymentLog)
+        if (matchedSlug == "server-py") {
+            broadcastRunStarted("server_py", "unit tests", "server_py unit pytest running.", SERVER_PY_UNIT_ARTIFACT_URL)
+            runServerPyUnitTests(deploymentLog)
+        }
     }
+}
+
+private fun broadcastRunStarted(repoId: String, label: String, detail: String, url: String? = null) {
+    OpsSocketHub.broadcastRunStarted(
+        repoId,
+        TestRunSummaryDto(
+            label = label,
+            status = OpsStatusDto.WIP,
+            timestampMs = System.currentTimeMillis(),
+            detail = detail,
+            url = url,
+        ),
+    )
 }
 
 private suspend fun runServerPyUnitTests(logFile: File): Int {
@@ -328,6 +360,16 @@ private fun extractRepoFullName(payload: String): String? = runCatching {
         ?.get("full_name")
         ?.jsonPrimitive
         ?.content
+}.getOrNull()
+
+private fun extractPushHeadSha(payload: String): String? = runCatching {
+    json.parseToJsonElement(payload)
+        .jsonObject["after"]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.trim()
+        ?.lowercase()
+        ?.takeIf { gitShaRegex.matches(it) }
 }.getOrNull()
 
 private fun String.escapeJson(): String = buildString {

@@ -17,8 +17,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.util.concurrent.CopyOnWriteArraySet
 
 private const val opsSocketRefreshMs = 45_000L
@@ -66,6 +68,14 @@ internal object OpsSocketHub {
         if (clients.isNotEmpty()) scope.launch { broadcastSummaryNow() }
     }
 
+    fun broadcastRunStarted(repoId: String, run: TestRunSummaryDto) {
+        broadcast(OpsSocketMessageDto("run_started", serverTimestamp = System.currentTimeMillis(), runEvent = OpsRunEventDto(repoId, run)))
+    }
+
+    private fun broadcast(message: OpsSocketMessageDto) {
+        if (clients.isNotEmpty()) scope.launch { broadcastNow(message) }
+    }
+
     private suspend fun ensureLoop() {
         loopLock.withLock {
             if (loopJob?.isActive == true) return
@@ -89,6 +99,10 @@ internal object OpsSocketHub {
 
     private suspend fun broadcastSummaryNow() {
         val message = summaryMessage() ?: return
+        broadcastNow(message)
+    }
+
+    private suspend fun broadcastNow(message: OpsSocketMessageDto) {
         clients.forEach { client ->
             runCatching { client.send(message) }.onFailure { clients -= client }
         }

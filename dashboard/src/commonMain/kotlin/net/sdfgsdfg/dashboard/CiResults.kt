@@ -2,7 +2,12 @@ package net.sdfgsdfg.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -36,12 +41,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
@@ -363,14 +370,15 @@ private fun ArtifactStrip(primaryUrl: String?, artifacts: List<OpsArtifactDto>) 
 }
 
 @Composable
-internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boolean): CiHistoryState? {
+internal fun rememberCiHistoryState(summary: OpsSummaryDto?, activeRunEvents: List<OpsRunEventDto>, atPageBottom: Boolean): CiHistoryState? {
     if (summary == null) return null
     var enabled by remember { mutableStateOf(readHistoryRepoFilter()) }
     var visibleLimit by remember { mutableStateOf(12) }
     val repos = remember(summary.repos) { summary.repos.filter { it.id in historyRepoIds } }
-    val eventsByRepo = remember(repos) {
+    val activeByRepo = remember(activeRunEvents) { activeRunEvents.groupBy({ it.repoId }, { it.run }) }
+    val eventsByRepo = remember(repos, activeByRepo) {
         repos.associateWith { repo ->
-            (repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
+            (activeByRepo[repo.id].orEmpty() + repo.history + repo.runs.filter { it.status == OpsStatusDto.WIP })
                 .distinctBy { it.label to it.timestampMs }
         }
     }
@@ -542,12 +550,13 @@ private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onC
 private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false, modifier: Modifier = Modifier) {
     val flash = if (fresh) 1f else 0f
     val running = run.status == OpsStatusDto.WIP
+    val color = run.status.color()
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFF0D141B))
-            .background(run.status.color().copy(alpha = flash * 0.11f))
-            .border(BorderStroke(1.dp, run.status.color().copy(alpha = 0.24f + flash * 0.32f)), RoundedCornerShape(7.dp))
+            .background(color.copy(alpha = flash * 0.11f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.24f + flash * 0.32f)), RoundedCornerShape(7.dp))
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
@@ -557,7 +566,26 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${repo.name} / ${run.label}", modifier = Modifier.weight(1f), color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (fresh) UpdatePill(run.status.color())
+                if (running) {
+                    val transition = rememberInfiniteTransition(label = "run-loop")
+                    val rotation by transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(animation = tween(1400, easing = LinearEasing), repeatMode = RepeatMode.Restart),
+                        label = "run-loop-rotation",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(color.copy(alpha = 0.08f))
+                            .border(BorderStroke(1.dp, color.copy(alpha = 0.24f)), RoundedCornerShape(999.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("∞", modifier = Modifier.graphicsLayer { rotationZ = rotation }, color = color.copy(alpha = 0.88f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (fresh) UpdatePill(color)
                 if (running) UpdatePill(cyan, "running")
                 RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
             }

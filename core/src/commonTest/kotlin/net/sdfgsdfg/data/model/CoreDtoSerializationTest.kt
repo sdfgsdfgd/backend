@@ -277,6 +277,23 @@ class CoreDtoSerializationTest {
         assertFalse("durationMs" in ingest)
         assertFalse("coveragePct" in ingest)
 
+        val socket = json.parseToJsonElement(
+            json.encodeToString(
+                OpsSocketMessageDto(
+                    type = "run_started",
+                    runEvent = OpsRunEventDto(
+                        repoId = "backend",
+                        run = TestRunSummaryDto("deploy abc1234", OpsStatusDto.WIP),
+                    ),
+                ),
+            ),
+        ).jsonObject
+        val runEvent = socket.getValue("run_event").jsonObject
+        assertEquals("backend", runEvent.getValue("repo_id").jsonPrimitive.content)
+        assertEquals("deploy abc1234", runEvent.getValue("run").jsonObject.getValue("label").jsonPrimitive.content)
+        assertFalse("runEvent" in socket)
+        assertFalse("repoId" in runEvent)
+
         val hostSnapshot = json.parseToJsonElement(
             json.encodeToString(
                 OpsHostSnapshotDto(

@@ -36,6 +36,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.OpsRunEventDto
+import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 
 internal enum class DashboardTab(val label: String) {
@@ -47,6 +49,12 @@ internal enum class DashboardTab(val label: String) {
     companion object {
         fun fromStoredName(value: String) = entries.firstOrNull { it.name == value }
     }
+}
+
+private fun String.runLifecycleLabel() = when {
+    startsWith("deploy ") -> "deploy"
+    this == "live e2e selftest" || this == "live selftest" -> "live selftest"
+    else -> this
 }
 
 internal sealed interface OpsLoadState {
@@ -65,11 +73,27 @@ fun DashboardApp(
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     var socketState by remember { mutableStateOf(OpsSocketState()) }
+    var activeRunEvents by remember { mutableStateOf(emptyList<OpsRunEventDto>()) }
     var issueEditorActive by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
+
+    fun applySummary(summary: OpsSummaryDto) {
+        activeRunEvents = activeRunEvents.filterNot { event ->
+            val activeLabel = event.run.label.runLifecycleLabel()
+            summary.repos.firstOrNull { it.id == event.repoId }
+                ?.let { repo ->
+                    (repo.history + repo.runs + listOfNotNull(repo.latestRun)).any { run ->
+                        run.status != OpsStatusDto.WIP &&
+                            (run.label == event.run.label || run.label.runLifecycleLabel() == activeLabel) &&
+                            (event.run.timestampMs == null || (run.timestampMs ?: 0L) >= event.run.timestampMs!!)
+                    }
+                } == true
+        }
+        loadState = OpsLoadState.Ready(summary)
+    }
 
     DisposableEffect(Unit) {
         onDispose { mounted[0] = false }
@@ -81,7 +105,11 @@ fun DashboardApp(
         val close = connectOpsSocket(
             onMessage = { message ->
                 if (!mounted[0]) return@connectOpsSocket
-                message.summary?.let { loadState = OpsLoadState.Ready(it) }
+                message.runEvent?.let { event ->
+                    val key = "${event.repoId}:${event.run.label.runLifecycleLabel()}"
+                    activeRunEvents = (activeRunEvents.filterNot { "${it.repoId}:${it.run.label.runLifecycleLabel()}" == key } + event).takeLast(20)
+                }
+                message.summary?.let(::applySummary)
             },
             onState = { if (mounted[0]) socketState = it },
         )
@@ -91,7 +119,7 @@ fun DashboardApp(
         if (socketState.status != OpsSocketStatus.DISCONNECTED) return@LaunchedEffect
         while (true) {
             loadOpsSummary(
-                onLoaded = { if (mounted[0]) loadState = OpsLoadState.Ready(it) },
+                onLoaded = { if (mounted[0]) applySummary(it) },
                 onFailed = { if (mounted[0]) loadState = OpsLoadState.Failed(it.ifBlank { "Failed to load ops summary" }) },
             )
             delay(OPS_SUMMARY_REFRESH_MS)
@@ -157,7 +185,7 @@ fun DashboardApp(
                 }
                 //endregion
                 val ciSummary = if (selectedTab == DashboardTab.Ci) (loadState as? OpsLoadState.Ready)?.summary else null
-                val ciHistoryState = rememberCiHistoryState(ciSummary, atPageBottom = !listState.canScrollForward)
+                val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier

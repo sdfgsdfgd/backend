@@ -15,7 +15,14 @@ data class OpsSocketMessageDto(
     @SerialName("client_timestamp") val clientTimestamp: Long? = null,
     @SerialName("server_timestamp") val serverTimestamp: Long? = null,
     val summary: OpsSummaryDto? = null,
+    @SerialName("run_event") val runEvent: OpsRunEventDto? = null,
     val message: String? = null,
+)
+
+@Serializable
+data class OpsRunEventDto(
+    @SerialName("repo_id") val repoId: String,
+    val run: TestRunSummaryDto,
 )
 
 @Serializable

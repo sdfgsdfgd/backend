@@ -9,6 +9,10 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.WebSocket
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionStage
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
 
 private var activeOpsApiBase: String? = null
@@ -44,8 +48,85 @@ internal actual fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,
 ): () -> Unit {
-    onState(OpsSocketState(OpsSocketStatus.DISCONNECTED))
-    return {}
+    val active = AtomicBoolean(true)
+    val client = HttpClient.newHttpClient()
+    var socket: WebSocket? = null
+
+    fun send(type: String, clientTimestamp: Long? = null) {
+        socket?.takeUnless { it.isOutputClosed }?.sendText(dashboardJson.encodeToString(OpsSocketMessageDto(type, clientTimestamp)), true)
+    }
+
+    Thread({
+        while (active.get()) {
+            val endpoints = configuredOpsApiBase()
+                ?.let(::listOf)
+                ?: listOfNotNull(activeOpsApiBase, "http://127.0.0.1", "https://ops.sdfgsdfg.net").distinct()
+            for (endpoint in endpoints) {
+                if (!active.get()) break
+                SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTING)) }
+                runCatching {
+                    val wsUrl = endpoint
+                        .replaceFirst("https://", "wss://")
+                        .replaceFirst("http://", "ws://") + "/api/ops/ws"
+                    val listener = object : WebSocket.Listener {
+                        private var text = ""
+
+                        override fun onOpen(webSocket: WebSocket) {
+                            socket = webSocket
+                            activeOpsApiBase = endpoint
+                            SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED)) }
+                            send("refresh")
+                            webSocket.request(1)
+                        }
+
+                        override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*> {
+                            text += data
+                            if (last) {
+                                val raw = text
+                                text = ""
+                                runCatching { dashboardJson.decodeFromString<OpsSocketMessageDto>(raw) }.getOrNull()?.let { message ->
+                                    if (message.type == "pong") {
+                                        val latency = message.clientTimestamp?.let { (System.currentTimeMillis() - it).coerceAtLeast(0L) }
+                                        SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED, latency)) }
+                                    } else {
+                                        SwingUtilities.invokeLater { onMessage(message) }
+                                    }
+                                }
+                            }
+                            webSocket.request(1)
+                            return CompletableFuture.completedFuture(null)
+                        }
+
+                        override fun onError(webSocket: WebSocket, error: Throwable) {
+                            if (active.get()) SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                        }
+
+                        override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*> {
+                            if (active.get()) SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                            return CompletableFuture.completedFuture(null)
+                        }
+                    }
+                    socket = client.newWebSocketBuilder().buildAsync(URI.create(wsUrl), listener).join()
+                    while (active.get() && socket?.isInputClosed == false && socket?.isOutputClosed == false) {
+                        send("ping", System.currentTimeMillis())
+                        Thread.sleep(15_000)
+                    }
+                }.onFailure {
+                    socket = null
+                    if (active.get()) SwingUtilities.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                }
+            }
+            Thread.sleep(2_500)
+        }
+    }, "ops-socket").apply {
+        isDaemon = true
+        start()
+    }
+
+    return {
+        active.set(false)
+        runCatching { socket?.sendClose(WebSocket.NORMAL_CLOSURE, "dashboard disposed") }
+    }
 }
 
 internal actual fun mutateIssue(
