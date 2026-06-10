@@ -151,7 +151,7 @@ fun Route.opsRoutes(
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
         return opsHost || (localPreview && call.clientInfo().isLocal)
     }
-    fun summary() = opsSummary(
+    fun summary() = OpsSocketHub.withActiveRuns(opsSummary(
         localPreview,
         arcanaIngestTargetFile,
         arcanaIngestHistoryFile,
@@ -163,7 +163,7 @@ fun Route.opsRoutes(
         githubIssues,
         backendFullSuite,
         if (enablePeerSnapshots) peerSnapshot(localPreview) else null,
-    )
+    ))
 
     OpsSocketHub.configure(::summary)
 

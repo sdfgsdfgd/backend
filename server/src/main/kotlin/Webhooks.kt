@@ -277,13 +277,14 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
             label = "deploy ${extractPushHeadSha(payload)?.take(7) ?: "pending"}",
             detail = "verifyServer, dashboard build-if-needed, installServer, local smoke.",
         )
+    } else if (matchedSlug == "server-py") {
+        broadcastRunStarted("server_py", "unit tests", "Restarting server_py; unit tests queued.", SERVER_PY_UNIT_ARTIFACT_URL)
     }
     webhookDeployMutex.withLock {
         for (command in profile.commands) {
             runWebhookCommand(matchedSlug, command, deploymentLog)
         }
         if (matchedSlug == "server-py") {
-            broadcastRunStarted("server_py", "unit tests", "server_py unit pytest running.", SERVER_PY_UNIT_ARTIFACT_URL)
             runServerPyUnitTests(deploymentLog)
         }
     }

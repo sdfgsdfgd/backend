@@ -18,9 +18,11 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import net.sdfgsdfg.data.model.OpsRunEventDto
+import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 
 private const val opsSocketRefreshMs = 45_000L
@@ -32,6 +34,7 @@ internal object OpsSocketHub {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val clients = CopyOnWriteArraySet<Client>()
     private val loopLock = Mutex()
+    private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
 
@@ -69,7 +72,27 @@ internal object OpsSocketHub {
     }
 
     fun broadcastRunStarted(repoId: String, run: TestRunSummaryDto) {
-        broadcast(OpsSocketMessageDto("run_started", serverTimestamp = System.currentTimeMillis(), runEvent = OpsRunEventDto(repoId, run)))
+        val event = OpsRunEventDto(repoId, run)
+        activeRuns[event.activeKey()] = event
+        broadcast(OpsSocketMessageDto("run_started", serverTimestamp = System.currentTimeMillis(), runEvent = event))
+    }
+
+    fun withActiveRuns(summary: OpsSummaryDto): OpsSummaryDto {
+        val active = activeRuns.values.toList()
+        if (active.isEmpty()) return summary
+        val resolved = mutableSetOf<String>()
+        val repos = summary.repos.map { repo ->
+            val finalRuns = repo.history + repo.runs + listOfNotNull(repo.latestRun)
+            val pending = active.filter { event ->
+                if (event.repoId != repo.id) return@filter false
+                val complete = finalRuns.any { run -> run.resolves(event.run) }
+                if (complete) resolved += event.activeKey()
+                !complete
+            }
+            if (pending.isEmpty()) repo else repo.copy(history = (pending.map { it.run } + repo.history).distinctBy { it.historyKey() })
+        }
+        resolved.forEach(activeRuns::remove)
+        return summary.copy(repos = repos)
     }
 
     private fun broadcast(message: OpsSocketMessageDto) {
@@ -123,3 +146,18 @@ internal object OpsSocketHub {
         session.send(json.encodeToString(message))
     }
 }
+
+private fun OpsRunEventDto.activeKey() = "$repoId:${run.label.lifecycleLabel()}"
+
+private fun String.lifecycleLabel() = when {
+    startsWith("deploy ") -> "deploy"
+    this == "live e2e selftest" || this == "live selftest" -> "live selftest"
+    else -> this
+}
+
+private fun TestRunSummaryDto.resolves(active: TestRunSummaryDto) =
+    status != OpsStatusDto.WIP &&
+        (label == active.label || label.lifecycleLabel() == active.label.lifecycleLabel()) &&
+        (active.timestampMs == null || (timestampMs ?: 0L) >= active.timestampMs!!)
+
+private fun TestRunSummaryDto.historyKey() = "${label.lifecycleLabel()}:${timestampMs ?: url ?: detail ?: status.name}"
