@@ -134,9 +134,9 @@ body {
 }
 
 .ops-status-light.wip {
-  --light-rgb: 117, 212, 255;
-  --light-core: #75d4ff;
-  --light-edge: #247aa2;
+  --light-rgb: 255, 200, 107;
+  --light-core: #ffc86b;
+  --light-edge: #a66a22;
   --light-duration: 2.8s;
 }
 

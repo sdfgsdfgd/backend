@@ -586,7 +586,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
                     }
                 }
                 if (fresh) UpdatePill(color)
-                if (running) UpdatePill(cyan, "running")
+                if (running) UpdatePill(color, "running")
                 RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
             }
             run.detail?.let {

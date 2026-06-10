@@ -501,7 +501,7 @@ internal fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green
     OpsStatusDto.WARN -> amber
     OpsStatusDto.FAIL -> rose
-    OpsStatusDto.WIP -> cyan
+    OpsStatusDto.WIP -> amber
     OpsStatusDto.UNKNOWN -> Color(0xFF8D98A9)
 }
 
