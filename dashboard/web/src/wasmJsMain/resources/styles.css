@@ -82,14 +82,14 @@ body {
   background:
     radial-gradient(
       circle at 36% 31%,
-      rgba(255, 255, 255, 0.82) 0%,
-      rgba(255, 255, 255, 0.44) 13%,
-      rgba(var(--light-rgb), 0.98) 28%,
-      rgba(var(--light-rgb), 0.82) 54%,
-      rgba(var(--light-rgb), 0.54) 78%,
-      rgba(var(--light-rgb), 0.26) 100%
+      rgba(255, 255, 255, 0.92) 0%,
+      rgba(255, 255, 255, 0.50) 12%,
+      var(--light-core) 30%,
+      var(--light-edge) 68%,
+      rgba(var(--light-rgb), 0.28) 100%
     );
   box-shadow:
+    0 0 0 1px var(--light-edge),
     inset 0 0 1px rgba(255, 255, 255, 0.64),
     0 0 6px rgba(var(--light-rgb), 0.24),
     0 0 14px rgba(var(--light-rgb), 0.10);
@@ -134,10 +134,14 @@ body {
 }
 
 .ops-status-light.wip {
-  --light-rgb: 70, 55, 98;
-  --light-core: #463762;
-  --light-edge: #2a203f;
+  --light-rgb: 183, 140, 255;
+  --light-core: #b78cff;
+  --light-edge: #463762;
   --light-duration: 2.8s;
+  --light-glow-low: 0.30;
+  --light-glow-high: 1;
+  --light-corona-low: 0.14;
+  --light-corona-high: 0.66;
 }
 
 @keyframes ops-light-bloom {

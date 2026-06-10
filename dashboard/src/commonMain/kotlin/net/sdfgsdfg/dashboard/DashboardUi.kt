@@ -66,6 +66,7 @@ internal val green = Color(0xFF5CE58B)
 internal val amber = Color(0xFFFFC86B)
 internal val rose = Color(0xFFFF7474)
 internal val ritualPurple = Color(0xFF463762)
+internal val ritualPurpleGlow = Color(0xFFB78CFF)
 internal val liveProcessCount = Regex("""(\d+) (arcana|codex) live""")
 internal const val OPS_SUMMARY_REFRESH_MS = 45_000L
 internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
@@ -502,7 +503,7 @@ internal fun OpsStatusDto.color(): Color = when (this) {
     OpsStatusDto.OK -> green
     OpsStatusDto.WARN -> amber
     OpsStatusDto.FAIL -> rose
-    OpsStatusDto.WIP -> ritualPurple
+    OpsStatusDto.WIP -> ritualPurpleGlow
     OpsStatusDto.UNKNOWN -> Color(0xFF8D98A9)
 }
 
