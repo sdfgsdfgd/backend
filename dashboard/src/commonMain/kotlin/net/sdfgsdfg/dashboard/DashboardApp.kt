@@ -21,7 +21,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -32,6 +34,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.OpsSummaryDto
 
@@ -56,8 +59,8 @@ internal sealed interface OpsLoadState {
 fun DashboardApp(
     arrowShiftSignal: Int = 0,
     focusedArrowKeys: Boolean = true,
-    // CMP-10297 workaround: cumulative raw WheelEvent delta from wasmJsMain.
-    externalScrollPx: Float = 0f,
+    // CMP-10297 workaround: raw WheelEvent deltas from wasmJsMain.
+    externalScrollDeltas: ReceiveChannel<Float>? = null,
 ) {
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
@@ -66,7 +69,7 @@ fun DashboardApp(
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
-    var handledExternalScrollPx by remember { mutableStateOf(externalScrollPx) }
+    val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
 
     DisposableEffect(Unit) {
         onDispose { mounted[0] = false }
@@ -137,14 +140,20 @@ fun DashboardApp(
                 OpsWallpaper()
                 val listState = rememberLazyListState()
                 //region CMP-10297 scroll workaround
-                // TODO(CMP-10297): remove externalScrollPx, handledExternalScrollPx,
-                // scrollBy, and the wasmJsMain wheel bridge when Compose/Wasm
-                // preserves Chrome/macOS precision-trackpad fling deltas internally.
+                // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
+                // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
+                // precision-trackpad fling deltas internally.
                 // https://youtrack.jetbrains.com/issue/CMP-10297
-                LaunchedEffect(externalScrollPx) {
-                    val delta = externalScrollPx - handledExternalScrollPx
-                    handledExternalScrollPx = externalScrollPx
-                    if (delta != 0f && !issueEditorActive) listState.scrollBy(delta)
+                LaunchedEffect(externalScrollDeltas, listState) {
+                    val deltas = externalScrollDeltas ?: return@LaunchedEffect
+                    while (true) {
+                        var pending = deltas.receiveCatching().getOrNull() ?: break
+                        while (true) {
+                            pending += deltas.tryReceive().getOrNull() ?: break
+                        }
+                        if (pending != 0f && !issueEditorActiveState.value) listState.scrollBy(pending)
+                        withFrameNanos { }
+                    }
                 }
                 //endregion
                 val ciSummary = if (selectedTab == DashboardTab.Ci) (loadState as? OpsLoadState.Ready)?.summary else null

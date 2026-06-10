@@ -143,7 +143,7 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
         }
         if (repo.id == "server_py") {
             serverPyEvidence.forEach { run ->
-                key(run.evidenceKey()) {
+                key(run.ciKey(repo)) {
                     CiEvidenceCard(
                         title = run.evidenceTitle(repo.id),
                         status = run.status,
@@ -158,9 +158,11 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
                     )
                 }
             }
-            ServerPySelfTestSummary(repo.selfTest, generatedAtMs, fieldCompact)
+            key("server_py-selftest") {
+                ServerPySelfTestSummary(repo.selfTest, generatedAtMs, fieldCompact)
+            }
             serverPyFullSuite?.let { run ->
-                key(run.evidenceKey()) {
+                key(run.ciKey(repo)) {
                     CiEvidenceCard(
                         title = run.evidenceTitle(repo.id),
                         status = run.status,
@@ -178,7 +180,7 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
         } else {
             if (runs.isEmpty()) PlaceholderTile("test evidence unavailable")
             runs.forEach { run ->
-                key(run.evidenceKey()) {
+                key(run.ciKey(repo)) {
                     CiEvidenceCard(
                         title = run.evidenceTitle(repo.id),
                         status = run.status,
@@ -371,7 +373,7 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boole
     if (allEvents.isEmpty()) return null
     val events = remember(allEvents, enabled) { allEvents.filter { it.first.id in enabled } }
     val visibleEvents = remember(events, visibleLimit) {
-        events.take(visibleLimit).map { (repo, run) -> CiHistoryEvent(repo, run, run.historyKey(repo)) }
+        events.take(visibleLimit).map { (repo, run) -> CiHistoryEvent(repo, run, run.ciKey(repo)) }
     }
     val eventKeys = remember(visibleEvents) { visibleEvents.map { it.key } }
     val freshKeys = rememberFreshKeys(eventKeys)
@@ -385,8 +387,9 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, atPageBottom: Boole
         total = events.size,
         freshKeys = freshKeys,
         onToggleRepo = { id ->
-            enabled = if (id in enabled) enabled - id else enabled + id
-            writeDashboardPref(historyRepoFilterPrefKey, enabled.joinToString(","))
+            val next = if (id in enabled) enabled - id else enabled + id
+            enabled = next
+            writeDashboardPref(historyRepoFilterPrefKey, historyRepoIds.filter { it in next }.joinToString(","))
         },
     )
 }
@@ -416,7 +419,7 @@ private fun LazyListScope.historyItems(state: CiHistoryState, generatedAtMs: Lon
             run = event.run,
             generatedAtMs = generatedAtMs,
             fresh = event.key in state.freshKeys,
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            modifier = Modifier.animateItem().fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
         )
     }
 }
@@ -525,9 +528,12 @@ private fun RepoHealthDto.ciRole() = when (id) {
 
 private fun String.displayRepoName() = if (this == "server_py") "server_py" else replaceFirstChar { it.uppercase() }
 
-private fun TestRunSummaryDto.evidenceKey() = "$label-$timestampMs-$status"
-
-private fun TestRunSummaryDto.historyKey(repo: RepoHealthDto) = "${repo.id}-$label-$timestampMs"
+private fun TestRunSummaryDto.ciKey(repo: RepoHealthDto): String {
+    val identity = url
+        ?: timestampMs?.toString()
+        ?: listOfNotNull(durationMs?.toString(), coveragePct?.toString(), status.name).joinToString(":")
+    return "${repo.id}-$label-$identity"
+}
 
 private fun String.historyColor() = when (this) {
     "backend" -> green

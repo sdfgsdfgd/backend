@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,8 +78,9 @@ internal fun Issues(
     var drag by remember { mutableStateOf<IssueDragState?>(null) }
     var dragTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var rootBounds by remember { mutableStateOf<Rect?>(null) }
-    val laneBounds = remember { mutableStateMapOf<String, Rect>() }
+    var dragRootBounds by remember { mutableStateOf<Rect?>(null) }
+    val rootBounds = remember { arrayOf<Rect?>(null) }
+    val laneBounds = remember { mutableMapOf<String, Rect>() }
 
     fun mutate(request: IssueMutationRequestDto) = mutateIssue(
         request = request,
@@ -109,7 +109,7 @@ internal fun Issues(
         is OpsLoadState.Ready -> Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .onGloballyPositioned { rootBounds = it.boundsInRoot() },
+                .onGloballyPositioned { rootBounds[0] = it.boundsInRoot() },
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
@@ -126,6 +126,7 @@ internal fun Issues(
                     onDeleteIssue = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
                     onArchive = { archiveRepo = it },
                     onDragStart = { repo, lane, issue, issueCode, bounds, grabOffset ->
+                        dragRootBounds = rootBounds[0]
                         drag = IssueDragState(
                             repo = repo,
                             lane = lane,
@@ -157,11 +158,12 @@ internal fun Issues(
                         }
                         drag = null
                         dragTarget = null
+                        dragRootBounds = null
                     },
                 )
                 IssueEventStrip(loadState.summary)
             }
-            drag?.let { IssueDragOverlay(it, loadState.summary.generatedAtMs, rootBounds) }
+            drag?.let { IssueDragOverlay(it, loadState.summary.generatedAtMs, dragRootBounds) }
         }
     }
     editor?.let { state ->
@@ -302,10 +304,14 @@ private fun IssueLane(
     val items = remember(repo.issues.items, lane.status) { repo.issues.items.filter { it.status == lane.status } }
     val countBackfill = lane.count(repo) - items.size
     val empty = items.isEmpty() && countBackfill <= 0
+    val laneKey = "${repo.id}:${lane.status}"
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .onGloballyPositioned { laneBounds["${repo.id}:${lane.status}"] = it.boundsInRoot() }
+            .onGloballyPositioned {
+                val bounds = it.boundsInRoot()
+                if (laneBounds[laneKey] != bounds) laneBounds[laneKey] = bounds
+            }
             .glassSurface(
                 shape = shape,
                 accent = lane.color,
@@ -357,7 +363,7 @@ private fun IssueItemTicket(
     onDragEnd: () -> Unit,
 ) {
     var activeDrag by remember { mutableStateOf(false) }
-    var bounds by remember { mutableStateOf<Rect?>(null) }
+    val boundsRef = remember { arrayOf<Rect?>(null) }
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     IssueTicketCard(
@@ -369,7 +375,7 @@ private fun IssueItemTicket(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (activeDrag) 0.32f else 1f }
-            .onGloballyPositioned { bounds = it.boundsInRoot() }
+            .onGloballyPositioned { boundsRef[0] = it.boundsInRoot() }
             .hoverable(interactionSource = interaction)
             .clickable(
                 interactionSource = interaction,
@@ -379,7 +385,7 @@ private fun IssueItemTicket(
             .pointerInput(issue.id) {
                 detectDragGestures(
                     onDragStart = { start ->
-                        bounds?.let {
+                        boundsRef[0]?.let {
                             activeDrag = true
                             onDragStart(repo, lane, issue, issueCode, it, start)
                         }

@@ -31,12 +31,15 @@ body {
   --light-corona-low: 0.04;
   --light-corona-high: 0.22;
   position: fixed;
+  top: 0;
+  left: 0;
   z-index: 30;
   pointer-events: none;
   border-radius: 999px;
   contain: layout style;
   overflow: visible;
-  transform: translateZ(0);
+  transform: translate3d(-9999px, -9999px, 0);
+  will-change: transform;
 }
 
 .ops-status-light::before,
@@ -175,6 +178,11 @@ body {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+}
+
+.boot.boot-done::before,
+.boot-done .boot-meter span {
+  animation: none;
 }
 
 .boot::before {

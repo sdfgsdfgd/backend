@@ -6,10 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -32,7 +29,6 @@ private data class StatusLightBounds(
 internal actual fun PlatformStatusDot(status: OpsStatusDto) {
     val id = remember { "ops-status-light-${statusLightSeed++}" }
     val density = LocalDensity.current.density
-    var bounds by remember { mutableStateOf<StatusLightBounds?>(null) }
 
     Canvas(
         modifier = Modifier
@@ -46,13 +42,12 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
                     width = coordinates.size.width / density,
                     height = coordinates.size.height / density,
                 )
-                bounds = next
-                syncStatusLight(id, status, next)
+                syncStatusLightBounds(id, next)
             },
     ) {}
 
     SideEffect {
-        syncStatusLight(id, status, bounds)
+        statusLight(id).className = "ops-status-light ${status.lightClass()}"
     }
     DisposableEffect(id) {
         statusLight(id)
@@ -64,20 +59,15 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
     }
 }
 
-private fun syncStatusLight(id: String, status: OpsStatusDto, bounds: StatusLightBounds?) {
+private fun syncStatusLightBounds(id: String, bounds: StatusLightBounds) {
     val element = statusLight(id)
-    element.className = "ops-status-light ${status.lightClass()}"
-    if (bounds == null) {
-        element.style.left = "-9999px"
-        element.style.top = "-9999px"
-    } else {
-        val slot = minOf(bounds.width, bounds.height)
-        val size = slot * 1.9f
-        element.style.left = "${bounds.x + bounds.width / 2f - size / 2f}px"
-        element.style.top = "${bounds.y + bounds.height / 2f - size / 2f}px"
-        element.style.width = "${size}px"
-        element.style.height = "${size}px"
-    }
+    val slot = minOf(bounds.width, bounds.height)
+    val size = slot * 1.9f
+    val x = bounds.x + bounds.width / 2f - size / 2f
+    val y = bounds.y + bounds.height / 2f - size / 2f
+    element.style.width = "${size}px"
+    element.style.height = "${size}px"
+    element.style.transform = "translate3d(${x}px, ${y}px, 0)"
 }
 
 private fun statusLight(id: String): HTMLElement {
