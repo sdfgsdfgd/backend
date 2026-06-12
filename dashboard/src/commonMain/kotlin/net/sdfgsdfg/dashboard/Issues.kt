@@ -1,5 +1,15 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -60,6 +70,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.IssueEventDto
 import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
@@ -111,12 +122,14 @@ internal fun Issues(
                 .fillMaxWidth()
                 .onGloballyPositioned { rootBounds[0] = it.boundsInRoot() },
         ) {
+            val motion = rememberIssueBoardMotionState(loadState.summary)
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 IssuePanels(
                     repos = loadState.summary.repos,
                     generatedAtMs = loadState.summary.generatedAtMs,
                     pageWidth = pageWidth,
+                    motion = motion,
                     dropTargetRepoId = dragTarget?.first,
                     dropTargetStatus = dragTarget?.second,
                     laneBounds = laneBounds,
@@ -193,6 +206,7 @@ private fun IssuePanels(
     repos: List<RepoHealthDto>,
     generatedAtMs: Long,
     pageWidth: Dp,
+    motion: IssueBoardMotionState,
     dropTargetRepoId: String?,
     dropTargetStatus: String?,
     laneBounds: MutableMap<String, Rect>,
@@ -209,7 +223,7 @@ private fun IssuePanels(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onDragStart, onDrag, onDragEnd)
+                IssuePanel(repo, generatedAtMs, pageWidth, motion, dropTargetRepoId, dropTargetStatus, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onDragStart, onDrag, onDragEnd)
             }
         }
     }
@@ -220,6 +234,7 @@ private fun IssuePanel(
     repo: RepoHealthDto,
     generatedAtMs: Long,
     pageWidth: Dp,
+    motion: IssueBoardMotionState,
     dropTargetRepoId: String?,
     dropTargetStatus: String?,
     laneBounds: MutableMap<String, Rect>,
@@ -269,7 +284,7 @@ private fun IssuePanel(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.fillMaxWidth())
+                        IssueLane(lane, repo, generatedAtMs, motion, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -277,7 +292,7 @@ private fun IssuePanel(
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.weight(1f))
+                        IssueLane(lane, repo, generatedAtMs, motion, dropTargetRepoId == repo.id && dropTargetStatus == lane.status, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -290,6 +305,7 @@ private fun IssueLane(
     lane: IssueLaneSpec,
     repo: RepoHealthDto,
     generatedAtMs: Long,
+    motion: IssueBoardMotionState,
     targeted: Boolean,
     laneBounds: MutableMap<String, Rect>,
     onCreate: (RepoHealthDto, String) -> Unit,
@@ -302,8 +318,18 @@ private fun IssueLane(
     modifier: Modifier = Modifier,
 ) {
     val items = remember(repo.issues.items, lane.status) { repo.issues.items.filter { it.status == lane.status } }
+    val slots = remember(repo.id, lane.status, items, motion.exits) {
+        items.mapIndexed { index, issue -> IssueTicketSlot(repo.id, lane.status, issue, issue.ticketKey(repo.id), index, exiting = false) }
+            .toMutableList()
+            .apply {
+                motion.exits
+                    .filter { it.repoId == repo.id && it.status == lane.status }
+                    .sortedBy { it.index }
+                    .forEach { add(it.index.coerceIn(0, size), it) }
+            }
+    }
     val countBackfill = lane.count(repo) - items.size
-    val empty = items.isEmpty() && countBackfill <= 0
+    val empty = slots.isEmpty() && countBackfill <= 0
     val laneKey = "${repo.id}:${lane.status}"
     val shape = RoundedCornerShape(8.dp)
     Column(
@@ -339,9 +365,38 @@ private fun IssueLane(
             }
             Box(modifier = Modifier.weight(1f)) {}
         }
-        items.forEach { issue ->
-            key(issue.id) {
-                IssueItemTicket(lane, repo, issue, repo.issueCode(issue), generatedAtMs, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd)
+        slots.forEach { slot ->
+            key(slot.key) {
+                val label = if (slot.exiting) null else motion.label(repo.id, slot.issue)
+                val visibleState = remember(slot.key) {
+                    MutableTransitionState(slot.exiting || !motion.entering(repo.id, slot.issue)).apply {
+                        targetState = !slot.exiting
+                    }
+                }
+                AnimatedVisibility(
+                    visibleState = visibleState,
+                    enter = fadeIn(tween(issueMotionEnterMs, easing = FastOutSlowInEasing)) +
+                        expandVertically(tween(issueMotionEnterMs, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+                        slideInVertically(tween(issueMotionEnterMs, easing = FastOutSlowInEasing)) { -it / 3 },
+                    exit = fadeOut(tween(issueMotionExitMs, easing = FastOutSlowInEasing)) +
+                        shrinkVertically(tween(issueMotionExitMs, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+                ) {
+                    IssueItemTicket(
+                        lane = lane,
+                        repo = repo,
+                        issue = slot.issue,
+                        issueCode = repo.issueCode(slot.issue),
+                        generatedAtMs = generatedAtMs,
+                        motionLabel = label,
+                        exiting = slot.exiting,
+                        onEdit = onEdit,
+                        onArchiveIssue = onArchiveIssue,
+                        onDeleteIssue = onDeleteIssue,
+                        onDragStart = onDragStart,
+                        onDrag = onDrag,
+                        onDragEnd = onDragEnd,
+                    )
+                }
             }
         }
         countBackfill.takeIf { it > 0 }?.let { IssueCountTicket(lane, repo, it) }
@@ -355,6 +410,8 @@ private fun IssueItemTicket(
     issue: IssueItemDto,
     issueCode: String,
     generatedAtMs: Long,
+    motionLabel: String? = null,
+    exiting: Boolean = false,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
@@ -366,16 +423,10 @@ private fun IssueItemTicket(
     val boundsRef = remember { arrayOf<Rect?>(null) }
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    IssueTicketCard(
-        lane = lane,
-        repo = repo,
-        issue = issue,
-        issueCode = issueCode,
-        generatedAtMs = generatedAtMs,
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer { alpha = if (activeDrag) 0.32f else 1f }
-            .onGloballyPositioned { boundsRef[0] = it.boundsInRoot() }
+    val interactionModifier = if (exiting) {
+        Modifier
+    } else {
+        Modifier
             .hoverable(interactionSource = interaction)
             .clickable(
                 interactionSource = interaction,
@@ -394,10 +445,23 @@ private fun IssueItemTicket(
                     onDragEnd = { activeDrag = false; onDragEnd() },
                     onDragCancel = { activeDrag = false; onDragEnd() },
                 )
-            },
+            }
+    }
+    IssueTicketCard(
+        lane = lane,
+        repo = repo,
+        issue = issue,
+        issueCode = issueCode,
+        generatedAtMs = generatedAtMs,
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = if (activeDrag) 0.32f else 1f }
+            .onGloballyPositioned { boundsRef[0] = it.boundsInRoot() }
+            .then(interactionModifier),
         hovered = hovered && !activeDrag,
-        onArchive = if (issue.source == "arcana" && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
-        onDelete = if (issue.source == "arcana") { { onDeleteIssue(repo, issue) } } else null,
+        motionLabel = motionLabel,
+        onArchive = if (!exiting && issue.source == "arcana" && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
+        onDelete = if (!exiting && issue.source == "arcana") { { onDeleteIssue(repo, issue) } } else null,
     )
 }
 
@@ -432,16 +496,22 @@ private fun IssueTicketCard(
     generatedAtMs: Long,
     modifier: Modifier = Modifier,
     hovered: Boolean = false,
+    motionLabel: String? = null,
     onArchive: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
     val timestamp = issue.updatedAtMs ?: issue.createdAtMs ?: issue.completedAtMs
+    val flash by animateFloatAsState(
+        targetValue = if (motionLabel == null) 0f else 1f,
+        animationSpec = tween(if (motionLabel == null) issueMotionFlashOutMs else issueMotionFlashInMs, easing = FastOutSlowInEasing),
+        label = "issue-motion-flash",
+    )
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(panelRaised)
-            .background(lane.color.copy(alpha = if (hovered) 0.09f else 0f))
-            .border(BorderStroke(1.dp, lane.color.copy(alpha = if (hovered) 0.58f else 0.28f)), RoundedCornerShape(7.dp))
+            .background(lane.color.copy(alpha = if (hovered) 0.09f + flash * 0.10f else flash * 0.10f))
+            .border(BorderStroke(1.dp, lane.color.copy(alpha = if (hovered) 0.58f else 0.28f + flash * 0.26f)), RoundedCornerShape(7.dp))
             .padding(9.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
@@ -462,6 +532,7 @@ private fun IssueTicketCard(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             timestamp?.let { AgePill(it, generatedAtMs) }
+            motionLabel?.let { UpdatePill(lane.color, it) }
             if (onArchive != null || onDelete != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     onArchive?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
@@ -760,6 +831,120 @@ private data class IssueDragState(
     val pointer: Offset,
 )
 
+@Composable
+private fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMotionState {
+    var previous by remember { mutableStateOf<Map<String, IssueSnapshot>?>(null) }
+    var labels by remember { mutableStateOf(emptyMap<String, String>()) }
+    var exits by remember { mutableStateOf(emptyList<IssueTicketSlot>()) }
+
+    LaunchedEffect(summary.generatedAtMs, summary.repos) {
+        val current = summary.issueSnapshots()
+        val old = previous
+        previous = current
+        if (old == null) return@LaunchedEffect
+
+        val currentIds = current.keys
+        val moved = current.values.mapNotNull { next ->
+            old[next.key]
+                ?.takeIf { it.repoId != next.repoId || it.status != next.status }
+                ?.let { it to next }
+        }
+        val created = current.values.filter { it.key !in old }
+        val removed = old.values.filter { it.key !in currentIds }
+        val updated = current.values.filter { next ->
+            old[next.key]?.let { it.repoId == next.repoId && it.status == next.status && it.fingerprint != next.fingerprint } == true
+        }
+        val reordered = current.values.filter { next ->
+            old[next.key]?.let { it.repoId == next.repoId && it.status == next.status && it.index != next.index } == true
+        }
+
+        val nextLabels = buildMap {
+            reordered.forEach { put(it.ticketKey, "shifted") }
+            updated.forEach { put(it.ticketKey, "updated") }
+            created.forEach { put(it.ticketKey, "new") }
+            moved.forEach { put(it.second.ticketKey, "moved") }
+        }
+        val nextExits = (removed + moved.map { it.first }).map { it.exitSlot(summary.generatedAtMs) }
+
+        if (nextLabels.isEmpty() && nextExits.isEmpty()) return@LaunchedEffect
+        labels = nextLabels
+        exits = nextExits
+    }
+
+    LaunchedEffect(labels, exits) {
+        if (labels.isEmpty() && exits.isEmpty()) return@LaunchedEffect
+        delay(issueMotionHoldMs)
+        labels = emptyMap()
+        exits = emptyList()
+    }
+
+    return remember(labels, exits) {
+        IssueBoardMotionState(labels, exits)
+    }
+}
+
+private data class IssueBoardMotionState(
+    val labels: Map<String, String> = emptyMap(),
+    val exits: List<IssueTicketSlot> = emptyList(),
+)
+
+private data class IssueSnapshot(
+    val repoId: String,
+    val issue: IssueItemDto,
+    val status: String,
+    val index: Int,
+    val fingerprint: String,
+) {
+    val key = issue.motionKey(repoId)
+    val ticketKey = issue.ticketKey(repoId)
+}
+
+private data class IssueTicketSlot(
+    val repoId: String,
+    val status: String,
+    val issue: IssueItemDto,
+    val key: String,
+    val index: Int,
+    val exiting: Boolean,
+)
+
+private fun IssueBoardMotionState.entering(repoId: String, issue: IssueItemDto) = labels[issue.ticketKey(repoId)] in issueEnterLabels
+
+private fun IssueBoardMotionState.label(repoId: String, issue: IssueItemDto) = labels[issue.ticketKey(repoId)]
+
+private fun OpsSummaryDto.issueSnapshots(): Map<String, IssueSnapshot> =
+    repos.flatMap { repo ->
+        repo.issues.items
+            .filter { it.status in visibleIssueStatuses }
+            .mapIndexed { index, issue -> IssueSnapshot(repo.id, issue, issue.status, index, issue.motionFingerprint()) }
+    }.associateBy { it.key }
+
+private fun IssueSnapshot.exitSlot(generatedAtMs: Long) = IssueTicketSlot(
+    repoId = repoId,
+    status = status,
+    issue = issue,
+    key = "exit:$ticketKey:$generatedAtMs",
+    index = index,
+    exiting = true,
+)
+
+private fun IssueItemDto.motionKey(repoId: String) = "$repoId:$source:$id"
+
+private fun IssueItemDto.ticketKey(repoId: String) = "${motionKey(repoId)}:$status"
+
+private fun IssueItemDto.motionFingerprint() = listOf(
+    title,
+    status,
+    source,
+    sourceLabel,
+    url.orEmpty(),
+    description,
+    notes,
+    createdAtMs?.toString().orEmpty(),
+    updatedAtMs?.toString().orEmpty(),
+    completedAtMs?.toString().orEmpty(),
+).joinToString("|")
+
 private fun IssueItemDto.issueEditorText() = buildString {
     append(title.ifBlank { id })
     if (description.isNotBlank()) append("\n").append(description)
@@ -814,6 +999,14 @@ private fun Map<String, Rect>.targetAt(pointer: Offset): Pair<String, String>? {
 private fun String.laneTargetOrNull() = split(':', limit = 2)
     .takeIf { it.size == 2 }
     ?.let { it[0] to it[1] }
+
+private const val issueMotionEnterMs = 10_800
+private const val issueMotionExitMs = 10_800
+private const val issueMotionHoldMs = 12_500L
+private const val issueMotionFlashInMs = 1_200
+private const val issueMotionFlashOutMs = 10_800
+private val issueEnterLabels = setOf("new", "moved")
+private val visibleIssueStatuses = setOf("blocked", "todo", "wip", "review", "done")
 
 private val issueLanes = listOf(
     IssueLaneSpec("BLOCKED", "blocked", rose) { it.issues.blocked },
