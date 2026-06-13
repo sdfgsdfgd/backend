@@ -75,12 +75,19 @@ fun DashboardApp(
     var socketState by remember { mutableStateOf(OpsSocketState()) }
     var activeRunEvents by remember { mutableStateOf(emptyList<OpsRunEventDto>()) }
     var issueEditorActive by remember { mutableStateOf(false) }
+    var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
     val focusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
 
     fun applySummary(summary: OpsSummaryDto) {
+        val previous = lastAppliedSummary
+        if (
+            previous != null &&
+            previous.repos == summary.repos &&
+            summary.generatedAtMs - previous.generatedAtMs in -1_000L..1_000L
+        ) return
         activeRunEvents = activeRunEvents.filterNot { event ->
             val activeLabel = event.run.label.runLifecycleLabel()
             summary.repos.firstOrNull { it.id == event.repoId }
@@ -92,6 +99,7 @@ fun DashboardApp(
                     }
                 } == true
         }
+        lastAppliedSummary = summary
         loadState = OpsLoadState.Ready(summary)
     }
 
@@ -218,7 +226,7 @@ fun DashboardApp(
                                 Issues(
                                     loadState = loadState,
                                     pageWidth = pageWidth,
-                                    onSummary = { loadState = OpsLoadState.Ready(it) },
+                                    onSummary = ::applySummary,
                                     onEditorActiveChanged = { issueEditorActive = it },
                                 )
                             }

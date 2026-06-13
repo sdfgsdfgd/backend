@@ -6,9 +6,14 @@ import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -26,7 +31,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 
 private const val opsSocketRefreshMs = 45_000L
+private const val opsSocketBroadcastDebounceMs = 120L
 
+@OptIn(FlowPreview::class)
 internal object OpsSocketHub {
     private data class Client(val session: DefaultWebSocketServerSession, val sendLock: Mutex = Mutex())
 
@@ -34,9 +41,23 @@ internal object OpsSocketHub {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val clients = CopyOnWriteArraySet<Client>()
     private val loopLock = Mutex()
+    private val summaryBroadcastRequests = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
+
+    init {
+        scope.launch {
+            summaryBroadcastRequests
+                .debounce(opsSocketBroadcastDebounceMs)
+                .collect {
+                    if (clients.isNotEmpty()) broadcastSummaryNow()
+                }
+        }
+    }
 
     val clientCount: Int
         get() = clients.size
@@ -68,7 +89,7 @@ internal object OpsSocketHub {
     }
 
     fun broadcastSummary() {
-        if (clients.isNotEmpty()) scope.launch { broadcastSummaryNow() }
+        if (clients.isNotEmpty()) summaryBroadcastRequests.tryEmit(Unit)
     }
 
     fun broadcastRunStarted(repoId: String, run: TestRunSummaryDto) {
