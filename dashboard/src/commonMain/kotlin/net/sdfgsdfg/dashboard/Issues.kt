@@ -1,8 +1,10 @@
 package net.sdfgsdfg.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -42,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +79,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.IssueEventDto
 import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
@@ -92,8 +97,7 @@ internal fun Issues(
     var editor by remember { mutableStateOf<IssueEditorState?>(null) }
     var archiveRepo by remember { mutableStateOf<RepoHealthDto?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val dragMotion = remember { IssueDragMotion() }
-    val laneBounds = remember { mutableMapOf<String, Rect>() }
+    val drag = remember { IssueBoardDrag() }
 
     fun mutate(request: IssueMutationRequestDto) = mutateIssue(
         request = request,
@@ -102,7 +106,10 @@ internal fun Issues(
             archiveRepo = archiveRepo?.let { open -> summary.repos.firstOrNull { it.id == open.id } }
             error = null
         },
-        onFailed = { error = it },
+        onFailed = {
+            drag.clearOptimisticMoves()
+            error = it
+        },
     )
     LaunchedEffect(editor != null) {
         onEditorActiveChanged(editor != null)
@@ -119,10 +126,11 @@ internal fun Issues(
             detail = loadState.message,
             items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
         )
-        is OpsLoadState.Ready -> Box(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        is OpsLoadState.Ready -> Box(modifier = Modifier.fillMaxWidth()) {
             val motion = rememberIssueBoardMotionState(loadState.summary)
+            LaunchedEffect(motion.active) {
+                if (!motion.active) drag.clearOptimisticMoves()
+            }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 IssuePanels(
@@ -130,32 +138,13 @@ internal fun Issues(
                     generatedAtMs = loadState.summary.generatedAtMs,
                     pageWidth = pageWidth,
                     motion = motion,
-                    laneBounds = laneBounds,
+                    drag = drag,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
                     onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
                     onDeleteIssue = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
                     onArchive = { archiveRepo = it },
-                    onDragStart = { repo, issue, pointer ->
-                        dragMotion.begin(
-                            drag = IssueDragState(repo, issue, issue.status),
-                            pointer = pointer,
-                        )
-                    },
-                    onDrag = { delta ->
-                        if (dragMotion.drag != null) dragMotion.moveBy(delta)
-                    },
-                    onDragEnd = {
-                        val current = dragMotion.drag
-                        val target = current?.let { laneBounds.targetAt(dragMotion.pointer) }
-                        if (current != null && target != null) {
-                            val (repoId, status) = target
-                            if (repoId == current.repo.id && status != current.status) {
-                                mutate(IssueMutationRequestDto("move", repoId, id = current.issue.id, status = status))
-                            }
-                        }
-                        dragMotion.end()
-                    },
+                    onMoveIssue = { repo, issue, status -> mutate(IssueMutationRequestDto("move", repo.id, id = issue.id, status = status)) },
                 )
                 IssueEventStrip(loadState.summary)
             }
@@ -189,21 +178,19 @@ private fun IssuePanels(
     generatedAtMs: Long,
     pageWidth: Dp,
     motion: IssueBoardMotionState,
-    laneBounds: MutableMap<String, Rect>,
+    drag: IssueBoardDrag,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchive: (RepoHealthDto) -> Unit,
-    onDragStart: (RepoHealthDto, IssueItemDto, Offset) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
+    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
 ) {
     val sortedRepos = remember(repos) { repos.sortedByDescending { it.issues.active } }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, motion, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onDragStart, onDrag, onDragEnd)
+                IssuePanel(repo, generatedAtMs, pageWidth, motion, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
             }
         }
     }
@@ -215,15 +202,13 @@ private fun IssuePanel(
     generatedAtMs: Long,
     pageWidth: Dp,
     motion: IssueBoardMotionState,
-    laneBounds: MutableMap<String, Rect>,
+    drag: IssueBoardDrag,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchive: (RepoHealthDto) -> Unit,
-    onDragStart: (RepoHealthDto, IssueItemDto, Offset) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
+    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
 ) {
     val active = repo.issues.active
     val source = issueSourceBreakdown(listOf(repo))
@@ -262,7 +247,7 @@ private fun IssuePanel(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, motion, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.fillMaxWidth())
+                        IssueLane(lane, repo, generatedAtMs, motion, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -270,7 +255,7 @@ private fun IssuePanel(
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 issueLanes.forEach { lane ->
                     key(lane.status) {
-                        IssueLane(lane, repo, generatedAtMs, motion, laneBounds, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onDragStart, onDrag, onDragEnd, modifier = Modifier.weight(1f))
+                        IssueLane(lane, repo, generatedAtMs, motion, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -284,17 +269,16 @@ private fun IssueLane(
     repo: RepoHealthDto,
     generatedAtMs: Long,
     motion: IssueBoardMotionState,
-    laneBounds: MutableMap<String, Rect>,
+    drag: IssueBoardDrag,
     onCreate: (RepoHealthDto, String) -> Unit,
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDragStart: (RepoHealthDto, IssueItemDto, Offset) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
+    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(repo.issues.items, lane.status) { lane.items(repo) }
+    val optimisticStatuses = drag.optimisticStatuses
+    val items = remember(repo.id, repo.issues.items, lane.status, optimisticStatuses) { drag.items(repo, lane) }
     val slots = remember(repo.id, lane.status, items, motion.exits) {
         items.mapIndexed { index, issue -> IssueTicketSlot(repo.id, lane.status, issue, issue.ticketKey(repo.id), index, exiting = false) }
             .toMutableList()
@@ -305,7 +289,11 @@ private fun IssueLane(
                     .forEach { add(it.index.coerceIn(0, size), it) }
             }
     }
-    val countBackfill = lane.count(repo) - items.size
+    val slotKeys = remember(slots) { slots.mapTo(mutableSetOf()) { it.key } }
+    SideEffect {
+        drag.pruneTickets(repo.id, lane.status, slotKeys)
+    }
+    val countBackfill = if (optimisticStatuses.isEmpty()) lane.count(repo) - items.size else 0
     val empty = slots.isEmpty() && countBackfill <= 0
     val laneKey = "${repo.id}:${lane.status}"
     val shape = RoundedCornerShape(8.dp)
@@ -313,7 +301,7 @@ private fun IssueLane(
         modifier = modifier
             .onGloballyPositioned {
                 val bounds = it.boundsInRoot()
-                if (laneBounds[laneKey] != bounds) laneBounds[laneKey] = bounds
+                drag.placeLane(laneKey, bounds)
             }
             .glassSurface(
                 shape = shape,
@@ -342,7 +330,8 @@ private fun IssueLane(
         }
         slots.forEach { slot ->
             key(slot.key) {
-                val cue = if (slot.exiting) null else motion.cues[slot.key]
+                val motionKey = slot.issue.motionKey(repo.id)
+                val cue = if (slot.exiting || drag.suppressesMotion(motionKey)) null else motion.cues[slot.key]
                 val label = cue?.label
                 val moveDirection = cue?.moveDirection ?: 0
                 val visibleState = remember(slot.key) {
@@ -381,9 +370,10 @@ private fun IssueLane(
                         onEdit = onEdit,
                         onArchiveIssue = onArchiveIssue,
                         onDeleteIssue = onDeleteIssue,
-                        onDragStart = onDragStart,
-                        onDrag = onDrag,
-                        onDragEnd = onDragEnd,
+                        onDragStart = { pointer -> drag.begin(repo, slot.issue, pointer) },
+                        onDrag = drag::moveBy,
+                        onDragEnd = { bounds -> drag.dropTarget(bounds, onMoveIssue) },
+                        onPlaced = { if (!slot.exiting) drag.placeTicket(slot.key, it) },
                     )
                 }
             }
@@ -404,14 +394,28 @@ private fun IssueItemTicket(
     onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
     onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
     onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDragStart: (RepoHealthDto, IssueItemDto, Offset) -> Unit,
+    onDragStart: (Offset) -> Unit,
     onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
+    onDragEnd: (Rect) -> IssueDropTarget?,
+    onPlaced: (Rect) -> Unit = {},
 ) {
+    val ticketKey = issue.ticketKey(repo.id)
     var dragging by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    val scope = rememberCoroutineScope()
+    val motionJob = remember(ticketKey) { arrayOf<Job?>(null) }
+    val pickupOffset = remember(ticketKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val releaseOffset = remember(ticketKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val visualOffset = dragOffset + pickupOffset.value + releaseOffset.value
+    val settling = releaseOffset.value != Offset.Zero
+    val activeMotion = dragging || settling
+    val dragTone = when {
+        dragging -> 1f
+        settling -> 0.55f
+        else -> 0f
+    }
     val lift by animateFloatAsState(
-        targetValue = if (dragging) 1.02f else 1f,
+        targetValue = if (activeMotion) 1.025f else 1f,
         animationSpec = spring(dampingRatio = 0.78f, stiffness = 520f),
         label = "issue-card-drag-lift",
     )
@@ -428,17 +432,21 @@ private fun IssueItemTicket(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = true)
                     val bounds = boundsRef[0] ?: return@awaitEachGesture
+                    val center = Offset(bounds.size.width / 2f, bounds.size.height / 2f)
+                    val pickupTarget = down.position - center
                     var moved = false
                     dragging = true
                     dragOffset = Offset.Zero
-                    onDragStart(repo, issue, bounds.topLeft + down.position)
+                    motionJob[0]?.cancel()
+                    motionJob[0] = scope.launch {
+                        releaseOffset.snapTo(Offset.Zero)
+                        pickupOffset.snapTo(Offset.Zero)
+                        pickupOffset.animateTo(pickupTarget, spring(dampingRatio = 0.56f, stiffness = 540f))
+                    }
+                    onDragStart(bounds.topLeft + down.position)
                     try {
                         while (true) {
                             val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) {
-                                if (!moved && issue.source == "arcana") onEdit(repo, issue)
-                                break
-                            }
                             val delta = change.positionChange()
                             if (delta != Offset.Zero) {
                                 moved = true
@@ -446,11 +454,27 @@ private fun IssueItemTicket(
                                 change.consume()
                                 onDrag(delta)
                             }
+                            if (change.changedToUpIgnoreConsumed()) {
+                                if (!moved && issue.source == "arcana") onEdit(repo, issue)
+                                break
+                            }
                         }
                     } finally {
-                        dragging = false
-                        dragOffset = Offset.Zero
-                        onDragEnd()
+                        val settleFrom = dragOffset + pickupOffset.value
+                        val dropTarget = onDragEnd(bounds.offsetBy(settleFrom))
+                        motionJob[0]?.cancel()
+                        motionJob[0] = scope.launch {
+                            releaseOffset.snapTo(settleFrom)
+                            pickupOffset.snapTo(Offset.Zero)
+                            dragOffset = Offset.Zero
+                            dragging = false
+                            if (dropTarget == null) {
+                                releaseOffset.animateTo(Offset.Zero, spring(dampingRatio = 0.62f, stiffness = 360f))
+                            } else {
+                                releaseOffset.animateTo(dropTarget.bounds.topLeft - bounds.topLeft, tween(issueDropReleaseMs, easing = FastOutSlowInEasing))
+                                dropTarget.commit()
+                            }
+                        }
                     }
                 }
             }
@@ -462,17 +486,22 @@ private fun IssueItemTicket(
         generatedAtMs = generatedAtMs,
         modifier = Modifier
             .fillMaxWidth()
-            .zIndex(if (dragging) 100f else 0f)
+            .zIndex(if (activeMotion) 100f else 0f)
             .graphicsLayer {
-                translationX = dragOffset.x
-                translationY = dragOffset.y
+                translationX = visualOffset.x
+                translationY = visualOffset.y
                 scaleX = lift
                 scaleY = lift
-                alpha = if (dragging) 0.97f else 1f
+                alpha = if (activeMotion) 0.98f else 1f
             }
-            .onGloballyPositioned { boundsRef[0] = it.boundsInRoot() }
+            .onGloballyPositioned {
+                val bounds = it.boundsInRoot()
+                boundsRef[0] = bounds
+                onPlaced(bounds)
+            }
             .then(interactionModifier),
         hovered = editable && hovered && !dragging,
+        dragTone = dragTone,
         motionLabel = motionLabel,
         onArchive = if (editable && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
         onDelete = if (editable) { { onDeleteIssue(repo, issue) } } else null,
@@ -487,6 +516,7 @@ private fun IssueTicketCard(
     generatedAtMs: Long,
     modifier: Modifier = Modifier,
     hovered: Boolean = false,
+    dragTone: Float = 0f,
     motionLabel: String? = null,
     onArchive: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
@@ -497,12 +527,14 @@ private fun IssueTicketCard(
         animationSpec = tween(if (motionLabel == null) issueMotionFlashOutMs else issueMotionFlashInMs, easing = FastOutSlowInEasing),
         label = "issue-motion-flash",
     )
+    val washAlpha = (flash * 0.10f + (if (hovered) 0.09f else 0f) + dragTone * 0.11f).coerceAtMost(0.32f)
+    val borderAlpha = (0.28f + flash * 0.26f + (if (hovered) 0.30f else 0f) + dragTone * 0.34f).coerceAtMost(0.92f)
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(panelRaised)
-            .background(lane.color.copy(alpha = if (hovered) 0.09f + flash * 0.10f else flash * 0.10f))
-            .border(BorderStroke(1.dp, lane.color.copy(alpha = if (hovered) 0.58f else 0.28f + flash * 0.26f)), RoundedCornerShape(7.dp))
+            .background(lane.color.copy(alpha = washAlpha))
+            .border(BorderStroke(1.dp, lane.color.copy(alpha = borderAlpha)), RoundedCornerShape(7.dp))
             .padding(9.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
@@ -816,18 +848,25 @@ private data class IssueEditorState(
 private data class IssueDragState(
     val repo: RepoHealthDto,
     val issue: IssueItemDto,
-    val status: String,
+    val fromStatus: String,
 )
 
-private class IssueDragMotion {
-    var drag: IssueDragState? = null
+private data class IssueDropTarget(
+    val bounds: Rect,
+    val commit: () -> Unit,
+)
+
+private class IssueBoardDrag {
+    var optimisticStatuses by mutableStateOf(emptyMap<String, String>())
         private set
 
-    var pointer: Offset = Offset.Zero
-        private set
+    private var active: IssueDragState? = null
+    private var pointer = Offset.Zero
+    private val laneBounds = mutableMapOf<String, Rect>()
+    private val ticketBounds = mutableMapOf<String, Rect>()
 
-    fun begin(drag: IssueDragState, pointer: Offset) {
-        this.drag = drag
+    fun begin(repo: RepoHealthDto, issue: IssueItemDto, pointer: Offset) {
+        active = IssueDragState(repo, issue, issue.status)
         this.pointer = pointer
     }
 
@@ -835,9 +874,75 @@ private class IssueDragMotion {
         pointer += delta
     }
 
-    fun end() {
-        drag = null
+    private fun end() {
+        active = null
         pointer = Offset.Zero
+    }
+
+    fun clearOptimisticMoves() {
+        optimisticStatuses = emptyMap()
+    }
+
+    fun items(repo: RepoHealthDto, lane: IssueLaneSpec) =
+        repo.issues.items
+            .map { issue -> issue.copy(status = optimisticStatuses[issue.motionKey(repo.id)] ?: issue.status) }
+            .filter { it.status == lane.status }
+            .sortedByCreation()
+
+    fun suppressesMotion(key: String) = key in optimisticStatuses
+
+    fun placeLane(key: String, bounds: Rect) {
+        if (laneBounds[key] != bounds) laneBounds[key] = bounds
+    }
+
+    fun placeTicket(key: String, bounds: Rect) {
+        ticketBounds[key] = bounds
+    }
+
+    fun pruneTickets(repoId: String, status: String, activeKeys: Set<String>) {
+        ticketBounds.keys
+            .filter { it.startsWith("$repoId:") && it.endsWith(":$status") && it !in activeKeys }
+            .forEach { ticketBounds.remove(it) }
+    }
+
+    fun dropTarget(releaseBounds: Rect, onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit): IssueDropTarget? {
+        val current = active ?: return null
+        val target = laneBounds.targetAt(pointer) ?: laneBounds.targetAt(releaseBounds.center)
+        val dropTarget = target
+            ?.takeIf { (repoId, status) -> repoId == current.repo.id && status != current.fromStatus }
+            ?.let { (_, status) ->
+                targetBounds(current.repo, current.issue, status, releaseBounds)?.let { bounds ->
+                    val key = current.issue.motionKey(current.repo.id)
+                    IssueDropTarget(bounds) {
+                        optimisticStatuses = optimisticStatuses + (key to status)
+                        onMoveIssue(current.repo, current.issue, status)
+                    }
+                }
+            }
+        end()
+        return dropTarget
+    }
+
+    private fun targetBounds(repo: RepoHealthDto, issue: IssueItemDto, status: String, releaseBounds: Rect): Rect? {
+        val laneRect = laneBounds["${repo.id}:$status"] ?: return null
+        val key = issue.motionKey(repo.id)
+        val projected = (repo.issues.items
+            .map { it.copy(status = optimisticStatuses[it.motionKey(repo.id)] ?: it.status) }
+            .filter { it.status == status && it.motionKey(repo.id) != key } + issue.copy(status = status))
+            .sortedByCreation()
+        val index = projected.indexOfFirst { it.motionKey(repo.id) == key }.takeIf { it >= 0 } ?: return null
+        val laneTickets = ticketBounds
+            .filterKeys { it.startsWith("${repo.id}:") && it.endsWith(":$status") }
+            .values
+            .sortedBy { it.top }
+        val before = projected.take(index).asReversed().mapNotNull { ticketBounds[it.ticketKey(repo.id)] }.firstOrNull()
+        val after = projected.drop(index + 1).mapNotNull { ticketBounds[it.ticketKey(repo.id)] }.firstOrNull()
+        val gap = laneTickets.zipWithNext()
+            .map { (a, b) -> b.top - a.bottom }
+            .firstOrNull { it > 0f } ?: issueCardGapPx
+        val left = after?.left ?: before?.left ?: laneTickets.firstOrNull()?.left ?: laneRect.left + issueLanePaddingPx
+        val top = after?.top ?: before?.let { it.bottom + gap } ?: laneTickets.firstOrNull()?.top ?: laneRect.top + issueLaneEmptyDropTopPx
+        return Rect(left, top, left + releaseBounds.width, top + releaseBounds.height)
     }
 }
 
@@ -954,6 +1059,8 @@ private fun IssueItemDto.issueEditorText() = buildString {
 
 private fun String.visibleNotes(description: String) = trim().takeIf { it.isNotBlank() && !description.contains(it) }
 
+private fun Rect.offsetBy(offset: Offset) = Rect(left + offset.x, top + offset.y, right + offset.x, bottom + offset.y)
+
 private fun RepoHealthDto.issueCode(issue: IssueItemDto) = issueCode(issue.id)
 
 private fun RepoHealthDto.issueCode(id: String): String {
@@ -1009,6 +1116,10 @@ private const val issueMotionFlashInMs = 450
 private const val issueMotionFlashOutMs = 1_800
 private const val issueMotionMoveFadeMs = 560
 private const val issueMotionMoveSlideMs = 680
+private const val issueDropReleaseMs = 760
+private const val issueCardGapPx = 6f
+private const val issueLanePaddingPx = 8f
+private const val issueLaneEmptyDropTopPx = 42f
 private val issueEnterLabels = setOf("new", "moved")
 
 private val issueLanes = listOf(
