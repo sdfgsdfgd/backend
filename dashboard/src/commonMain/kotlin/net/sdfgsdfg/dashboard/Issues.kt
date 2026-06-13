@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -833,16 +834,10 @@ private data class IssueDragState(
 
 @Composable
 private fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMotionState {
-    var previous by remember { mutableStateOf<Map<String, IssueSnapshot>?>(null) }
-    var labels by remember { mutableStateOf(emptyMap<String, String>()) }
-    var exits by remember { mutableStateOf(emptyList<IssueTicketSlot>()) }
-
-    LaunchedEffect(summary.generatedAtMs, summary.repos) {
-        val current = summary.issueSnapshots()
-        val old = previous
-        previous = current
-        if (old == null) return@LaunchedEffect
-
+    val previous = remember { arrayOf<Map<String, IssueSnapshot>?>(null) }
+    var retained by remember { mutableStateOf(IssueBoardMotionState()) }
+    val current = remember(summary.generatedAtMs, summary.repos) { summary.issueSnapshots() }
+    val detected = previous[0]?.takeIf { it != current }?.let { old ->
         val currentIds = current.keys
         val moved = current.values.mapNotNull { next ->
             old[next.key]
@@ -865,28 +860,30 @@ private fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMot
             moved.forEach { put(it.second.ticketKey, "moved") }
         }
         val nextExits = (removed + moved.map { it.first }).map { it.exitSlot(summary.generatedAtMs) }
+        IssueBoardMotionState(nextLabels, nextExits)
+    } ?: IssueBoardMotionState()
+    val motion = if (detected.active) detected else retained
 
-        if (nextLabels.isEmpty() && nextExits.isEmpty()) return@LaunchedEffect
-        labels = nextLabels
-        exits = nextExits
+    SideEffect {
+        previous[0] = current
+        if (detected.active) retained = detected
     }
 
-    LaunchedEffect(labels, exits) {
-        if (labels.isEmpty() && exits.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(retained) {
+        if (!retained.active) return@LaunchedEffect
         delay(issueMotionHoldMs)
-        labels = emptyMap()
-        exits = emptyList()
+        retained = IssueBoardMotionState()
     }
 
-    return remember(labels, exits) {
-        IssueBoardMotionState(labels, exits)
-    }
+    return motion
 }
 
 private data class IssueBoardMotionState(
     val labels: Map<String, String> = emptyMap(),
     val exits: List<IssueTicketSlot> = emptyList(),
 )
+
+private val IssueBoardMotionState.active get() = labels.isNotEmpty() || exits.isNotEmpty()
 
 private data class IssueSnapshot(
     val repoId: String,
