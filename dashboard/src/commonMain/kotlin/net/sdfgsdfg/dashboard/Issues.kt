@@ -342,10 +342,11 @@ private fun IssueLane(
         }
         slots.forEach { slot ->
             key(slot.key) {
-                val label = if (slot.exiting) null else motion.label(repo.id, slot.issue)
-                val moveDirection = if (slot.exiting) 0 else motion.moveDirection(repo.id, slot.issue)
+                val cue = if (slot.exiting) null else motion.cues[slot.key]
+                val label = cue?.label
+                val moveDirection = cue?.moveDirection ?: 0
                 val visibleState = remember(slot.key) {
-                    MutableTransitionState(slot.exiting || !motion.entering(repo.id, slot.issue)).apply {
+                    MutableTransitionState(slot.exiting || label !in issueEnterLabels).apply {
                         targetState = !slot.exiting
                     }
                 }
@@ -417,12 +418,13 @@ private fun IssueItemTicket(
     val boundsRef = remember { arrayOf<Rect?>(null) }
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val interactionModifier = if (exiting) {
+    val editable = !exiting && issue.source == "arcana"
+    val interactionModifier = if (!editable) {
         Modifier
     } else {
         Modifier
             .hoverable(interactionSource = interaction)
-            .pointerInput(issue.id) {
+            .pointerInput(repo.id, issue.source, issue.id, issue.status) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = true)
                     val bounds = boundsRef[0] ?: return@awaitEachGesture
@@ -455,7 +457,6 @@ private fun IssueItemTicket(
     }
     IssueTicketCard(
         lane = lane,
-        repo = repo,
         issue = issue,
         issueCode = issueCode,
         generatedAtMs = generatedAtMs,
@@ -471,17 +472,16 @@ private fun IssueItemTicket(
             }
             .onGloballyPositioned { boundsRef[0] = it.boundsInRoot() }
             .then(interactionModifier),
-        hovered = hovered && !dragging,
+        hovered = editable && hovered && !dragging,
         motionLabel = motionLabel,
-        onArchive = if (!exiting && issue.source == "arcana" && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
-        onDelete = if (!exiting && issue.source == "arcana") { { onDeleteIssue(repo, issue) } } else null,
+        onArchive = if (editable && issue.status != "trash") { { onArchiveIssue(repo, issue) } } else null,
+        onDelete = if (editable) { { onDeleteIssue(repo, issue) } } else null,
     )
 }
 
 @Composable
 private fun IssueTicketCard(
     lane: IssueLaneSpec,
-    repo: RepoHealthDto,
     issue: IssueItemDto,
     issueCode: String,
     generatedAtMs: Long,
@@ -741,7 +741,7 @@ private fun ArchiveDialog(repo: RepoHealthDto, onDelete: (IssueItemDto) -> Unit,
                     Text("No archived tickets", color = muted, fontSize = 12.sp)
                 }
                 archived.take(14).forEach { issue ->
-                    key(issue.id) {
+                    key(issue.motionKey(repo.id)) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -820,10 +820,10 @@ private data class IssueDragState(
 )
 
 private class IssueDragMotion {
-    var drag by mutableStateOf<IssueDragState?>(null)
+    var drag: IssueDragState? = null
         private set
 
-    var pointer by mutableStateOf(Offset.Zero)
+    var pointer: Offset = Offset.Zero
         private set
 
     fun begin(drag: IssueDragState, pointer: Offset) {
@@ -831,13 +831,13 @@ private class IssueDragMotion {
         this.pointer = pointer
     }
 
-    fun moveBy(delta: Offset): Offset {
+    fun moveBy(delta: Offset) {
         pointer += delta
-        return pointer
     }
 
     fun end() {
         drag = null
+        pointer = Offset.Zero
     }
 }
 
@@ -856,7 +856,7 @@ private fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMot
         val created = current.values.filter { it.key !in old }
         val removed = old.values.filter { it.key !in currentIds }
         val updated = current.values.filter { next ->
-            old[next.key]?.let { it.repoId == next.repoId && it.status == next.status && it.fingerprint != next.fingerprint } == true
+            old[next.key]?.let { it.repoId == next.repoId && it.status == next.status && it.issue != next.issue } == true
         }
 
         val nextCues = buildMap {
@@ -902,7 +902,6 @@ private data class IssueSnapshot(
     val issue: IssueItemDto,
     val status: String,
     val index: Int,
-    val fingerprint: String,
 ) {
     val key = issue.motionKey(repoId)
     val ticketKey = issue.ticketKey(repoId)
@@ -917,17 +916,11 @@ private data class IssueTicketSlot(
     val exiting: Boolean,
 )
 
-private fun IssueBoardMotionState.entering(repoId: String, issue: IssueItemDto) = cues[issue.ticketKey(repoId)]?.label in issueEnterLabels
-
-private fun IssueBoardMotionState.label(repoId: String, issue: IssueItemDto) = cues[issue.ticketKey(repoId)]?.label
-
-private fun IssueBoardMotionState.moveDirection(repoId: String, issue: IssueItemDto) = cues[issue.ticketKey(repoId)]?.moveDirection ?: 0
-
 private fun OpsSummaryDto.issueSnapshots(): Map<String, IssueSnapshot> =
     repos.flatMap { repo ->
         issueLanes.flatMap { lane ->
             lane.items(repo)
-                .mapIndexed { index, issue -> IssueSnapshot(repo.id, issue, issue.status, index, issue.motionFingerprint()) }
+                .mapIndexed { index, issue -> IssueSnapshot(repo.id, issue, issue.status, index) }
         }
     }.associateBy { it.key }
 
@@ -953,19 +946,6 @@ private fun IssueSnapshot.moveDirectionTo(next: IssueSnapshot): Int {
         else -> 1
     }
 }
-
-private fun IssueItemDto.motionFingerprint() = listOf(
-    title,
-    status,
-    source,
-    sourceLabel,
-    url.orEmpty(),
-    description,
-    notes,
-    createdAtMs?.toString().orEmpty(),
-    updatedAtMs?.toString().orEmpty(),
-    completedAtMs?.toString().orEmpty(),
-).joinToString("|")
 
 private fun IssueItemDto.issueEditorText() = buildString {
     append(title.ifBlank { id })
