@@ -1000,11 +1000,11 @@ private fun String.laneTargetOrNull() = split(':', limit = 2)
     .takeIf { it.size == 2 }
     ?.let { it[0] to it[1] }
 
-private const val issueMotionEnterMs = 10_800
-private const val issueMotionExitMs = 10_800
-private const val issueMotionHoldMs = 12_500L
-private const val issueMotionFlashInMs = 1_200
-private const val issueMotionFlashOutMs = 10_800
+private const val issueMotionEnterMs = 2_400
+private const val issueMotionExitMs = 1_800
+private const val issueMotionHoldMs = 3_000L
+private const val issueMotionFlashInMs = 450
+private const val issueMotionFlashOutMs = 1_800
 private val issueEnterLabels = setOf("new", "moved")
 
 private val issueLanes = listOf(
