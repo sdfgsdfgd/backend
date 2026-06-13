@@ -931,17 +931,11 @@ private class IssueBoardDrag {
             .filter { it.status == status && it.motionKey(repo.id) != key } + issue.copy(status = status))
             .sortedByCreation()
         val index = projected.indexOfFirst { it.motionKey(repo.id) == key }.takeIf { it >= 0 } ?: return null
-        val laneTickets = ticketBounds
-            .filterKeys { it.startsWith("${repo.id}:") && it.endsWith(":$status") }
-            .values
-            .sortedBy { it.top }
-        val before = projected.take(index).asReversed().mapNotNull { ticketBounds[it.ticketKey(repo.id)] }.firstOrNull()
-        val after = projected.drop(index + 1).mapNotNull { ticketBounds[it.ticketKey(repo.id)] }.firstOrNull()
-        val gap = laneTickets.zipWithNext()
-            .map { (a, b) -> b.top - a.bottom }
-            .firstOrNull { it > 0f } ?: issueCardGapPx
-        val left = after?.left ?: before?.left ?: laneTickets.firstOrNull()?.left ?: laneRect.left + issueLanePaddingPx
-        val top = after?.top ?: before?.let { it.bottom + gap } ?: laneTickets.firstOrNull()?.top ?: laneRect.top + issueLaneEmptyDropTopPx
+        val before = projected.take(index).asReversed().firstNotNullOfOrNull { ticketBounds[it.ticketKey(repo.id)] }
+        val after = projected.drop(index + 1).firstNotNullOfOrNull { ticketBounds[it.ticketKey(repo.id)] }
+        val fallback = projected.firstNotNullOfOrNull { ticketBounds[it.ticketKey(repo.id)] }
+        val left = after?.left ?: before?.left ?: fallback?.left ?: (laneRect.left + issueLanePaddingPx)
+        val top = after?.top ?: before?.let { it.bottom + issueCardGapPx } ?: fallback?.top ?: (laneRect.top + issueLaneEmptyDropTopPx)
         return Rect(left, top, left + releaseBounds.width, top + releaseBounds.height)
     }
 }
