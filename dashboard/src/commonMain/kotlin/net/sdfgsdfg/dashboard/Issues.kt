@@ -318,7 +318,7 @@ private fun IssueLane(
     onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(repo.issues.items, lane.status) { repo.issues.items.issueCards(lane.status) }
+    val items = remember(repo.issues.items, lane.status) { lane.items(repo) }
     val slots = remember(repo.id, lane.status, items, motion.exits) {
         items.mapIndexed { index, issue -> IssueTicketSlot(repo.id, lane.status, issue, issue.ticketKey(repo.id), index, exiting = false) }
             .toMutableList()
@@ -734,7 +734,9 @@ private fun DeleteButton(onClick: () -> Unit) {
 
 @Composable
 private fun ArchiveDialog(repo: RepoHealthDto, onDelete: (IssueItemDto) -> Unit, onDismiss: () -> Unit) {
-    val archived = remember(repo.issues.items) { repo.issues.items.issueCards("trash") }
+    val archived = remember(repo.issues.items) {
+        repo.issues.items.filter { it.status == "trash" }.sortedByCreation()
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -911,18 +913,11 @@ private fun IssueBoardMotionState.label(repoId: String, issue: IssueItemDto) = l
 
 private fun OpsSummaryDto.issueSnapshots(): Map<String, IssueSnapshot> =
     repos.flatMap { repo ->
-        visibleIssueStatuses.flatMap { status ->
-            repo.issues.items.issueCards(status)
+        issueLanes.flatMap { lane ->
+            lane.items(repo)
                 .mapIndexed { index, issue -> IssueSnapshot(repo.id, issue, issue.status, index, issue.motionFingerprint()) }
         }
     }.associateBy { it.key }
-
-private fun List<IssueItemDto>.issueCards(status: String) = filter { it.status == status }.sortedWith(issueCardOrder)
-
-private val issueCardOrder = compareByDescending<IssueItemDto> { it.createdAtMs ?: Long.MIN_VALUE }
-    .thenByDescending { it.updatedAtMs ?: Long.MIN_VALUE }
-    .thenBy { it.source }
-    .thenBy { it.id }
 
 private fun IssueSnapshot.exitSlot(generatedAtMs: Long) = IssueTicketSlot(
     repoId = repoId,
@@ -1011,7 +1006,6 @@ private const val issueMotionHoldMs = 12_500L
 private const val issueMotionFlashInMs = 1_200
 private const val issueMotionFlashOutMs = 10_800
 private val issueEnterLabels = setOf("new", "moved")
-private val visibleIssueStatuses = setOf("blocked", "todo", "wip", "review", "done")
 
 private val issueLanes = listOf(
     IssueLaneSpec("BLOCKED", "blocked", rose) { it.issues.blocked },

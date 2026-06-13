@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -73,7 +74,11 @@ internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
 
 
 internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
-internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (RepoHealthDto) -> Int)
+internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (RepoHealthDto) -> Int) {
+    fun items(repo: RepoHealthDto): List<IssueItemDto> =
+        repo.issues.items.filter { it.status == status }.sortedByCreation()
+}
+internal fun List<IssueItemDto>.sortedByCreation() = sortedByDescending { it.createdAtMs ?: Long.MIN_VALUE }
 internal data class BadgeSpec(val label: String, val color: Color, val strong: Boolean = false)
 
 @Composable
