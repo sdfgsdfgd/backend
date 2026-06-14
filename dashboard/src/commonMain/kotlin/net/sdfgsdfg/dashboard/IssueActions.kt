@@ -31,14 +31,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.IssueEventDto
-import net.sdfgsdfg.data.model.OpsSummaryDto
-import net.sdfgsdfg.data.model.RepoHealthDto
 
 @Composable
-internal fun IssueEventStrip(summary: OpsSummaryDto) {
-    val events = remember(summary.repos) {
-        summary.repos.flatMap { repo -> repo.issues.events.map { repo to it } }
-            .sortedByDescending { it.second.tsMs ?: 0L }
+internal fun IssueEventStrip(board: IssueBoardModel) {
+    val events = remember(board.events) {
+        board.events
+            .sortedByDescending { it.event.tsMs ?: 0L }
             .take(6)
     }
     if (events.isEmpty()) return
@@ -54,16 +52,16 @@ internal fun IssueEventStrip(summary: OpsSummaryDto) {
             Text("Recent Issue Events", color = text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             StatusPill("${events.size} shown", cyan)
         }
-        events.forEach { (repo, event) ->
-            key("${repo.id}:${event.eventId}") {
-                IssueEventRow(repo, event, summary.generatedAtMs)
+        events.forEach { item ->
+            key("${item.repo.id}:${item.event.eventId}") {
+                IssueEventRow(item.repo, item.event, board.generatedAtMs)
             }
         }
     }
 }
 
 @Composable
-private fun IssueEventRow(repo: RepoHealthDto, event: IssueEventDto, generatedAtMs: Long) {
+private fun IssueEventRow(repo: IssueRepoModel, event: IssueEventDto, generatedAtMs: Long) {
     val color = issueStatusColor(event.status)
     Row(
         modifier = Modifier

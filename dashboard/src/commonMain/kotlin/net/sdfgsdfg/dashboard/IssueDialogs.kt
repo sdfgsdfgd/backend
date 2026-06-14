@@ -39,10 +39,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.IssueItemDto
-import net.sdfgsdfg.data.model.RepoHealthDto
 
 @Composable
-internal fun ArchiveDialog(repo: RepoHealthDto, onDelete: (IssueItemDto) -> Unit, onDismiss: () -> Unit) {
+internal fun ArchiveDialog(repo: IssueRepoModel, onDelete: (IssueItemDto) -> Unit, onDismiss: () -> Unit) {
     val archived = remember(repo.issues.items) {
         repo.issues.items.filter { it.status == "trash" }.sortedByCreation()
     }

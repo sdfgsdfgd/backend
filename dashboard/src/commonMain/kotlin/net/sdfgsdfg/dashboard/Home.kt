@@ -98,7 +98,7 @@ private fun SummaryStrip(summary: OpsSummaryDto, pageWidth: Dp, modifier: Modifi
             FieldSpec("healthy", ok.toString()),
             FieldSpec("alerts", alerts.toString()),
             FieldSpec("wip", wip.toString()),
-            FieldSpec("active issues", activeIssues.toString(), issueSourceBreakdown(repos)),
+            FieldSpec("active issues", activeIssues.toString(), issueSourceBreakdown(repos.map { it.issues })),
         )
     }
     if (pageWidth < 760.dp) {

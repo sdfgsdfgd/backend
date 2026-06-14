@@ -6,11 +6,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import net.sdfgsdfg.data.model.IssueItemDto
-import net.sdfgsdfg.data.model.RepoHealthDto
 import kotlin.math.abs
 
 private data class IssueDragState(
-    val repo: RepoHealthDto,
+    val repo: IssueRepoModel,
     val issue: IssueItemDto,
     val fromStatus: String,
 )
@@ -29,7 +28,7 @@ internal class IssueBoardDrag {
     private val laneBounds = mutableMapOf<String, Rect>()
     private val ticketBounds = mutableMapOf<String, Rect>()
 
-    fun begin(repo: RepoHealthDto, issue: IssueItemDto, pointer: Offset) {
+    fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset) {
         active = IssueDragState(repo, issue, issue.status)
         this.pointer = pointer
     }
@@ -47,7 +46,7 @@ internal class IssueBoardDrag {
         optimisticStatuses = emptyMap()
     }
 
-    fun items(repo: RepoHealthDto, lane: IssueLaneSpec) =
+    fun items(repo: IssueRepoModel, lane: IssueLaneSpec) =
         repo.issues.items
             .map { issue -> issue.copy(status = optimisticStatuses[issue.motionKey(repo.id)] ?: issue.status) }
             .filter { it.status == lane.status }
@@ -69,7 +68,7 @@ internal class IssueBoardDrag {
             .forEach { ticketBounds.remove(it) }
     }
 
-    fun dropTarget(releaseBounds: Rect, onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit): IssueDropTarget? {
+    fun dropTarget(releaseBounds: Rect, onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit): IssueDropTarget? {
         val current = active ?: return null
         val target = laneBounds.targetAt(pointer) ?: laneBounds.targetAt(releaseBounds.center)
         val dropTarget = target
@@ -87,7 +86,7 @@ internal class IssueBoardDrag {
         return dropTarget
     }
 
-    private fun targetBounds(repo: RepoHealthDto, issue: IssueItemDto, status: String, releaseBounds: Rect): Rect? {
+    private fun targetBounds(repo: IssueRepoModel, issue: IssueItemDto, status: String, releaseBounds: Rect): Rect? {
         val laneRect = laneBounds["${repo.id}:$status"] ?: return null
         val key = issue.motionKey(repo.id)
         val projected = (repo.issues.items

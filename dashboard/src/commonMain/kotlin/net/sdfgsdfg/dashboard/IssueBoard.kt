@@ -61,21 +61,20 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.IssueItemDto
-import net.sdfgsdfg.data.model.RepoHealthDto
 
 @Composable
 internal fun IssuePanels(
-    repos: List<RepoHealthDto>,
+    repos: List<IssueRepoModel>,
     generatedAtMs: Long,
     pageWidth: Dp,
     motion: IssueBoardMotionState,
     drag: IssueBoardDrag,
-    onCreate: (RepoHealthDto, String) -> Unit,
-    onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchive: (RepoHealthDto) -> Unit,
-    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
+    onCreate: (IssueRepoModel, String) -> Unit,
+    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchive: (IssueRepoModel) -> Unit,
+    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
 ) {
     val sortedRepos = remember(repos) { repos.sortedByDescending { it.issues.active } }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -89,20 +88,20 @@ internal fun IssuePanels(
 
 @Composable
 private fun IssuePanel(
-    repo: RepoHealthDto,
+    repo: IssueRepoModel,
     generatedAtMs: Long,
     pageWidth: Dp,
     motion: IssueBoardMotionState,
     drag: IssueBoardDrag,
-    onCreate: (RepoHealthDto, String) -> Unit,
-    onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchive: (RepoHealthDto) -> Unit,
-    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
+    onCreate: (IssueRepoModel, String) -> Unit,
+    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchive: (IssueRepoModel) -> Unit,
+    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
 ) {
     val active = repo.issues.active
-    val source = issueSourceBreakdown(listOf(repo))
+    val source = issueSourceBreakdown(listOf(repo.issues))
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
@@ -157,15 +156,15 @@ private fun IssuePanel(
 @Composable
 private fun IssueLane(
     lane: IssueLaneSpec,
-    repo: RepoHealthDto,
+    repo: IssueRepoModel,
     generatedAtMs: Long,
     motion: IssueBoardMotionState,
     drag: IssueBoardDrag,
-    onCreate: (RepoHealthDto, String) -> Unit,
-    onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onMoveIssue: (RepoHealthDto, IssueItemDto, String) -> Unit,
+    onCreate: (IssueRepoModel, String) -> Unit,
+    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val optimisticStatuses = drag.optimisticStatuses
@@ -184,7 +183,7 @@ private fun IssueLane(
     SideEffect {
         drag.pruneTickets(repo.id, lane.status, slotKeys)
     }
-    val countBackfill = if (optimisticStatuses.isEmpty()) lane.count(repo) - items.size else 0
+    val countBackfill = if (optimisticStatuses.isEmpty()) lane.count(repo.issues) - items.size else 0
     val empty = slots.isEmpty() && countBackfill <= 0
     val laneKey = "${repo.id}:${lane.status}"
     val shape = RoundedCornerShape(8.dp)
@@ -276,15 +275,15 @@ private fun IssueLane(
 @Composable
 private fun IssueItemTicket(
     lane: IssueLaneSpec,
-    repo: RepoHealthDto,
+    repo: IssueRepoModel,
     issue: IssueItemDto,
     issueCode: String,
     generatedAtMs: Long,
     motionLabel: String? = null,
     exiting: Boolean = false,
-    onEdit: (RepoHealthDto, IssueItemDto) -> Unit,
-    onArchiveIssue: (RepoHealthDto, IssueItemDto) -> Unit,
-    onDeleteIssue: (RepoHealthDto, IssueItemDto) -> Unit,
+    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
+    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
     onDragStart: (Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: (Rect) -> IssueDropTarget?,
@@ -458,7 +457,7 @@ private fun IssueTicketCard(
 }
 
 @Composable
-private fun IssueCountTicket(lane: IssueLaneSpec, repo: RepoHealthDto, count: Int) {
+private fun IssueCountTicket(lane: IssueLaneSpec, repo: IssueRepoModel, count: Int) {
     Column(
         modifier = Modifier
             .fillMaxWidth()

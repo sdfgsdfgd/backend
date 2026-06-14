@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
-import net.sdfgsdfg.data.model.RepoHealthDto
 
 @Composable
 internal fun Issues(
@@ -28,7 +27,7 @@ internal fun Issues(
     onEditorActiveChanged: (Boolean) -> Unit = {},
 ) {
     var editor by remember { mutableStateOf<IssueEditorState?>(null) }
-    var archiveRepo by remember { mutableStateOf<RepoHealthDto?>(null) }
+    var archiveRepo by remember { mutableStateOf<IssueRepoModel?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val drag = remember { IssueBoardDrag() }
 
@@ -36,7 +35,7 @@ internal fun Issues(
         request = request,
         onLoaded = { summary ->
             onSummary(summary)
-            archiveRepo = archiveRepo?.let { open -> summary.repos.firstOrNull { it.id == open.id } }
+            archiveRepo = archiveRepo?.let { open -> summary.issueBoardModel().repos.firstOrNull { it.id == open.id } }
             error = null
         },
         onFailed = {
@@ -60,15 +59,16 @@ internal fun Issues(
             items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
         )
         is OpsLoadState.Ready -> Box(modifier = Modifier.fillMaxWidth()) {
-            val motion = rememberIssueBoardMotionState(loadState.summary)
+            val board = rememberIssueBoardModel(loadState.summary)
+            val motion = rememberIssueBoardMotionState(board)
             LaunchedEffect(motion.active) {
                 if (!motion.active) drag.clearOptimisticMoves()
             }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 IssuePanels(
-                    repos = loadState.summary.repos,
-                    generatedAtMs = loadState.summary.generatedAtMs,
+                    repos = board.repos,
+                    generatedAtMs = board.generatedAtMs,
                     pageWidth = pageWidth,
                     motion = motion,
                     drag = drag,
@@ -79,7 +79,7 @@ internal fun Issues(
                     onArchive = { archiveRepo = it },
                     onMoveIssue = { repo, issue, status -> mutate(IssueMutationRequestDto("move", repo.id, id = issue.id, status = status)) },
                 )
-                IssueEventStrip(loadState.summary)
+                IssueEventStrip(board)
             }
         }
     }

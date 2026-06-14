@@ -9,13 +9,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.IssueItemDto
-import net.sdfgsdfg.data.model.OpsSummaryDto
 
 @Composable
-internal fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMotionState {
+internal fun rememberIssueBoardMotionState(board: IssueBoardModel): IssueBoardMotionState {
     val previous = remember { arrayOf<Map<String, IssueSnapshot>?>(null) }
     var retained by remember { mutableStateOf(IssueBoardMotionState()) }
-    val current = remember(summary.generatedAtMs, summary.repos) { summary.issueSnapshots() }
+    val current = remember(board.repos) { board.issueSnapshots() }
     val detected = previous[0]?.takeIf { it != current }?.let { old ->
         val currentIds = current.keys
         val moved = current.values.mapNotNull { next ->
@@ -36,7 +35,7 @@ internal fun rememberIssueBoardMotionState(summary: OpsSummaryDto): IssueBoardMo
                 put(next.ticketKey, IssueMotionCue("moved", old.moveDirectionTo(next)))
             }
         }
-        val nextExits = removed.map { it.exitSlot(summary.generatedAtMs) }
+        val nextExits = removed.map { it.exitSlot(board.generatedAtMs) }
         IssueBoardMotionState(nextCues, nextExits)
     } ?: IssueBoardMotionState()
     val motion = if (detected.active) detected else retained
@@ -86,10 +85,10 @@ internal data class IssueTicketSlot(
     val exiting: Boolean,
 )
 
-private fun OpsSummaryDto.issueSnapshots(): Map<String, IssueSnapshot> =
+private fun IssueBoardModel.issueSnapshots(): Map<String, IssueSnapshot> =
     repos.flatMap { repo ->
         issueLanes.flatMap { lane ->
-            lane.items(repo)
+            lane.items(repo.issues)
                 .mapIndexed { index, issue -> IssueSnapshot(repo.id, issue, issue.status, index) }
         }
     }.associateBy { it.key }

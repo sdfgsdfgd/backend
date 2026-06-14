@@ -1,8 +1,14 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import net.sdfgsdfg.data.model.IssueEventDto
 import net.sdfgsdfg.data.model.IssueItemDto
-import net.sdfgsdfg.data.model.RepoHealthDto
+import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.OpsSummaryDto
 
 internal const val issueMotionEnterMs = 2_400
 internal const val issueMotionExitMs = 1_800
@@ -18,12 +24,71 @@ internal const val issueLaneEmptyDropTopPx = 42f
 internal val issueEnterLabels = setOf("new", "moved")
 
 internal val issueLanes = listOf(
-    IssueLaneSpec("BLOCKED", "blocked", rose) { it.issues.blocked },
-    IssueLaneSpec("TODO", "todo", Color(0xFF8EA0B8)) { it.issues.todo },
-    IssueLaneSpec("WIP", "wip", cyan) { it.issues.wip },
-    IssueLaneSpec("REVIEW", "review", amber) { it.issues.review },
-    IssueLaneSpec("DONE", "done", green) { it.issues.done },
+    IssueLaneSpec("BLOCKED", "blocked", rose) { it.blocked },
+    IssueLaneSpec("TODO", "todo", Color(0xFF8EA0B8)) { it.todo },
+    IssueLaneSpec("WIP", "wip", cyan) { it.wip },
+    IssueLaneSpec("REVIEW", "review", amber) { it.review },
+    IssueLaneSpec("DONE", "done", green) { it.done },
 )
+
+@Immutable
+internal data class IssueBoardModel(
+    val generatedAtMs: Long,
+    val repos: List<IssueRepoModel>,
+    val events: List<IssueEventModel>,
+)
+
+@Immutable
+internal data class IssueRepoModel(
+    val id: String,
+    val name: String,
+    val role: String,
+    val note: String?,
+    val issues: IssueSummaryDto,
+)
+
+@Immutable
+internal data class IssueEventModel(
+    val repo: IssueRepoModel,
+    val event: IssueEventDto,
+)
+
+internal fun OpsSummaryDto.issueBoardModel(): IssueBoardModel {
+    val issueRepos = repos.map { repo ->
+        IssueRepoModel(
+            id = repo.id,
+            name = repo.name,
+            role = repo.role,
+            note = repo.note,
+            issues = repo.issues.copy(events = emptyList()),
+        )
+    }
+    return IssueBoardModel(
+        generatedAtMs = generatedAtMs,
+        repos = issueRepos,
+        events = repos.zip(issueRepos).flatMap { (repo, issueRepo) ->
+            repo.issues.events.map { IssueEventModel(issueRepo, it) }
+        },
+    )
+}
+
+@Composable
+internal fun rememberIssueBoardModel(summary: OpsSummaryDto): IssueBoardModel {
+    val previous = remember { arrayOf<IssueBoardModel?>(null) }
+    val next = remember(summary.generatedAtMs, summary.repos) {
+        val model = summary.issueBoardModel()
+        previous[0]?.let {
+            model.copy(
+                repos = if (it.repos == model.repos) it.repos else model.repos,
+                events = if (it.events == model.events) it.events else model.events,
+            )
+        } ?: model
+    }
+    SideEffect {
+        previous[0] = next
+    }
+    return next
+}
 
 internal fun IssueItemDto.motionKey(repoId: String) = "$repoId:$source:$id"
 
@@ -36,9 +101,9 @@ internal fun IssueItemDto.issueEditorText() = buildString {
 
 internal fun String.visibleNotes(description: String) = trim().takeIf { it.isNotBlank() && !description.contains(it) }
 
-internal fun RepoHealthDto.issueCode(issue: IssueItemDto) = issueCode(issue.id)
+internal fun IssueRepoModel.issueCode(issue: IssueItemDto) = issueCode(issue.id)
 
-internal fun RepoHealthDto.issueCode(id: String): String {
+internal fun IssueRepoModel.issueCode(id: String): String {
     val prefix = id.issueRepoPrefixOrNull() ?: issueRepoPrefix()
     id.issueNumberOrNull(prefix)?.let { return "$prefix-${it.toString().padStart(3, '0')}" }
     val index = issues.items.indexOfFirst { it.id == id }.coerceAtLeast(0)
@@ -47,7 +112,7 @@ internal fun RepoHealthDto.issueCode(id: String): String {
 
 internal fun String.issueSourceShort() = removeSuffix(" issues").removeSuffix(" Issues")
 
-private fun RepoHealthDto.issueRepoPrefix() = when (id) {
+private fun IssueRepoModel.issueRepoPrefix() = when (id) {
     "arcana" -> "ARC"
     "backend" -> "BCK"
     "server_py" -> "SPY"

@@ -74,9 +74,9 @@ internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
 
 
 internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
-internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (RepoHealthDto) -> Int) {
-    fun items(repo: RepoHealthDto): List<IssueItemDto> =
-        repo.issues.items.filter { it.status == status }.sortedByCreation()
+internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (IssueSummaryDto) -> Int) {
+    fun items(issues: IssueSummaryDto): List<IssueItemDto> =
+        issues.items.filter { it.status == status }.sortedByCreation()
 }
 internal fun List<IssueItemDto>.sortedByCreation() = sortedByDescending { it.createdAtMs ?: Long.MIN_VALUE }
 internal data class BadgeSpec(val label: String, val color: Color, val strong: Boolean = false)
@@ -378,8 +378,8 @@ internal fun StatusDot(status: OpsStatusDto) {
     PlatformStatusDot(status)
 }
 
-internal fun issueSourceBreakdown(repos: List<RepoHealthDto>): String = repos
-    .flatMap { it.issues.sources }
+internal fun issueSourceBreakdown(issues: List<IssueSummaryDto>): String = issues
+    .flatMap { it.sources }
     .groupBy { it.id }
     .mapNotNull { (id, sources) ->
         val active = sources.sumOf { it.active }
