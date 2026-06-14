@@ -1,5 +1,6 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
@@ -275,6 +276,7 @@ private fun IssueStaticLane(
                 borderAlpha = if (empty) 0.06f else 0.26f,
                 neutralBorderAlpha = if (empty) 0.04f else 0.17f,
             )
+            .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
