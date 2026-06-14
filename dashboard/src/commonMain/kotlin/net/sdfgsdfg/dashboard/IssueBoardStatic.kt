@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -184,8 +185,8 @@ private fun IssueDragOverlay(preview: IssueDragPreview?, generatedAtMs: Long, pa
             .graphicsLayer {
                 translationX = preview.bounds.left + preview.offset.x - panelBounds.left
                 translationY = preview.bounds.top + preview.offset.y - panelBounds.top
-                scaleX = 1.025f
-                scaleY = 1.025f
+                scaleX = 1f
+                scaleY = 1f
                 alpha = 0.98f
             },
         dragTone = 1f,
@@ -440,7 +441,14 @@ private fun IssueStaticTicket(
                             } else {
                                 drag.retargetPreview(dropTarget.status)
                                 dropTarget.commit()
-                                releaseOffset.animateTo(dropTarget.bounds.topLeft - bounds.topLeft, spring(dampingRatio = 0.58f, stiffness = 250f)) {
+                                var targetBounds = drag.placedTicket(dropTarget.ticketKey)
+                                repeat(3) {
+                                    if (targetBounds == null) {
+                                        withFrameNanos { }
+                                        targetBounds = drag.placedTicket(dropTarget.ticketKey)
+                                    }
+                                }
+                                releaseOffset.animateTo((targetBounds ?: dropTarget.bounds).topLeft - bounds.topLeft, spring(dampingRatio = 0.58f, stiffness = 250f)) {
                                     drag.movePreviewTo(value)
                                 }
                             }

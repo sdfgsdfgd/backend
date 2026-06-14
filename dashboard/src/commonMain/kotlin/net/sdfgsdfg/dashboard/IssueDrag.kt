@@ -23,6 +23,7 @@ internal data class IssueDragPreview(
 
 internal data class IssueDropTarget(
     val status: String,
+    val ticketKey: String,
     val bounds: Rect,
     val commit: () -> Unit,
 )
@@ -95,6 +96,8 @@ internal class IssueBoardDrag {
         ticketBounds[key] = bounds
     }
 
+    fun placedTicket(key: String): Rect? = ticketBounds[key]
+
     fun pruneTickets(repoId: String, status: String, activeKeys: Set<String>) {
         ticketBounds.keys
             .filter { it.startsWith("$repoId:") && it.endsWith(":$status") && it !in activeKeys }
@@ -113,7 +116,8 @@ internal class IssueBoardDrag {
             ?.let { (_, status) ->
                 targetBounds(current.repo, current.issue, status, releaseBounds)?.let { bounds ->
                     val key = current.issue.motionKey(current.repo.id)
-                    IssueDropTarget(status, bounds) {
+                    val ticketKey = current.issue.copy(status = status).ticketKey(current.repo.id)
+                    IssueDropTarget(status, ticketKey, bounds) {
                         optimisticStatuses = optimisticStatuses + (key to status)
                         onMoveIssue(current.repo, current.issue, status)
                     }
