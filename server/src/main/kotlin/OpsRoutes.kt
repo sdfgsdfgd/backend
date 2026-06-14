@@ -245,8 +245,8 @@ fun Route.opsRoutes(
             call.respondText(it.message ?: "Issue mutation failed", status = HttpStatusCode.BadRequest)
             return@post
         }
-        OpsSocketHub.broadcastSummary()
-        call.respond(summary())
+        OpsSocketHub.broadcastIssuePatch()
+        call.respond(summary().issuePatch())
     }
 
     get(serverPySelfTestArtifactUrl) {
@@ -976,7 +976,7 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
         "create" -> {
             val (title, description) = body.issueTextParts()
             val issue = buildIssueObject(
-                key = request.repo.nextIssueKey(issues),
+                key = request.repo.nextIssueKey(issues, eventsFile),
                 title = title,
                 status = status,
                 description = description,
@@ -1044,10 +1044,19 @@ private fun String?.issueTextParts(): Pair<String, String> {
     return title to lines.drop(1).joinToString("\n").trim()
 }
 
-private fun String.nextIssueKey(issues: List<JsonObject>): String {
+private fun String.nextIssueKey(issues: List<JsonObject>, eventsFile: File): String {
     val prefix = issueRepoPrefix()
-    val used = issues.mapNotNull { it.issueKey()?.issueNumber(prefix) }.toSet()
-    val number = generateSequence(1) { it + 1 }.first { it !in used }
+    val currentMax = issues.mapNotNull { it.issueKey()?.issueNumber(prefix) }.maxOrNull() ?: 0
+    val eventMax = runCatching {
+        eventsFile.takeIf { it.isFile }?.useLines { lines ->
+            lines.mapNotNull { line ->
+                runCatching {
+                    opsJson.parseToJsonElement(line).jsonObject["key"]?.jsonPrimitive?.contentOrNull?.issueNumber(prefix)
+                }.getOrNull()
+            }.maxOrNull()
+        } ?: 0
+    }.getOrDefault(0)
+    val number = maxOf(currentMax, eventMax) + 1
     return "$prefix-${number.toString().padStart(3, '0')}"
 }
 

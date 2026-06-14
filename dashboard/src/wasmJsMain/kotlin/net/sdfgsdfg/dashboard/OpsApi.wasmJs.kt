@@ -6,6 +6,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlin.js.ExperimentalWasmJsInterop
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
+import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import org.w3c.dom.MessageEvent
@@ -50,7 +51,7 @@ internal actual fun loadOpsSummary(
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun mutateIssue(
     request: IssueMutationRequestDto,
-    onLoaded: (OpsSummaryDto) -> Unit,
+    onLoaded: (OpsIssuePatchDto) -> Unit,
     onFailed: (String) -> Unit,
 ) {
     val body = dashboardJson.encodeToString(request)
@@ -60,7 +61,7 @@ internal actual fun mutateIssue(
         setRequestHeader("Content-Type", "application/json")
         onload = {
             if (status.toInt() in 200..299) {
-                runCatching { dashboardJson.decodeFromString<OpsSummaryDto>(responseText) }
+                runCatching { dashboardJson.decodeFromString<OpsIssuePatchDto>(responseText) }
                     .fold(onLoaded, { onFailed("POST $url decoded badly: ${it.message}") })
             } else {
                 onFailed("POST $url failed with $status ${responseText.take(120)}")

@@ -20,7 +20,7 @@ import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 
 @Composable
-internal fun Issues(
+internal fun IssuesNew(
     loadState: OpsLoadState,
     pageWidth: Dp,
     onIssuePatch: (OpsIssuePatchDto) -> Unit,
@@ -29,7 +29,6 @@ internal fun Issues(
     var editor by remember { mutableStateOf<IssueEditorState?>(null) }
     var archiveRepo by remember { mutableStateOf<IssueRepoModel?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val drag = remember { IssueBoardDrag() }
 
     fun mutate(request: IssueMutationRequestDto) = mutateIssue(
         request = request,
@@ -42,10 +41,7 @@ internal fun Issues(
             }
             error = null
         },
-        onFailed = {
-            drag.clearOptimisticMoves()
-            error = it
-        },
+        onFailed = { error = it },
     )
     LaunchedEffect(editor != null) {
         onEditorActiveChanged(editor != null)
@@ -53,38 +49,31 @@ internal fun Issues(
 
     when (loadState) {
         OpsLoadState.Loading -> WorkSurface(
-            title = "Issues",
-            detail = "Waiting for local .arcana/issues.json summaries before shaping lanes.",
+            title = "IssuesNew",
+            detail = "Static issue board baseline.",
             items = issueLanes.map { it.label },
         )
         is OpsLoadState.Failed -> WorkSurface(
-            title = "Issues Unavailable",
+            title = "IssuesNew Unavailable",
             detail = loadState.message,
             items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
         )
         is OpsLoadState.Ready -> Box(modifier = Modifier.fillMaxWidth()) {
             val board = rememberIssueBoardModel(loadState.summary)
-            val motion = rememberIssueBoardMotionState(board)
             val issueAgeNowMs = (board.generatedAtMs / 60_000L) * 60_000L
-            LaunchedEffect(motion.active) {
-                if (!motion.active) drag.clearOptimisticMoves()
-            }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                IssuePanels(
+                IssueStaticPanels(
                     repos = board.repos,
                     generatedAtMs = issueAgeNowMs,
                     pageWidth = pageWidth,
-                    motion = motion,
-                    drag = drag,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
                     onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
                     onDeleteIssue = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
                     onArchive = { archiveRepo = it },
-                    onMoveIssue = { repo, issue, status -> mutate(IssueMutationRequestDto("move", repo.id, id = issue.id, status = status)) },
                 )
-                IssueEventStrip(board)
+                IssueEventStrip(board, animatedFreshness = false, motionSafeSurface = true)
             }
         }
     }

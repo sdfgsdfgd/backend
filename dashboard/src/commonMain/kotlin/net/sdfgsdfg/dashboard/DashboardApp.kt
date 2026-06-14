@@ -36,20 +36,26 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 
 internal enum class DashboardTab(val label: String) {
     Home("Home"),
     Ci("CI Results"),
     Issues("Issues"),
+    IssuesNew("IssuesNew"),
     Arcana("Arcana Sessions");
 
     companion object {
         fun fromStoredName(value: String) = entries.firstOrNull { it.name == value }
     }
 }
+
+private fun OpsSummaryDto.issueTraceShape() =
+    "repos=${repos.joinToString { "${it.id}:${it.issues.active}/${it.issues.items.size}" }}"
 
 private fun String.runLifecycleLabel() = when {
     startsWith("deploy ") -> "deploy"
@@ -81,13 +87,16 @@ fun DashboardApp(
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
 
-    fun applySummary(summary: OpsSummaryDto) {
+    fun applySummary(summary: OpsSummaryDto, source: String = "summary") {
         val previous = lastAppliedSummary
         if (
             previous != null &&
             previous.repos == summary.repos &&
             summary.generatedAtMs - previous.generatedAtMs in -1_000L..1_000L
-        ) return
+        ) {
+            issueFrameTrace("summary-skip") { "source=$source generatedAt=${summary.generatedAtMs} ${summary.issueTraceShape()}" }
+            return
+        }
         activeRunEvents = activeRunEvents.filterNot { event ->
             val activeLabel = event.run.label.runLifecycleLabel()
             summary.repos.firstOrNull { it.id == event.repoId }
@@ -101,6 +110,22 @@ fun DashboardApp(
         }
         lastAppliedSummary = summary
         loadState = OpsLoadState.Ready(summary)
+        issueFrameTrace("summary-apply") { "source=$source generatedAt=${summary.generatedAtMs} ${summary.issueTraceShape()}" }
+    }
+
+    fun applyIssuePatch(patch: OpsIssuePatchDto, source: String = "issue-patch") {
+        val previous = lastAppliedSummary ?: return
+        val issuesByRepo = patch.repos.associateBy { it.id }
+        issueFrameTrace("patch-apply") { "source=$source generatedAt=${patch.generatedAtMs} repos=${patch.repos.joinToString { "${it.id}:${it.issues.active}/${it.issues.items.size}" }}" }
+        applySummary(
+            previous.copy(
+                generatedAtMs = patch.generatedAtMs,
+                repos = previous.repos.map { repo ->
+                    issuesByRepo[repo.id]?.let { repo.copy(issues = it.issues.mergeIssuePatch(repo.issues, patch.generatedAtMs)) } ?: repo
+                },
+            ),
+            source = "$source->merge",
+        )
     }
 
     DisposableEffect(Unit) {
@@ -117,7 +142,12 @@ fun DashboardApp(
                     val key = "${event.repoId}:${event.run.label.runLifecycleLabel()}"
                     activeRunEvents = (activeRunEvents.filterNot { "${it.repoId}:${it.run.label.runLifecycleLabel()}" == key } + event).takeLast(20)
                 }
-                message.summary?.let(::applySummary)
+                val summary = message.summary
+                val issuePatch = message.issuePatch
+                when {
+                    summary != null -> applySummary(summary, "socket-summary")
+                    issuePatch != null -> applyIssuePatch(issuePatch, "socket-issue-patch")
+                }
             },
             onState = { if (mounted[0]) socketState = it },
         )
@@ -127,7 +157,7 @@ fun DashboardApp(
         if (socketState.status != OpsSocketStatus.DISCONNECTED) return@LaunchedEffect
         while (true) {
             loadOpsSummary(
-                onLoaded = { if (mounted[0]) applySummary(it) },
+                onLoaded = { if (mounted[0]) applySummary(it, "poll-summary") },
                 onFailed = { if (mounted[0]) loadState = OpsLoadState.Failed(it.ifBlank { "Failed to load ops summary" }) },
             )
             delay(OPS_SUMMARY_REFRESH_MS)
@@ -139,7 +169,7 @@ fun DashboardApp(
         handledArrowShiftSignal = arrowShiftSignal
     }
     LaunchedEffect(selectedTab) {
-        if (selectedTab != DashboardTab.Issues) issueEditorActive = false
+        if (selectedTab != DashboardTab.Issues && selectedTab != DashboardTab.IssuesNew) issueEditorActive = false
     }
     val surfaceModifier = Modifier
         .fillMaxSize()
@@ -226,7 +256,21 @@ fun DashboardApp(
                                 Issues(
                                     loadState = loadState,
                                     pageWidth = pageWidth,
-                                    onSummary = ::applySummary,
+                                    onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
+                                    onEditorActiveChanged = { issueEditorActive = it },
+                                )
+                            }
+                        }
+                        DashboardTab.IssuesNew -> item(key = "issues-new") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                            ) {
+                                IssuesNew(
+                                    loadState = loadState,
+                                    pageWidth = pageWidth,
+                                    onIssuePatch = { applyIssuePatch(it, "issues-new-mutation") },
                                     onEditorActiveChanged = { issueEditorActive = it },
                                 )
                             }

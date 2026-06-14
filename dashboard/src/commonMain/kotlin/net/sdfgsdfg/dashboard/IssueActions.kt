@@ -33,7 +33,11 @@ import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.IssueEventDto
 
 @Composable
-internal fun IssueEventStrip(board: IssueBoardModel) {
+internal fun IssueEventStrip(
+    board: IssueBoardModel,
+    animatedFreshness: Boolean = true,
+    motionSafeSurface: Boolean = false,
+) {
     val events = remember(board.events) {
         board.events
             .sortedByDescending { it.event.tsMs ?: 0L }
@@ -41,11 +45,12 @@ internal fun IssueEventStrip(board: IssueBoardModel) {
     }
     if (events.isEmpty()) return
     val shape = RoundedCornerShape(8.dp)
+    val surface = Modifier.fillMaxWidth().let {
+        if (motionSafeSurface) it.motionSurface(shape, cyan, borderAlpha = 0.22f)
+        else it.glassSurface(shape, cyan, glowAlpha = 0.05f, borderAlpha = 0.22f)
+    }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(shape, cyan, glowAlpha = 0.05f, borderAlpha = 0.22f)
-            .padding(13.dp),
+        modifier = surface.padding(13.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -54,14 +59,14 @@ internal fun IssueEventStrip(board: IssueBoardModel) {
         }
         events.forEach { item ->
             key("${item.repo.id}:${item.event.eventId}") {
-                IssueEventRow(item.repo, item.event, board.generatedAtMs)
+                IssueEventRow(item.repo, item.event, board.generatedAtMs, animatedFreshness)
             }
         }
     }
 }
 
 @Composable
-private fun IssueEventRow(repo: IssueRepoModel, event: IssueEventDto, generatedAtMs: Long) {
+private fun IssueEventRow(repo: IssueRepoModel, event: IssueEventDto, generatedAtMs: Long, animatedFreshness: Boolean) {
     val color = issueStatusColor(event.status)
     Row(
         modifier = Modifier
@@ -73,7 +78,7 @@ private fun IssueEventRow(repo: IssueRepoModel, event: IssueEventDto, generatedA
         horizontalArrangement = Arrangement.spacedBy(9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FreshRail(event.tsMs, generatedAtMs, height = 34.dp)
+        FreshRail(event.tsMs, generatedAtMs, height = 34.dp, animated = animatedFreshness)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${repo.name} · ${repo.issueCode(event.id)}", color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)

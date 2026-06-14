@@ -15,9 +15,25 @@ data class OpsSocketMessageDto(
     @SerialName("client_timestamp") val clientTimestamp: Long? = null,
     @SerialName("server_timestamp") val serverTimestamp: Long? = null,
     val summary: OpsSummaryDto? = null,
+    @SerialName("issue_patch") val issuePatch: OpsIssuePatchDto? = null,
     @SerialName("run_event") val runEvent: OpsRunEventDto? = null,
     val message: String? = null,
 )
+
+@Serializable
+data class OpsIssuePatchDto(
+    @SerialName("generated_at_ms") val generatedAtMs: Long,
+    val repos: List<RepoIssuePatchDto>,
+)
+
+@Serializable
+data class RepoIssuePatchDto(
+    val id: String,
+    val issues: IssueSummaryDto,
+)
+
+fun IssueItemDto.isFreshForIssuePatch(nowMs: Long) =
+    listOfNotNull(updatedAtMs, createdAtMs, completedAtMs).maxOrNull()?.let { nowMs - it in 0..15_000L } == true
 
 @Serializable
 data class OpsRunEventDto(

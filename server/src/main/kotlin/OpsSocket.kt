@@ -22,16 +22,21 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.RepoIssuePatchDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.data.model.isFreshForIssuePatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 
 private const val opsSocketRefreshMs = 45_000L
 private const val opsSocketBroadcastDebounceMs = 120L
+private const val issuePatchEventLimit = 6
 
 @OptIn(FlowPreview::class)
 internal object OpsSocketHub {
@@ -45,6 +50,10 @@ internal object OpsSocketHub {
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    private val issuePatchBroadcastRequests = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
@@ -55,6 +64,13 @@ internal object OpsSocketHub {
                 .debounce(opsSocketBroadcastDebounceMs)
                 .collect {
                     if (clients.isNotEmpty()) broadcastSummaryNow()
+                }
+        }
+        scope.launch {
+            issuePatchBroadcastRequests
+                .debounce(opsSocketBroadcastDebounceMs)
+                .collect {
+                    if (clients.isNotEmpty()) broadcastIssuePatchNow()
                 }
         }
     }
@@ -90,6 +106,10 @@ internal object OpsSocketHub {
 
     fun broadcastSummary() {
         if (clients.isNotEmpty()) summaryBroadcastRequests.tryEmit(Unit)
+    }
+
+    fun broadcastIssuePatch() {
+        if (clients.isNotEmpty()) issuePatchBroadcastRequests.tryEmit(Unit)
     }
 
     fun broadcastRunStarted(repoId: String, run: TestRunSummaryDto) {
@@ -142,8 +162,13 @@ internal object OpsSocketHub {
     }
 
     private suspend fun broadcastSummaryNow() {
-        val message = summaryMessage() ?: return
-        broadcastNow(message)
+        val summary = currentSummary() ?: return
+        broadcastNow(summary.summaryMessage())
+    }
+
+    private suspend fun broadcastIssuePatchNow() {
+        val summary = currentSummary() ?: return
+        broadcastNow(summary.issuePatchMessage())
     }
 
     private suspend fun broadcastNow(message: OpsSocketMessageDto) {
@@ -154,19 +179,33 @@ internal object OpsSocketHub {
     }
 
     private suspend fun sendSummary(client: Client) {
-        summaryMessage()?.let { runCatching { client.send(it) }.onFailure { clients -= client } }
-    }
-
-    private suspend fun summaryMessage() = withContext(Dispatchers.IO) {
-        summaryProvider?.let {
-            OpsSocketMessageDto("summary", serverTimestamp = System.currentTimeMillis(), summary = it())
+        currentSummary()?.let {
+            runCatching { client.send(it.summaryMessage()) }.onFailure { clients -= client }
         }
     }
+
+    private suspend fun currentSummary() = withContext(Dispatchers.IO) { summaryProvider?.invoke() }
 
     private suspend fun Client.send(message: OpsSocketMessageDto) = sendLock.withLock {
         session.send(json.encodeToString(message))
     }
 }
+
+private fun OpsSummaryDto.summaryMessage() =
+    OpsSocketMessageDto("summary", serverTimestamp = System.currentTimeMillis(), summary = this)
+
+private fun OpsSummaryDto.issuePatchMessage() =
+    OpsSocketMessageDto("issue_patch", serverTimestamp = System.currentTimeMillis(), issuePatch = issuePatch())
+
+internal fun OpsSummaryDto.issuePatch() = OpsIssuePatchDto(
+    generatedAtMs = generatedAtMs,
+    repos = repos.map { RepoIssuePatchDto(it.id, it.issues.issuePatch(generatedAtMs)) },
+)
+
+private fun IssueSummaryDto.issuePatch(nowMs: Long) = copy(
+    items = items.map { if (it.isFreshForIssuePatch(nowMs)) it else it.copy(description = "", notes = "") },
+    events = events.sortedByDescending { it.tsMs ?: 0L }.take(issuePatchEventLimit),
+)
 
 private fun OpsRunEventDto.activeKey() = "$repoId:${run.label.lifecycleLabel()}"
 

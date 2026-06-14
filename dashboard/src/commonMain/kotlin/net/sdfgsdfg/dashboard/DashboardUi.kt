@@ -221,10 +221,10 @@ internal fun RunTail(run: TestRunSummaryDto, generatedAtMs: Long, label: String 
 }
 
 @Composable
-internal fun FreshRail(timestampMs: Long?, generatedAtMs: Long, height: Dp = 42.dp) {
+internal fun FreshRail(timestampMs: Long?, generatedAtMs: Long, height: Dp = 42.dp, animated: Boolean = true) {
     val recent = timestampMs?.let { generatedAtMs - it in 0..(15 * 60 * 1_000) } == true
     val color = timestampMs?.ageColor(generatedAtMs) ?: Color(0xFF6F7A89)
-    val pulse = if (recent) {
+    val pulse = if (recent && animated) {
         val transition = rememberInfiniteTransition(label = "fresh-rail")
         val value by transition.animateFloat(
             initialValue = 0.45f,
@@ -500,6 +500,29 @@ internal fun Modifier.glassSurface(
             color = Color.Black,
             alpha = 0.42f,
         ),
+    )
+    .border(BorderStroke(1.dp, Color.White.copy(alpha = neutralBorderAlpha)), shape)
+    .border(BorderStroke(1.dp, accent.copy(alpha = borderAlpha)), shape)
+
+internal fun Modifier.motionSurface(
+    shape: RoundedCornerShape,
+    accent: Color,
+    borderAlpha: Float,
+    neutralBorderAlpha: Float = 0.12f,
+): Modifier = this
+    .background(Color.Black.copy(alpha = 0.56f), shape)
+    .background(
+        Brush.linearGradient(
+            listOf(
+                Color.White.copy(alpha = 0.08f),
+                Color.Transparent,
+                accent.copy(alpha = 0.045f),
+                Color.Black.copy(alpha = 0.14f),
+            ),
+            start = Offset(-90f, -60f),
+            end = Offset(520f, 700f),
+        ),
+        shape,
     )
     .border(BorderStroke(1.dp, Color.White.copy(alpha = neutralBorderAlpha)), shape)
     .border(BorderStroke(1.dp, accent.copy(alpha = borderAlpha)), shape)

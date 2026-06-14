@@ -2,6 +2,7 @@ package net.sdfgsdfg.dashboard
 
 import kotlinx.serialization.encodeToString
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
+import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import java.awt.Desktop
@@ -39,7 +40,13 @@ internal actual fun openOpsUrl(url: String) {
     }
 }
 
-internal actual fun readDashboardPref(key: String): String? = null
+internal actual fun readDashboardPref(key: String): String? {
+    val envKey = key.uppercase().replace('.', '_')
+    return System.getProperty(key)
+        ?: System.getProperty("dashboard.$key")
+        ?: System.getenv(envKey)
+        ?: System.getenv("DASHBOARD_$envKey")
+}
 
 internal actual fun writeDashboardPref(key: String, value: String?) {
 }
@@ -131,7 +138,7 @@ internal actual fun connectOpsSocket(
 
 internal actual fun mutateIssue(
     request: IssueMutationRequestDto,
-    onLoaded: (OpsSummaryDto) -> Unit,
+    onLoaded: (OpsIssuePatchDto) -> Unit,
     onFailed: (String) -> Unit,
 ) {
     Thread({
@@ -146,7 +153,7 @@ internal actual fun mutateIssue(
                 HttpResponse.BodyHandlers.ofString(),
             )
             if (response.statusCode() !in 200..299) error("POST $endpoint/api/ops/issues failed with ${response.statusCode()}")
-            dashboardJson.decodeFromString<OpsSummaryDto>(response.body())
+            dashboardJson.decodeFromString<OpsIssuePatchDto>(response.body())
         }.fold(
             onSuccess = { SwingUtilities.invokeLater { onLoaded(it) } },
             onFailure = { SwingUtilities.invokeLater { onFailed(it.message ?: "Issue mutation failed") } },
