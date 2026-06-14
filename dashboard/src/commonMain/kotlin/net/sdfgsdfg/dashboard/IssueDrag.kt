@@ -12,13 +12,18 @@ private data class IssueDragState(
     val repo: IssueRepoModel,
     val issue: IssueItemDto,
     val fromStatus: String,
+    val session: IssueDragSession,
 )
+
+internal data class IssueDragSession(val id: Int)
 
 internal data class IssueDragPreview(
     val repo: IssueRepoModel,
     val issue: IssueItemDto,
     val bounds: Rect,
     val offset: Offset = Offset.Zero,
+    val scale: Float = 1f,
+    val panelAnchored: Boolean = false,
 )
 
 internal data class IssueDropTarget(
@@ -34,46 +39,66 @@ internal class IssueBoardDrag {
     var preview by mutableStateOf<IssueDragPreview?>(null)
         private set
 
+    private var nextSessionId = 0
+    private var previewSession: IssueDragSession? = null
     private var active: IssueDragState? = null
     private var pointer = Offset.Zero
     private val laneBounds = mutableMapOf<String, Rect>()
     private val ticketBounds = mutableMapOf<String, Rect>()
 
-    fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset) {
-        begin(repo, issue, pointer, null)
-    }
-
-    fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset, bounds: Rect?) {
-        active = IssueDragState(repo, issue, issue.status)
+    fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset, bounds: Rect?): IssueDragSession {
+        val session = IssueDragSession(++nextSessionId)
+        active = IssueDragState(repo, issue, issue.status, session)
         this.pointer = pointer
+        previewSession = session
         preview = bounds?.let { IssueDragPreview(repo, issue, it) }
+        return session
     }
 
-    fun moveBy(delta: Offset) {
+    fun moveBy(session: IssueDragSession, delta: Offset) {
+        if (active?.session != session) return
         pointer += delta
-        preview = preview?.let { it.copy(offset = it.offset + delta) }
+        if (previewSession == session) preview = preview?.let { it.copy(offset = it.offset + delta) }
     }
 
-    fun movePreviewTo(offset: Offset) {
-        preview = preview?.copy(offset = offset)
+    fun movePreviewTo(session: IssueDragSession, offset: Offset) {
+        if (previewSession == session) preview = preview?.copy(offset = offset)
     }
 
-    fun retargetPreview(status: String) {
-        preview = preview?.let { it.copy(issue = it.issue.copy(status = status)) }
+    fun scalePreviewTo(session: IssueDragSession, scale: Float) {
+        if (previewSession == session) preview = preview?.copy(scale = scale)
     }
 
-    fun clearPreview() {
+    fun anchorPreviewToPanel(session: IssueDragSession, panelBounds: Rect): Rect? {
+        val current = preview?.takeIf { previewSession == session } ?: return null
+        val localBounds = current.bounds.offsetBy(Offset(current.offset.x - panelBounds.left, current.offset.y - panelBounds.top))
+        preview = current.copy(bounds = localBounds, offset = Offset.Zero, panelAnchored = true)
+        return localBounds
+    }
+
+    fun retargetPreview(session: IssueDragSession, status: String) {
+        if (previewSession == session) preview = preview?.let { it.copy(issue = it.issue.copy(status = status)) }
+    }
+
+    private fun clearPreview() {
         preview = null
+        previewSession = null
     }
 
-    fun cancel() {
-        end(clearPreview = true)
+    fun clearPreview(session: IssueDragSession) {
+        if (previewSession == session) clearPreview()
     }
 
-    private fun end(clearPreview: Boolean) {
-        active = null
-        pointer = Offset.Zero
-        if (clearPreview) preview = null
+    fun cancel(session: IssueDragSession) {
+        end(session, clear = true)
+    }
+
+    private fun end(session: IssueDragSession, clear: Boolean) {
+        if (active?.session == session) {
+            active = null
+            pointer = Offset.Zero
+        }
+        if (clear && previewSession == session) clearPreview()
     }
 
     fun clearOptimisticMoves() {
@@ -85,8 +110,6 @@ internal class IssueBoardDrag {
             .map { issue -> issue.copy(status = optimisticStatuses[issue.motionKey(repo.id)] ?: issue.status) }
             .filter { it.status == lane.status }
             .sortedByCreation()
-
-    fun suppressesMotion(key: String) = key in optimisticStatuses
 
     fun placeLane(key: String, bounds: Rect) {
         if (laneBounds[key] != bounds) laneBounds[key] = bounds
@@ -105,11 +128,12 @@ internal class IssueBoardDrag {
     }
 
     fun dropTarget(
+        session: IssueDragSession,
         releaseBounds: Rect,
         onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
         keepPreview: Boolean = false,
     ): IssueDropTarget? {
-        val current = active ?: return null
+        val current = active?.takeIf { it.session == session } ?: return null
         val target = laneBounds.targetAt(pointer) ?: laneBounds.targetAt(releaseBounds.center)
         val dropTarget = target
             ?.takeIf { (repoId, status) -> repoId == current.repo.id && status != current.fromStatus }
@@ -123,7 +147,7 @@ internal class IssueBoardDrag {
                     }
                 }
             }
-        end(clearPreview = !keepPreview)
+        end(session, clear = !keepPreview)
         return dropTarget
     }
 

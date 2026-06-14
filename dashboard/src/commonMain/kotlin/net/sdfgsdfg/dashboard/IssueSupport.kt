@@ -11,20 +11,9 @@ import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.isFreshForIssuePatch
 
-internal const val issueMotionEnterMs = 2_400
-internal const val issueMotionExitMs = 1_800
-internal const val issueMotionExitRetainMs = 1_920L
-internal const val issueMotionHoldMs = 3_000L
-internal const val issueMotionFlashInMs = 450
-internal const val issueMotionFlashOutMs = 1_800
-internal const val issueMotionMoveSlideMs = 680
-internal const val issueDropReleaseMs = 760
 internal const val issueCardGapPx = 6f
 internal const val issueLanePaddingPx = 8f
 internal const val issueLaneEmptyDropTopPx = 42f
-internal const val issuePlacementCrossAxisTolerancePx = 48f
-internal const val issuePlacementMaxDeltaPx = 720f
-internal val issueEnterLabels = setOf("new", "moved")
 
 internal val issueLanes = listOf(
     IssueLaneSpec("BLOCKED", "blocked", rose) { it.blocked },

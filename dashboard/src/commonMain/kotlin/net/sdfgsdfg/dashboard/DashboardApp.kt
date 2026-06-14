@@ -46,11 +46,10 @@ internal enum class DashboardTab(val label: String) {
     Home("Home"),
     Ci("CI Results"),
     Issues("Issues"),
-    IssuesNew("IssuesNew"),
     Arcana("Arcana Sessions");
 
     companion object {
-        fun fromStoredName(value: String) = entries.firstOrNull { it.name == value }
+        fun fromStoredName(value: String) = if (value == "IssuesNew") Issues else entries.firstOrNull { it.name == value }
     }
 }
 
@@ -169,7 +168,7 @@ fun DashboardApp(
         handledArrowShiftSignal = arrowShiftSignal
     }
     LaunchedEffect(selectedTab) {
-        if (selectedTab != DashboardTab.Issues && selectedTab != DashboardTab.IssuesNew) issueEditorActive = false
+        if (selectedTab != DashboardTab.Issues) issueEditorActive = false
     }
     val surfaceModifier = Modifier
         .fillMaxSize()
@@ -257,20 +256,6 @@ fun DashboardApp(
                                     loadState = loadState,
                                     pageWidth = pageWidth,
                                     onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
-                                    onEditorActiveChanged = { issueEditorActive = it },
-                                )
-                            }
-                        }
-                        DashboardTab.IssuesNew -> item(key = "issues-new") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp),
-                            ) {
-                                IssuesNew(
-                                    loadState = loadState,
-                                    pageWidth = pageWidth,
-                                    onIssuePatch = { applyIssuePatch(it, "issues-new-mutation") },
                                     onEditorActiveChanged = { issueEditorActive = it },
                                 )
                             }

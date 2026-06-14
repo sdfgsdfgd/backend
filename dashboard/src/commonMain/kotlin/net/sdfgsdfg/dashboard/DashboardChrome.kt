@@ -316,7 +316,6 @@ private fun DashboardTab.navWidth(compact: Boolean): Dp = when (this) {
     DashboardTab.Home -> if (compact) 70.dp else 80.dp
     DashboardTab.Ci -> if (compact) 96.dp else 110.dp
     DashboardTab.Issues -> if (compact) 78.dp else 90.dp
-    DashboardTab.IssuesNew -> if (compact) 104.dp else 118.dp
     DashboardTab.Arcana -> if (compact) 130.dp else 154.dp
 }
 

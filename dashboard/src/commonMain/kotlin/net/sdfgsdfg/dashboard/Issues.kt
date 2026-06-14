@@ -35,6 +35,7 @@ internal fun Issues(
         request = request,
         onLoaded = { patch ->
             onIssuePatch(patch)
+            drag.clearOptimisticMoves()
             archiveRepo = archiveRepo?.let { open ->
                 patch.repos.firstOrNull { it.id == open.id }?.let { repoPatch ->
                     open.copy(issues = repoPatch.issues.mergeIssuePatch(open.issues, patch.generatedAtMs))
@@ -64,18 +65,13 @@ internal fun Issues(
         )
         is OpsLoadState.Ready -> Box(modifier = Modifier.fillMaxWidth()) {
             val board = rememberIssueBoardModel(loadState.summary)
-            val motion = rememberIssueBoardMotionState(board)
             val issueAgeNowMs = (board.generatedAtMs / 60_000L) * 60_000L
-            LaunchedEffect(motion.active) {
-                if (!motion.active) drag.clearOptimisticMoves()
-            }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 error?.let { Text(it, color = rose, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 IssuePanels(
                     repos = board.repos,
                     generatedAtMs = issueAgeNowMs,
                     pageWidth = pageWidth,
-                    motion = motion,
                     drag = drag,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
@@ -84,7 +80,7 @@ internal fun Issues(
                     onArchive = { archiveRepo = it },
                     onMoveIssue = { repo, issue, status -> mutate(IssueMutationRequestDto("move", repo.id, id = issue.id, status = status)) },
                 )
-                IssueEventStrip(board)
+                IssueEventStrip(board, animatedFreshness = false, motionSafeSurface = true)
             }
         }
     }
