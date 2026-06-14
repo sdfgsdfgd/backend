@@ -63,6 +63,10 @@ import net.sdfgsdfg.dashboard.tools.issueFrameTraceEnabled
 import net.sdfgsdfg.dashboard.tools.issueJfrProfile
 import net.sdfgsdfg.dashboard.tools.issueProfileEnabled
 
+private val issueLaneStackBreakpoint = 1180.dp
+private val issueLaneStackedBodyMaxHeight = 560.dp
+private val issueLaneWideBodyMaxHeight = 820.dp
+
 @Composable
 internal fun IssueStaticPanels(
     repos: List<IssueRepoModel>,
@@ -107,6 +111,7 @@ private fun IssueStaticPanel(
         modifier = Modifier
             .fillMaxWidth()
             .motionSurface(shape, if (active == 0) green else amber, borderAlpha = 0.26f)
+            .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
             .onGloballyPositioned { panelBounds = it.boundsInRoot() },
     ) {
         Column(
@@ -136,8 +141,9 @@ private fun IssueStaticPanel(
                     }
                 }
             }
-            val laneBodyHeight = if (pageWidth < 1180.dp) 420.dp else 560.dp
-            if (pageWidth < 1180.dp) {
+            val stacked = pageWidth < issueLaneStackBreakpoint
+            val laneBodyHeight = if (stacked) issueLaneStackedBodyMaxHeight else issueLaneWideBodyMaxHeight
+            if (stacked) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     issueLanes.forEach { lane ->
                         key(lane.status) {
