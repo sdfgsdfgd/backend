@@ -34,6 +34,8 @@ import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.dashboard.tools.FrameWindowProfiler
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 import net.sdfgsdfg.dashboard.tools.issueFrameTraceEnabled
+import net.sdfgsdfg.dashboard.tools.issueJfrProfile
+import net.sdfgsdfg.dashboard.tools.issueProfileEnabled
 
 @Composable
 internal fun IssueStaticPanels(
@@ -148,13 +150,14 @@ private fun IssueStaticLane(
     var removalTraceDetail by remember { mutableStateOf("") }
     var removalTraceMovedKeys by remember { mutableStateOf(emptySet<String>()) }
     val traceEnabled = issueFrameTraceEnabled()
+    val profileEnabled = issueProfileEnabled()
     LaunchedEffect(headKey) {
         if (headKey != null) listState.animateScrollToItem(0)
     }
-    LaunchedEffect(ticketKeys, countBackfill, traceEnabled) {
+    LaunchedEffect(ticketKeys, countBackfill, profileEnabled) {
         val previous = previousTraceKeys[0]
         previousTraceKeys[0] = ticketKeys
-        if (!traceEnabled || previous == null) return@LaunchedEffect
+        if (!profileEnabled || previous == null) return@LaunchedEffect
 
         val previousSet = previous.toSet()
         val currentSet = ticketKeys.toSet()
@@ -179,9 +182,10 @@ private fun IssueStaticLane(
     }
     removalTraceKey?.let { key ->
         FrameWindowProfiler(
-            enabled = issueFrameTraceEnabled(),
+            enabled = issueProfileEnabled(),
             key = key,
             windowMs = 2_200L,
+            jfr = issueJfrProfile("remove", removalTraceDetail),
             onSevereFrame = { sample ->
                 issueFrameTrace("remove-frame-skip") {
                     "$removalTraceDetail frame=${sample.frame} delta=${sample.deltaMs}ms"

@@ -92,6 +92,8 @@ import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 import net.sdfgsdfg.dashboard.tools.issueFrameTraceEnabled
+import net.sdfgsdfg.dashboard.tools.issueJfrProfile
+import net.sdfgsdfg.dashboard.tools.issueProfileEnabled
 import net.sdfgsdfg.dashboard.tools.profileFrameWindow
 
 @Composable
@@ -219,9 +221,10 @@ internal fun IssueTicketMotion(
     }
     val traceModifier = phase?.let {
         Modifier.profileFrameWindow(
-            enabled = issueFrameTraceEnabled(),
+            enabled = issueProfileEnabled(),
             key = "$slotKey:$it:$durationMs",
             windowMs = durationMs + 220L,
+            jfr = issueJfrProfile("ticket-$it", "key=$slotKey issue=$issueId phase=$it duration=${durationMs}ms"),
             onSevereFrame = { sample ->
                 issueFrameTrace("ticket-frame-skip") {
                     "key=$slotKey issue=$issueId phase=$it delta=${sample.deltaMs}ms frame=${sample.frame}"
