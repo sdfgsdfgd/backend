@@ -22,6 +22,7 @@ internal data class IssueDragPreview(
 )
 
 internal data class IssueDropTarget(
+    val status: String,
     val bounds: Rect,
     val commit: () -> Unit,
 )
@@ -54,6 +55,10 @@ internal class IssueBoardDrag {
 
     fun movePreviewTo(offset: Offset) {
         preview = preview?.copy(offset = offset)
+    }
+
+    fun retargetPreview(status: String) {
+        preview = preview?.let { it.copy(issue = it.issue.copy(status = status)) }
     }
 
     fun clearPreview() {
@@ -108,7 +113,7 @@ internal class IssueBoardDrag {
             ?.let { (_, status) ->
                 targetBounds(current.repo, current.issue, status, releaseBounds)?.let { bounds ->
                     val key = current.issue.motionKey(current.repo.id)
-                    IssueDropTarget(bounds) {
+                    IssueDropTarget(status, bounds) {
                         optimisticStatuses = optimisticStatuses + (key to status)
                         onMoveIssue(current.repo, current.issue, status)
                     }

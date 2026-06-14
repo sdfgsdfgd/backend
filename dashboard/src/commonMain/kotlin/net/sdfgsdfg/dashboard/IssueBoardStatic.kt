@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.IssueItemDto
@@ -107,6 +108,7 @@ private fun IssueStaticPanel(
     val source = issueSourceBreakdown(listOf(repo.issues))
     val shape = RoundedCornerShape(8.dp)
     var panelBounds by remember { mutableStateOf<Rect?>(null) }
+    val motionScope = rememberCoroutineScope()
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -147,7 +149,7 @@ private fun IssueStaticPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     issueLanes.forEach { lane ->
                         key(lane.status) {
-                            IssueStaticLane(lane, repo, generatedAtMs, laneBodyHeight, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.fillMaxWidth())
+                            IssueStaticLane(lane, repo, generatedAtMs, laneBodyHeight, drag, motionScope, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -155,7 +157,7 @@ private fun IssueStaticPanel(
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     issueLanes.forEach { lane ->
                         key(lane.status) {
-                            IssueStaticLane(lane, repo, generatedAtMs, laneBodyHeight, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.weight(1f))
+                            IssueStaticLane(lane, repo, generatedAtMs, laneBodyHeight, drag, motionScope, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onMoveIssue, modifier = Modifier.weight(1f))
                         }
                     }
                 }
@@ -170,6 +172,7 @@ private fun IssueDragOverlay(preview: IssueDragPreview?, generatedAtMs: Long, pa
     if (preview == null || panelBounds == null) return
     val density = LocalDensity.current
     val lane = issueLanes.firstOrNull { it.status == preview.issue.status } ?: return
+    val editable = preview.issue.source == "arcana"
     IssueTicketCard(
         lane = lane,
         issue = preview.issue,
@@ -188,6 +191,8 @@ private fun IssueDragOverlay(preview: IssueDragPreview?, generatedAtMs: Long, pa
         dragTone = 1f,
         motionFlash = false,
         animatedFreshness = false,
+        onArchive = if (editable && preview.issue.status != "trash") ({}) else null,
+        onDelete = if (editable) ({}) else null,
     )
 }
 
@@ -198,6 +203,7 @@ private fun IssueStaticLane(
     generatedAtMs: Long,
     maxBodyHeight: Dp,
     drag: IssueBoardDrag,
+    motionScope: CoroutineScope,
     onCreate: (IssueRepoModel, String) -> Unit,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
@@ -320,6 +326,7 @@ private fun IssueStaticLane(
                         .issueLayoutTrace(traceEnabled, issue.ticketKey(repo.id), removalTraceMovedKeys, traceMeasureCounts, tracePlaceCounts)
                         .animateItem(),
                     drag = drag,
+                    motionScope = motionScope,
                     onEdit = onEdit,
                     onArchiveIssue = onArchiveIssue,
                     onDeleteIssue = onDeleteIssue,
@@ -344,6 +351,7 @@ private fun IssueStaticTicket(
     generatedAtMs: Long,
     modifier: Modifier,
     drag: IssueBoardDrag,
+    motionScope: CoroutineScope,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
     onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
@@ -352,7 +360,7 @@ private fun IssueStaticTicket(
     val ticketKey = issue.ticketKey(repo.id)
     var dragging by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    val scope = rememberCoroutineScope()
+    val pickupOffset = remember(ticketKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
     val releaseOffset = remember(ticketKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
     val motionJob = remember(ticketKey) { arrayOf<Job?>(null) }
     val boundsRef = remember { arrayOf<Rect?>(null) }
@@ -379,8 +387,16 @@ private fun IssueStaticTicket(
                     dragging = true
                     dragOffset = Offset.Zero
                     motionJob[0]?.cancel()
-                    motionJob[0] = scope.launch { releaseOffset.snapTo(Offset.Zero) }
+                    val center = Offset(bounds.size.width / 2f, bounds.size.height / 2f)
+                    val pickupTarget = down.position - center
                     drag.begin(repo, issue, bounds.topLeft + down.position, bounds)
+                    motionJob[0] = motionScope.launch {
+                        releaseOffset.snapTo(Offset.Zero)
+                        pickupOffset.snapTo(Offset.Zero)
+                        pickupOffset.animateTo(pickupTarget, spring(dampingRatio = 0.42f, stiffness = 220f)) {
+                            drag.movePreviewTo(dragOffset + value)
+                        }
+                    }
                     try {
                         while (true) {
                             val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
@@ -389,6 +405,7 @@ private fun IssueStaticTicket(
                                 moved = true
                                 dragOffset += delta
                                 drag.moveBy(delta)
+                                drag.movePreviewTo(dragOffset + pickupOffset.value)
                                 change.consume()
                             }
                             if (change.changedToUpIgnoreConsumed()) {
@@ -397,28 +414,35 @@ private fun IssueStaticTicket(
                             }
                         }
                     } finally {
-                        val settleFrom = dragOffset
+                        val settleFrom = dragOffset + pickupOffset.value
                         if (!moved) {
+                            motionJob[0]?.cancel()
                             dragging = false
                             dragOffset = Offset.Zero
                             drag.cancel()
+                            motionJob[0] = motionScope.launch {
+                                pickupOffset.snapTo(Offset.Zero)
+                                releaseOffset.snapTo(Offset.Zero)
+                            }
                             return@awaitEachGesture
                         }
                         val dropTarget = drag.dropTarget(bounds.offsetBy(settleFrom), onMoveIssue, keepPreview = true)
                         motionJob[0]?.cancel()
-                        motionJob[0] = scope.launch {
+                        motionJob[0] = motionScope.launch {
                             releaseOffset.snapTo(settleFrom)
+                            pickupOffset.snapTo(Offset.Zero)
                             dragOffset = Offset.Zero
                             dragging = false
                             if (dropTarget == null) {
-                                releaseOffset.animateTo(Offset.Zero, spring(dampingRatio = 0.62f, stiffness = 360f)) {
+                                releaseOffset.animateTo(Offset.Zero, spring(dampingRatio = 0.54f, stiffness = 260f)) {
                                     drag.movePreviewTo(value)
                                 }
                             } else {
-                                releaseOffset.animateTo(dropTarget.bounds.topLeft - bounds.topLeft, tween(issueDropReleaseMs, easing = FastOutSlowInEasing)) {
+                                drag.retargetPreview(dropTarget.status)
+                                dropTarget.commit()
+                                releaseOffset.animateTo(dropTarget.bounds.topLeft - bounds.topLeft, spring(dampingRatio = 0.58f, stiffness = 250f)) {
                                     drag.movePreviewTo(value)
                                 }
-                                dropTarget.commit()
                             }
                             drag.clearPreview()
                         }
