@@ -14,6 +14,13 @@ private data class IssueDragState(
     val fromStatus: String,
 )
 
+internal data class IssueDragPreview(
+    val repo: IssueRepoModel,
+    val issue: IssueItemDto,
+    val bounds: Rect,
+    val offset: Offset = Offset.Zero,
+)
+
 internal data class IssueDropTarget(
     val bounds: Rect,
     val commit: () -> Unit,
@@ -22,6 +29,8 @@ internal data class IssueDropTarget(
 internal class IssueBoardDrag {
     var optimisticStatuses by mutableStateOf(emptyMap<String, String>())
         private set
+    var preview by mutableStateOf<IssueDragPreview?>(null)
+        private set
 
     private var active: IssueDragState? = null
     private var pointer = Offset.Zero
@@ -29,17 +38,36 @@ internal class IssueBoardDrag {
     private val ticketBounds = mutableMapOf<String, Rect>()
 
     fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset) {
+        begin(repo, issue, pointer, null)
+    }
+
+    fun begin(repo: IssueRepoModel, issue: IssueItemDto, pointer: Offset, bounds: Rect?) {
         active = IssueDragState(repo, issue, issue.status)
         this.pointer = pointer
+        preview = bounds?.let { IssueDragPreview(repo, issue, it) }
     }
 
     fun moveBy(delta: Offset) {
         pointer += delta
+        preview = preview?.let { it.copy(offset = it.offset + delta) }
     }
 
-    private fun end() {
+    fun movePreviewTo(offset: Offset) {
+        preview = preview?.copy(offset = offset)
+    }
+
+    fun clearPreview() {
+        preview = null
+    }
+
+    fun cancel() {
+        end(clearPreview = true)
+    }
+
+    private fun end(clearPreview: Boolean) {
         active = null
         pointer = Offset.Zero
+        if (clearPreview) preview = null
     }
 
     fun clearOptimisticMoves() {
@@ -68,7 +96,11 @@ internal class IssueBoardDrag {
             .forEach { ticketBounds.remove(it) }
     }
 
-    fun dropTarget(releaseBounds: Rect, onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit): IssueDropTarget? {
+    fun dropTarget(
+        releaseBounds: Rect,
+        onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
+        keepPreview: Boolean = false,
+    ): IssueDropTarget? {
         val current = active ?: return null
         val target = laneBounds.targetAt(pointer) ?: laneBounds.targetAt(releaseBounds.center)
         val dropTarget = target
@@ -82,7 +114,7 @@ internal class IssueBoardDrag {
                     }
                 }
             }
-        end()
+        end(clearPreview = !keepPreview)
         return dropTarget
     }
 
