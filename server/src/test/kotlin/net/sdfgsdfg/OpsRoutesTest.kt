@@ -27,6 +27,7 @@ import net.sdfgsdfg.data.model.OpsHostSnapshotDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
@@ -49,6 +50,15 @@ class OpsRoutesTest {
     private val noBackendFullSuite = {
         TestRunSummaryDto("full suite", OpsStatusDto.OK, detail = "stubbed backend umbrella.", url = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml")
     }
+    private val guestViewer = OpsViewerDto()
+    private val adminViewer = OpsViewerDto(
+        userId = "kaan",
+        displayName = "kaan",
+        role = "admin",
+        proofs = listOf("test"),
+        capabilities = listOf("issues:write"),
+        issueWrite = true,
+    )
     private fun Application.installOpsRouteTestPlugins() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         install(WebSockets)
@@ -290,10 +300,61 @@ class OpsRoutesTest {
     }
 
     @Test
-    fun opsIssueMutationRouteIsAvailableOnOpsHost() = testApplication {
+    fun opsViewerEndpointExposesResolvedViewer() = testApplication {
         application {
             installOpsRouteTestPlugins()
-            routing { opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                )
+            }
+        }
+
+        val response = client.get("/api/ops/viewer") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val viewer = json.decodeFromString<OpsViewerDto>(response.body<String>())
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("kaan", viewer.userId)
+        assertEquals(true, viewer.issueWrite)
+        assertEquals(listOf("issues:write"), viewer.capabilities)
+    }
+
+    @Test
+    fun opsIssueMutationRequiresIssueWrite() = testApplication {
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { guestViewer },
+                )
+            }
+        }
+
+        val response = client.post("/api/ops/issues") {
+            header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("not-json")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("Issue mutations require admin viewer", response.body<String>())
+    }
+
+    @Test
+    fun opsIssueMutationAllowsAdminThroughJsonValidation() = testApplication {
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                )
+            }
         }
 
         val response = client.post("/api/ops/issues") {

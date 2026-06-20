@@ -82,6 +82,7 @@ internal fun IssuePanels(
     generatedAtMs: Long,
     pageWidth: Dp,
     drag: IssueBoardDrag,
+    canWriteIssues: Boolean,
     onCreate: (IssueRepoModel, String) -> Unit,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
@@ -93,7 +94,7 @@ internal fun IssuePanels(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, drag, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
+                IssuePanel(repo, generatedAtMs, pageWidth, drag, canWriteIssues, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
             }
         }
     }
@@ -105,6 +106,7 @@ private fun IssuePanel(
     generatedAtMs: Long,
     pageWidth: Dp,
     drag: IssueBoardDrag,
+    canWriteIssues: Boolean,
     onCreate: (IssueRepoModel, String) -> Unit,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
@@ -147,7 +149,9 @@ private fun IssuePanel(
                 }
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { onArchive(repo) }
+                        if (canWriteIssues || repo.issues.trash > 0) {
+                            ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { onArchive(repo) }
+                        }
                         StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
                     }
                 }
@@ -164,6 +168,7 @@ private fun IssuePanel(
                                 generatedAtMs,
                                 laneBodyHeight,
                                 drag,
+                                canWriteIssues,
                                 motionScope,
                                 currentPanelBounds,
                                 onCreate,
@@ -186,6 +191,7 @@ private fun IssuePanel(
                                 generatedAtMs,
                                 laneBodyHeight,
                                 drag,
+                                canWriteIssues,
                                 motionScope,
                                 currentPanelBounds,
                                 onCreate,
@@ -239,6 +245,7 @@ private fun IssueLane(
     generatedAtMs: Long,
     maxBodyHeight: Dp,
     drag: IssueBoardDrag,
+    canWriteIssues: Boolean,
     motionScope: CoroutineScope,
     currentPanelBounds: State<Rect?>,
     onCreate: (IssueRepoModel, String) -> Unit,
@@ -332,7 +339,7 @@ private fun IssueLane(
     ) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (lane.status == "todo") MiniActionPill("+", lane.color.copy(alpha = if (empty) 0.55f else 1f)) { onCreate(repo, lane.status) }
+                if (canWriteIssues && lane.status == "todo") MiniActionPill("+", lane.color.copy(alpha = if (empty) 0.55f else 1f)) { onCreate(repo, lane.status) }
             }
             Box(
                 modifier = Modifier
@@ -364,6 +371,7 @@ private fun IssueLane(
                         .issueLayoutTrace(traceEnabled, issue.ticketKey(repo.id), removalTraceMovedKeys, traceMeasureCounts, tracePlaceCounts)
                         .animateItem(),
                     drag = drag,
+                    canWriteIssues = canWriteIssues,
                     motionScope = motionScope,
                     currentPanelBounds = currentPanelBounds,
                     onEdit = onEdit,
@@ -390,6 +398,7 @@ private fun IssueTicket(
     generatedAtMs: Long,
     modifier: Modifier,
     drag: IssueBoardDrag,
+    canWriteIssues: Boolean,
     motionScope: CoroutineScope,
     currentPanelBounds: State<Rect?>,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
@@ -414,7 +423,7 @@ private fun IssueTicket(
         animationSpec = spring(dampingRatio = 0.78f, stiffness = 520f),
         label = "issue-new-card-drag-lift",
     )
-    val editable = issue.source == "arcana"
+    val editable = canWriteIssues && issue.source == "arcana"
     val interactionModifier = if (!editable) {
         Modifier
     } else {

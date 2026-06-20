@@ -35,8 +35,6 @@ import io.ktor.client.request.headers
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
-import java.net.InetAddress
-import java.nio.file.Files
 import java.nio.file.Paths
 
 fun main() {
@@ -94,7 +92,7 @@ private fun Application.routes() = routing {
 
     get("/admin/ip/blacklist") {
         val requesterIp = call.clientInfo().clientIp
-        if (!isTrustedGrafanaIp(requesterIp)) {
+        if (!isOwnerNetworkIp(requesterIp)) {
             call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
             return@get
         }
@@ -111,7 +109,7 @@ private fun Application.routes() = routing {
 
     get("/admin/ip/allowlist") {
         val requesterIp = call.clientInfo().clientIp
-        if (!isTrustedGrafanaIp(requesterIp)) {
+        if (!isOwnerNetworkIp(requesterIp)) {
             call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
             return@get
         }
@@ -182,7 +180,7 @@ private fun Application.routes() = routing {
 
         val serverCall = call
         val clientSession = this
-        val trusted = isTrustedGrafanaIp(remoteIp)
+        val trusted = isOwnerNetworkIp(remoteIp)
         wsClient.webSocket(urlString = targetUrl, request = {
             headers {
                 listOf("Cookie", "Authorization", "Origin", "User-Agent").forEach { header ->
@@ -252,60 +250,4 @@ private fun Application.analytics() {
 
 private fun Application.db() {
     RequestEvents.init()
-}
-
-private val grafanaPublicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
-private const val grafanaIpCacheTtlMs = 30_000L
-@Volatile private var grafanaIpv4Cache: String? = null
-@Volatile private var grafanaIpv6Cache: String? = null
-@Volatile private var grafanaIpCacheAtMs: Long = 0
-
-private fun isTrustedGrafanaIp(ip: String): Boolean {
-    if (ip == "127.0.0.1" || ip == "::1") return true
-    if (ip.startsWith("192.168.1.")) return true
-    val (ipv4, ipv6) = currentGrafanaPublicIps()
-    return if (ip.contains(":")) {
-        ipv6 != null && sameGrafanaIpv6Prefix64(ip, ipv6)
-    } else {
-        ipv4 != null && ip == ipv4
-    }
-}
-
-private fun currentGrafanaPublicIps(): Pair<String?, String?> {
-    val now = System.currentTimeMillis()
-    if (now - grafanaIpCacheAtMs < grafanaIpCacheTtlMs) {
-        return grafanaIpv4Cache to grafanaIpv6Cache
-    }
-    val raw = runCatching { Files.readString(grafanaPublicIpFile) }.getOrNull().orEmpty()
-    var v4: String? = null
-    var v6: String? = null
-    raw.lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .forEach { line ->
-            when {
-                line.startsWith("ipv4=") -> v4 = line.removePrefix("ipv4=")
-                line.startsWith("ipv6=") -> v6 = line.removePrefix("ipv6=")
-                line.contains(":") -> v6 = line
-                line.count { it == '.' } == 3 -> v4 = line
-            }
-        }
-    if (v4 != null || v6 != null) {
-        grafanaIpv4Cache = v4
-        grafanaIpv6Cache = v6
-        grafanaIpCacheAtMs = now
-    }
-    return v4 to v6
-}
-
-private fun sameGrafanaIpv6Prefix64(left: String, right: String): Boolean {
-    val leftAddr = runCatching { InetAddress.getByName(left) }.getOrNull()
-    val rightAddr = runCatching { InetAddress.getByName(right) }.getOrNull()
-    val leftBytes = leftAddr?.address ?: return false
-    val rightBytes = rightAddr?.address ?: return false
-    if (leftBytes.size != 16 || rightBytes.size != 16) return false
-    for (i in 0 until 8) {
-        if (leftBytes[i] != rightBytes[i]) return false
-    }
-    return true
 }

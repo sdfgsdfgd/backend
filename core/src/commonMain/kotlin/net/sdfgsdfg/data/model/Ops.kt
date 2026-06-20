@@ -27,6 +27,18 @@ data class OpsIssuePatchDto(
 )
 
 @Serializable
+data class OpsViewerDto(
+    @SerialName("user_id") val userId: String = "guest",
+    @SerialName("display_name") val displayName: String = "guest",
+    val role: String = "guest",
+    val proofs: List<String> = emptyList(),
+    val capabilities: List<String> = emptyList(),
+    @SerialName("issue_write") val issueWrite: Boolean = false,
+    @SerialName("client_hint") val clientHint: String? = null,
+    val source: String? = null,
+)
+
+@Serializable
 data class RepoIssuePatchDto(
     val id: String,
     val issues: IssueSummaryDto,

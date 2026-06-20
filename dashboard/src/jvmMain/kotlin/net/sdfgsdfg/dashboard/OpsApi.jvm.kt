@@ -5,6 +5,7 @@ import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 import java.awt.Desktop
 import java.net.URI
 import java.net.http.HttpClient
@@ -21,14 +22,27 @@ private var activeOpsApiBase: String? = null
 internal actual fun loadOpsSummary(
     onLoaded: (OpsSummaryDto) -> Unit,
     onFailed: (String) -> Unit,
+) = loadOpsData("ops-summary-loader", "Failed to load ops summary", onLoaded, onFailed) { fetchOpsJson("/api/ops/summary") }
+
+internal actual fun loadOpsViewer(
+    onLoaded: (OpsViewerDto) -> Unit,
+    onFailed: (String) -> Unit,
+) = loadOpsData("ops-viewer-loader", "Failed to load ops viewer", onLoaded, onFailed) { fetchOpsJson("/api/ops/viewer") }
+
+private fun <T> loadOpsData(
+    threadName: String,
+    fallbackError: String,
+    onLoaded: (T) -> Unit,
+    onFailed: (String) -> Unit,
+    fetch: () -> T,
 ) {
     Thread({
-        runCatching { fetchOpsSummary() }
+        runCatching(fetch)
             .fold(
                 onSuccess = { SwingUtilities.invokeLater { onLoaded(it) } },
-                onFailure = { error -> SwingUtilities.invokeLater { onFailed(error.message ?: "Failed to load ops summary") } },
+                onFailure = { error -> SwingUtilities.invokeLater { onFailed(error.message ?: fallbackError) } },
             )
-    }, "ops-summary-loader").apply {
+    }, threadName).apply {
         isDaemon = true
         start()
     }
@@ -164,7 +178,7 @@ internal actual fun mutateIssue(
     }
 }
 
-private fun fetchOpsSummary(): OpsSummaryDto {
+private inline fun <reified T> fetchOpsJson(path: String): T {
     val endpoints = configuredOpsApiBase()
         ?.let(::listOf)
         ?: listOf("http://127.0.0.1", "https://ops.sdfgsdfg.net")
@@ -174,15 +188,15 @@ private fun fetchOpsSummary(): OpsSummaryDto {
     endpoints.forEach { endpoint ->
         runCatching {
             val request = HttpRequest.newBuilder()
-                .uri(URI.create("$endpoint/api/ops/summary"))
+                .uri(URI.create("$endpoint$path"))
                 .GET()
                 .build()
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
             if (response.statusCode() !in 200..299) {
-                error("GET $endpoint/api/ops/summary failed with ${response.statusCode()}")
+                error("GET $endpoint$path failed with ${response.statusCode()}")
             }
             activeOpsApiBase = endpoint
-            return dashboardJson.decodeFromString<OpsSummaryDto>(response.body())
+            return dashboardJson.decodeFromString<T>(response.body())
         }.onFailure { lastError = it }
     }
     throw lastError ?: error("No ops API endpoints configured")

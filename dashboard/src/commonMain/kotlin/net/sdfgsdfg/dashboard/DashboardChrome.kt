@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.dashboard.generated.resources.Res
 import net.sdfgsdfg.dashboard.generated.resources.wallpaper_winter_river
+import net.sdfgsdfg.data.model.OpsViewerDto
 import org.jetbrains.compose.resources.painterResource
 
 @Composable
@@ -75,6 +76,7 @@ internal fun Header(
     selectedTab: DashboardTab,
     onTabSelected: (DashboardTab) -> Unit,
     socketState: OpsSocketState,
+    viewer: OpsViewerDto,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -103,11 +105,15 @@ internal fun Header(
                 HeaderTitle()
                 if (stackedHeader) {
                     TabSwitcher(selectedTab, compact = true, onTabSelected)
-                    OpsConnectionBadge(socketState)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OpsConnectionBadge(socketState)
+                        OpsViewerBadge(viewer)
+                    }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         TabSwitcher(selectedTab, compact = false, onTabSelected)
                         OpsConnectionBadge(socketState)
+                        OpsViewerBadge(viewer)
                     }
                 }
             }
@@ -121,6 +127,7 @@ internal fun Header(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     OpsConnectionBadge(socketState)
+                    OpsViewerBadge(viewer)
                     HeaderRuntimeBadge()
                 }
             }
@@ -379,6 +386,31 @@ private fun OpsConnectionBadge(state: OpsSocketState) {
                 .background(tone),
         )
         Text(label, color = tone, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun OpsViewerBadge(viewer: OpsViewerDto) {
+    val writable = viewer.issueWrite
+    val tone = if (writable) green else amber
+    val label = if (writable) viewer.displayName.ifBlank { "kaan" } else viewer.displayName.ifBlank { "guest" }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xC4081015))
+            .border(BorderStroke(1.dp, tone.copy(alpha = 0.40f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(tone),
+        )
+        Text(label, color = tone, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(if (writable) "admin" else "read-only", color = Color(0xFF8FA1B5), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 

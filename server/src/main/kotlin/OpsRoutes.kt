@@ -42,6 +42,7 @@ import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsArtifactDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestCaseSummaryDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
@@ -146,6 +147,7 @@ fun Route.opsRoutes(
     backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
     enablePeerSnapshots: Boolean = false,
     peerSnapshot: (Boolean) -> OpsHostSnapshotDto? = ::peerHostSnapshot,
+    resolveViewer: (ApplicationCall) -> OpsViewerDto = { it.opsViewer() },
 ) {
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
@@ -191,6 +193,14 @@ fun Route.opsRoutes(
         call.respond(summary())
     }
 
+    get("/api/ops/viewer") {
+        if (!allowed(call)) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@get
+        }
+        call.respond(resolveViewer(call))
+    }
+
     webSocket("/api/ops/ws") {
         if (!allowed(call)) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
@@ -232,6 +242,10 @@ fun Route.opsRoutes(
     post("/api/ops/issues") {
         if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
+            return@post
+        }
+        if (!resolveViewer(call).canWriteIssues()) {
+            call.respondText("Issue mutations require admin viewer", status = HttpStatusCode.Forbidden)
             return@post
         }
 

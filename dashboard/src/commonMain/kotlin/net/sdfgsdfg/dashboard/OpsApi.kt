@@ -5,6 +5,7 @@ import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 
 internal val dashboardJson = Json {
     ignoreUnknownKeys = true
@@ -12,6 +13,11 @@ internal val dashboardJson = Json {
 
 internal expect fun loadOpsSummary(
     onLoaded: (OpsSummaryDto) -> Unit,
+    onFailed: (String) -> Unit,
+)
+
+internal expect fun loadOpsViewer(
+    onLoaded: (OpsViewerDto) -> Unit,
     onFailed: (String) -> Unit,
 )
 

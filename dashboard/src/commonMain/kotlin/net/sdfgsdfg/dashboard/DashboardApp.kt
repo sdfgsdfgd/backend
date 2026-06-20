@@ -40,6 +40,7 @@ import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 
 internal enum class DashboardTab(val label: String) {
@@ -78,6 +79,7 @@ fun DashboardApp(
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     var socketState by remember { mutableStateOf(OpsSocketState()) }
+    var viewer by remember { mutableStateOf(OpsViewerDto()) }
     var activeRunEvents by remember { mutableStateOf(emptyList<OpsRunEventDto>()) }
     var issueEditorActive by remember { mutableStateOf(false) }
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
@@ -132,6 +134,15 @@ fun DashboardApp(
     }
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
+    }
+    LaunchedEffect(Unit) {
+        loadOpsViewer(
+            onLoaded = { viewer = it },
+            onFailed = {
+                viewer = OpsViewerDto()
+                issueFrameTrace("viewer-load-failed") { it.ifBlank { "Failed to load ops viewer" } }
+            },
+        )
     }
     DisposableEffect(Unit) {
         val close = connectOpsSocket(
@@ -235,6 +246,7 @@ fun DashboardApp(
                             selectedTab = selectedTab,
                             onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
                             socketState = socketState,
+                            viewer = viewer,
                         )
                         if (loadState is OpsLoadState.Loading) {
                             TopLoadTrace()
@@ -255,6 +267,7 @@ fun DashboardApp(
                                 Issues(
                                     loadState = loadState,
                                     pageWidth = pageWidth,
+                                    canWriteIssues = viewer.issueWrite,
                                     onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
                                     onEditorActiveChanged = { issueEditorActive = it },
                                 )

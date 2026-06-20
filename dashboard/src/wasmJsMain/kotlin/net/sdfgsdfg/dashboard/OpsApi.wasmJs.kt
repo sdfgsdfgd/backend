@@ -9,6 +9,7 @@ import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.OpsViewerDto
 import org.w3c.dom.MessageEvent
 import org.w3c.dom.WebSocket
 import org.w3c.fetch.Response
@@ -18,23 +19,37 @@ import org.w3c.xhr.XMLHttpRequest
 internal actual fun loadOpsSummary(
     onLoaded: (OpsSummaryDto) -> Unit,
     onFailed: (String) -> Unit,
+) = loadOpsJson(opsSummaryUrl(), "GET /api/ops/summary", onLoaded, onFailed)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun loadOpsViewer(
+    onLoaded: (OpsViewerDto) -> Unit,
+    onFailed: (String) -> Unit,
+) = loadOpsJson(opsUrl("/api/ops/viewer"), "GET /api/ops/viewer", onLoaded, onFailed)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private inline fun <reified T> loadOpsJson(
+    url: String,
+    label: String,
+    noinline onLoaded: (T) -> Unit,
+    noinline onFailed: (String) -> Unit,
 ) {
-    window.fetch(opsSummaryUrl()).then(
+    window.fetch(url).then(
         onFulfilled = { response: Response ->
             if (!response.ok) {
-                onFailed("GET /api/ops/summary failed with ${response.status}")
+                onFailed("$label failed with ${response.status}")
             } else {
                 response.text().then(
                     onFulfilled = { body ->
-                        runCatching { dashboardJson.decodeFromString<OpsSummaryDto>("$body") }
+                        runCatching { dashboardJson.decodeFromString<T>("$body") }
                             .fold(
                                 onSuccess = onLoaded,
-                                onFailure = { onFailed(it.message ?: "Failed to decode ops summary") },
+                                onFailure = { onFailed(it.message ?: "Failed to decode $label") },
                             )
                         null
                     },
                     onRejected = {
-                        onFailed("GET /api/ops/summary response body failed")
+                        onFailed("$label response body failed")
                         null
                     },
                 )
@@ -42,7 +57,7 @@ internal actual fun loadOpsSummary(
             null
         },
         onRejected = {
-            onFailed("GET /api/ops/summary failed")
+            onFailed("$label failed")
             null
         },
     )

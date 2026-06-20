@@ -28,13 +28,12 @@ import io.ktor.utils.io.copyAndClose
 import net.sdfgsdfg.clientInfo
 import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
+import net.sdfgsdfg.isOwnerNetworkIp
 import net.sdfgsdfg.silentDrop
 import org.apache.hc.client5.http.HttpHostConnectException
 import org.slf4j.LoggerFactory
-import java.net.URISyntaxException
 import java.net.InetAddress
-import java.nio.file.Files
-import java.nio.file.Paths
+import java.net.URISyntaxException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -44,11 +43,6 @@ class SimpleReverseProxy(
 ) {
     private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
-    private val publicIpFile = Paths.get("/home/x/Desktop/SCRIPTS/public_ip.txt")
-    private val publicIpCacheTtlMs = 30_000L
-    @Volatile private var publicIpv4Cache: String? = null
-    @Volatile private var publicIpv6Cache: String? = null
-    @Volatile private var publicIpCacheAtMs: Long = 0
     private val rdnsCache = ConcurrentHashMap<String, Pair<Long, String?>>()
     private val rdnsCacheTtlMs = 10 * 60 * 1000L
 
@@ -79,7 +73,7 @@ class SimpleReverseProxy(
         val suspicion = detectSuspicious(rawQuery, ua)
         val suspiciousReason = suspicion?.first
         val suspiciousSeverity = suspicion?.second
-        val trusted = isTrustedIp(remote)
+        val trusted = isOwnerNetworkIp(remote)
         val allowlisted = RequestEvents.isAllowlisted(remote)
         if (!trusted && !allowlisted && RequestEvents.isBlacklisted(remote)) {
             val (clientPlain, clientColor) = clientTag(client, allowLookup = true)
@@ -268,7 +262,7 @@ class SimpleReverseProxy(
                     append("X-Forwarded-Host", call.request.host())
                     append("X-Forwarded-Proto", if (call.request.origin.scheme == "https") "https" else "http")
                     append("X-Forwarded-For", remote)
-                    if (matchedRule == "grafana" && isTrustedIp(remote)) {
+                    if (matchedRule == "grafana" && isOwnerNetworkIp(remote)) {
                         append("X-WEBAUTH-USER", "x")
                     }
                 }
@@ -449,56 +443,6 @@ class SimpleReverseProxy(
         if (p.contains("/phpmyadmin")) return "EXPLOIT_PATH"
         if (p.contains("/.git")) return "EXPLOIT_PATH"
         return null
-    }
-
-    private fun isTrustedIp(ip: String): Boolean {
-        if (ip == "127.0.0.1" || ip == "::1") return true
-        if (ip.startsWith("192.168.1.")) return true
-        val (ipv4, ipv6) = currentPublicIps()
-        return if (ip.contains(":")) {
-            ipv6 != null && sameIpv6Prefix64(ip, ipv6)
-        } else {
-            ipv4 != null && ip == ipv4
-        }
-    }
-
-    private fun currentPublicIps(): Pair<String?, String?> {
-        val now = System.currentTimeMillis()
-        if (now - publicIpCacheAtMs < publicIpCacheTtlMs) {
-            return publicIpv4Cache to publicIpv6Cache
-        }
-        val raw = runCatching { Files.readString(publicIpFile) }.getOrNull().orEmpty()
-        var v4: String? = null
-        var v6: String? = null
-        raw.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .forEach { line ->
-                when {
-                    line.startsWith("ipv4=") -> v4 = line.removePrefix("ipv4=")
-                    line.startsWith("ipv6=") -> v6 = line.removePrefix("ipv6=")
-                    line.contains(":") -> v6 = line
-                    line.count { it == '.' } == 3 -> v4 = line
-                }
-            }
-        if (v4 != null || v6 != null) {
-            publicIpv4Cache = v4
-            publicIpv6Cache = v6
-            publicIpCacheAtMs = now
-        }
-        return v4 to v6
-    }
-
-    private fun sameIpv6Prefix64(left: String, right: String): Boolean {
-        val leftAddr = runCatching { InetAddress.getByName(left) }.getOrNull()
-        val rightAddr = runCatching { InetAddress.getByName(right) }.getOrNull()
-        val leftBytes = leftAddr?.address ?: return false
-        val rightBytes = rightAddr?.address ?: return false
-        if (leftBytes.size != 16 || rightBytes.size != 16) return false
-        for (i in 0 until 8) {
-            if (leftBytes[i] != rightBytes[i]) return false
-        }
-        return true
     }
 
     private fun isIllegalQuery(e: Exception): Boolean {

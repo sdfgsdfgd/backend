@@ -23,6 +23,7 @@ import net.sdfgsdfg.data.model.OpsIssuePatchDto
 internal fun Issues(
     loadState: OpsLoadState,
     pageWidth: Dp,
+    canWriteIssues: Boolean,
     onIssuePatch: (OpsIssuePatchDto) -> Unit,
     onEditorActiveChanged: (Boolean) -> Unit = {},
 ) {
@@ -31,25 +32,38 @@ internal fun Issues(
     var error by remember { mutableStateOf<String?>(null) }
     val drag = remember { IssueBoardDrag() }
 
-    fun mutate(request: IssueMutationRequestDto) = mutateIssue(
-        request = request,
-        onLoaded = { patch ->
-            onIssuePatch(patch)
+    fun mutate(request: IssueMutationRequestDto) {
+        if (!canWriteIssues) {
             drag.clearOptimisticMoves()
-            archiveRepo = archiveRepo?.let { open ->
-                patch.repos.firstOrNull { it.id == open.id }?.let { repoPatch ->
-                    open.copy(issues = repoPatch.issues.mergeIssuePatch(open.issues, patch.generatedAtMs))
-                } ?: open
-            }
-            error = null
-        },
-        onFailed = {
-            drag.clearOptimisticMoves()
-            error = it
-        },
-    )
+            error = "Read-only viewer"
+            return
+        }
+        mutateIssue(
+            request = request,
+            onLoaded = { patch ->
+                onIssuePatch(patch)
+                drag.clearOptimisticMoves()
+                archiveRepo = archiveRepo?.let { open ->
+                    patch.repos.firstOrNull { it.id == open.id }?.let { repoPatch ->
+                        open.copy(issues = repoPatch.issues.mergeIssuePatch(open.issues, patch.generatedAtMs))
+                    } ?: open
+                }
+                error = null
+            },
+            onFailed = {
+                drag.clearOptimisticMoves()
+                error = it
+            },
+        )
+    }
     LaunchedEffect(editor != null) {
         onEditorActiveChanged(editor != null)
+    }
+    LaunchedEffect(canWriteIssues) {
+        if (!canWriteIssues) {
+            editor = null
+            drag.clearOptimisticMoves()
+        }
     }
 
     when (loadState) {
@@ -73,6 +87,7 @@ internal fun Issues(
                     generatedAtMs = issueAgeNowMs,
                     pageWidth = pageWidth,
                     drag = drag,
+                    canWriteIssues = canWriteIssues,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
                     onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
@@ -100,6 +115,7 @@ internal fun Issues(
     archiveRepo?.let { repo ->
         ArchiveDialog(
             repo = repo,
+            canWriteIssues = canWriteIssues,
             onDelete = { issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
             onDismiss = { archiveRepo = null },
         )
