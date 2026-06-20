@@ -7,7 +7,7 @@
       <option name="scriptParameters" value="" />
       <option name="env">
         <map>
-          <entry key="OPS_API_BASE" value="http://127.0.0.1" />
+          <entry key="OPS_ENV" value="dev" />
         </map>
       </option>
       <option name="taskDescriptions">

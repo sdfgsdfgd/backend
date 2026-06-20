@@ -33,6 +33,7 @@ import java.util.prefs.Preferences
 private const val githubTokenPrefKey = "ops.github.token"
 private val dashboardPrefs = Preferences.userRoot().node("net/sdfgsdfg/dashboard")
 private var activeOpsApiBase: String? = null
+private enum class OpsApiMode { Dev, Local, Prod }
 @Volatile private var activeGithubToken: String? = readDashboardPref(githubTokenPrefKey)
 private val activeGithubAuth = AtomicReference<AtomicBoolean?>(null)
 private val activeGithubAuthThread = AtomicReference<Thread?>(null)
@@ -276,18 +277,8 @@ internal actual fun mutateIssue(
 ) {
     Thread({
         runCatching {
-            val endpoint = opsApiEndpoints().first()
-            val response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder()
-                    .uri(URI.create("$endpoint$OPS_ISSUES_PATH"))
-                    .header("Content-Type", "application/json")
-                    .applyOpsAuth()
-                    .POST(HttpRequest.BodyPublishers.ofString(dashboardJson.encodeToString(request)))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString(),
-            )
-            if (response.statusCode() !in 200..299) error("POST $endpoint$OPS_ISSUES_PATH failed with ${response.statusCode()}")
-            dashboardJson.decodeFromString<OpsIssuePatchDto>(response.body())
+            val (_, body) = postOps(OPS_ISSUES_PATH, dashboardJson.encodeToString(request))
+            dashboardJson.decodeFromString<OpsIssuePatchDto>(body)
         }.fold(
             onSuccess = { EventQueue.invokeLater { onLoaded(it) } },
             onFailure = { EventQueue.invokeLater { onFailed(it.message ?: "Issue mutation failed") } },
@@ -377,15 +368,25 @@ private fun WebSocket.Builder.applyOpsAuth(): WebSocket.Builder = apply {
 }
 
 private fun opsApiEndpoints(): List<String> =
-    configuredOpsApiBase()?.let(::listOf)
-        ?: listOfNotNull("http://127.0.0.1", activeOpsApiBase, "https://ops.sdfgsdfg.net").distinct()
+    configuredOpsApiBase()?.let(::listOf) ?: when (opsApiMode()) {
+        OpsApiMode.Dev -> listOfNotNull("http://127.0.0.1", activeOpsApiBase, "https://ops.sdfgsdfg.net").distinct()
+        OpsApiMode.Local -> listOf("http://127.0.0.1")
+        OpsApiMode.Prod -> listOf("https://ops.sdfgsdfg.net")
+    }
 
 private fun opsUrl(pathOrUrl: String): String = when {
     pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://") -> pathOrUrl
-    else -> "${configuredOpsApiBase() ?: activeOpsApiBase ?: "https://ops.sdfgsdfg.net"}$pathOrUrl"
+    else -> "${activeOpsApiBase ?: opsApiEndpoints().first()}$pathOrUrl"
 }
 
 private fun configuredOpsApiBase(): String? = System.getenv("OPS_API_BASE")
     ?.trim()
     ?.trimEnd('/')
     ?.takeIf { it.isNotBlank() }
+
+private fun opsApiMode(): OpsApiMode = when (System.getenv("OPS_ENV")?.trim()?.lowercase()) {
+    "dev", "development", "local-dev", "fallback" -> OpsApiMode.Dev
+    "local" -> OpsApiMode.Local
+    "prod", "production", "remote" -> OpsApiMode.Prod
+    else -> OpsApiMode.Prod
+}
