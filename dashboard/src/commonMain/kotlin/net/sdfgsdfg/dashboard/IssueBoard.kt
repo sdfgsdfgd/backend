@@ -72,8 +72,6 @@ import net.sdfgsdfg.dashboard.tools.issueProfileEnabled
 import net.sdfgsdfg.data.model.IssueItemDto
 
 private val issueLaneStackBreakpoint = 1180.dp
-private val issueLaneStackedBodyMaxHeight = 560.dp
-private val issueLaneWideBodyMaxHeight = 820.dp
 private const val issueDragLiftScale = 1.7f
 
 @Composable
@@ -81,6 +79,7 @@ internal fun IssuePanels(
     repos: List<IssueRepoModel>,
     generatedAtMs: Long,
     pageWidth: Dp,
+    pageHeight: Dp,
     drag: IssueBoardDrag,
     canWriteIssues: Boolean,
     onCreate: (IssueRepoModel, String) -> Unit,
@@ -94,7 +93,7 @@ internal fun IssuePanels(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, drag, canWriteIssues, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
+                IssuePanel(repo, generatedAtMs, pageWidth, pageHeight, drag, canWriteIssues, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
             }
         }
     }
@@ -105,6 +104,7 @@ private fun IssuePanel(
     repo: IssueRepoModel,
     generatedAtMs: Long,
     pageWidth: Dp,
+    pageHeight: Dp,
     drag: IssueBoardDrag,
     canWriteIssues: Boolean,
     onCreate: (IssueRepoModel, String) -> Unit,
@@ -157,7 +157,7 @@ private fun IssuePanel(
                 }
             }
             val stacked = pageWidth < issueLaneStackBreakpoint
-            val laneBodyHeight = if (stacked) issueLaneStackedBodyMaxHeight else issueLaneWideBodyMaxHeight
+            val laneBodyMaxHeight = pageHeight * 2f
             if (stacked) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     issueLanes.forEach { lane ->
@@ -166,7 +166,7 @@ private fun IssuePanel(
                                 lane,
                                 repo,
                                 generatedAtMs,
-                                laneBodyHeight,
+                                laneBodyMaxHeight,
                                 drag,
                                 canWriteIssues,
                                 motionScope,
@@ -189,7 +189,7 @@ private fun IssuePanel(
                                 lane,
                                 repo,
                                 generatedAtMs,
-                                laneBodyHeight,
+                                laneBodyMaxHeight,
                                 drag,
                                 canWriteIssues,
                                 motionScope,
@@ -258,10 +258,10 @@ private fun IssueLane(
     val optimisticStatuses = drag.optimisticStatuses
     val tickets = remember(repo.id, repo.issues.items, lane.status, optimisticStatuses) { drag.items(repo, lane) }
     val ticketKeys = remember(tickets, repo.id) { tickets.map { it.ticketKey(repo.id) } }
-    val countBackfill = if (optimisticStatuses.isEmpty()) lane.count(repo.issues) - tickets.size else 0
-    val empty = tickets.isEmpty() && countBackfill <= 0
     val listState = rememberLazyListState()
     val headKey = ticketKeys.firstOrNull()
+    val countBackfill = if (optimisticStatuses.isEmpty()) lane.count(repo.issues) - tickets.size else 0
+    val empty = tickets.isEmpty() && countBackfill <= 0
     val shape = RoundedCornerShape(8.dp)
     val laneKey = "${repo.id}:${lane.status}"
     val previousTraceKeys = remember { arrayOf<List<String>?>(null) }

@@ -23,6 +23,7 @@ import net.sdfgsdfg.data.model.OpsIssuePatchDto
 internal fun Issues(
     loadState: OpsLoadState,
     pageWidth: Dp,
+    pageHeight: Dp,
     canWriteIssues: Boolean,
     onIssuePatch: (OpsIssuePatchDto) -> Unit,
     onEditorActiveChanged: (Boolean) -> Unit = {},
@@ -86,6 +87,7 @@ internal fun Issues(
                     repos = board.repos,
                     generatedAtMs = issueAgeNowMs,
                     pageWidth = pageWidth,
+                    pageHeight = pageHeight,
                     drag = drag,
                     canWriteIssues = canWriteIssues,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },

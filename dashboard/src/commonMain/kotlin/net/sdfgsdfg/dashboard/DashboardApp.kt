@@ -213,6 +213,7 @@ fun DashboardApp(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val pageBottomGutter = maxHeight * 0.28f
                 val pageWidth = maxWidth
+                val pageHeight = maxHeight
                 OpsWallpaper()
                 val listState = rememberLazyListState()
                 //region CMP-10297 scroll workaround
@@ -267,6 +268,7 @@ fun DashboardApp(
                                 Issues(
                                     loadState = loadState,
                                     pageWidth = pageWidth,
+                                    pageHeight = pageHeight,
                                     canWriteIssues = viewer.issueWrite,
                                     onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
                                     onEditorActiveChanged = { issueEditorActive = it },
