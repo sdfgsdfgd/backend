@@ -128,7 +128,6 @@ internal fun Header(
                 ) {
                     OpsConnectionBadge(socketState)
                     OpsViewerBadge(viewer)
-                    HeaderRuntimeBadge()
                 }
             }
         }
@@ -333,30 +332,6 @@ internal fun DashboardTab.shift(delta: Int): DashboardTab {
 }
 
 @Composable
-private fun HeaderRuntimeBadge(modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(999.dp)
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(Brush.linearGradient(listOf(Color(0xFF0A1724), Color(0xFF10101A))))
-            .border(BorderStroke(1.dp, cyan.copy(alpha = 0.34f)), shape)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(green),
-        )
-        Text("Compose 1.11", color = Color(0xFFDFF5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Text("/", color = Color(0xFF516075), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Text("hotRunJvm", color = cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
 private fun OpsConnectionBadge(state: OpsSocketState) {
     val tone = when {
         state.status == OpsSocketStatus.DISCONNECTED -> rose
@@ -393,7 +368,11 @@ private fun OpsConnectionBadge(state: OpsSocketState) {
 private fun OpsViewerBadge(viewer: OpsViewerDto) {
     val writable = viewer.issueWrite
     val tone = if (writable) green else amber
-    val label = if (writable) viewer.displayName.ifBlank { "kaan" } else viewer.displayName.ifBlank { "guest" }
+    // TODO(auth): make the read-only "Login" badge open GitHub OAuth, mirroring
+    // the frontend-nextjs GitHub login flow, then feed the resolved identity back
+    // into OpsViewerDto so the badge can show the authenticated viewer and issue
+    // write capability can come from the server instead of owner-network probing.
+    val label = if (writable) viewer.displayName.ifBlank { "kaan" } else "Login"
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
