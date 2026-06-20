@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsSignalDto
@@ -72,7 +73,7 @@ internal fun LazyListScope.homeItems(loadState: OpsLoadState, pageWidth: Dp) {
                 WorkSurface(
                     title = "Ops Summary Unavailable",
                     detail = loadState.message,
-                    items = listOf("/api/ops/summary", "backend service", "local preview route"),
+                    items = listOf(OPS_SUMMARY_PATH, "backend service", "local preview route"),
                 )
             }
         }

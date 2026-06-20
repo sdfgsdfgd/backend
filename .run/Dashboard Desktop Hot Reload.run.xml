@@ -5,6 +5,11 @@
       <option name="externalProjectPath" value="$PROJECT_DIR$" />
       <option name="externalSystemIdString" value="GRADLE" />
       <option name="scriptParameters" value="" />
+      <option name="env">
+        <map>
+          <entry key="OPS_API_BASE" value="http://127.0.0.1" />
+        </map>
+      </option>
       <option name="taskDescriptions">
         <list />
       </option>

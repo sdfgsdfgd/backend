@@ -21,6 +21,13 @@ val qArcanaDir: String = "~/Desktop/py/arcana"
 val qArcanaTests: String = "z_tests_n_benchmarks/unit"
 val arcanaIngestArtifactUrl: String = "/api/ops/artifacts/arcana-ingest.json"
 val root: File = File(".").canonicalFile
+val home: File = File(System.getProperty("user.home"))
+val frontendNextEnvFiles: List<File> = listOf(
+    home.resolve("Desktop/FE/frontend-next/.env.development"),
+    home.resolve("Desktop/FE/frontend-next/.env.local"),
+    home.resolve("Desktop/FE/frontend-next/.env.production"),
+    home.resolve("Desktop/FE/frontend-next/.env"),
+)
 val logs: File = root.resolve("0_scripts/logs").apply { mkdirs() }
 val deployLog: File = logs.resolve("deploy.log").apply { if (!exists()) createNewFile() }
 val deployHistory: File = logs.resolve("deploy-history.jsonl").apply { if (!exists()) createNewFile() }
@@ -95,6 +102,35 @@ fun fail(s: String): Nothing {
 }
 
 fun String.shellQuote(): String = "'${replace("'", "'\\''")}'"
+
+fun readDotenv(file: File): Map<String, String> =
+    file.takeIf(File::isFile)
+        ?.readLines()
+        ?.mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank() || trimmed.startsWith('#') || '=' !in trimmed) return@mapNotNull null
+            val key = trimmed.substringBefore('=').trim().takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) } ?: return@mapNotNull null
+            val value = trimmed.substringAfter('=').trim().substringBefore(" #").removeSurrounding("\"").removeSurrounding("'")
+            key to value
+        }
+        ?.toMap()
+        .orEmpty()
+
+fun ProcessBuilder.addLocalGithubOauthEnv() {
+    val env = environment()
+    val frontendEnv = frontendNextEnvFiles
+        .asSequence()
+        .map(::readDotenv)
+        .firstOrNull { !it["GITHUB_CLIENT_ID"].isNullOrBlank() && !it["GITHUB_CLIENT_SECRET"].isNullOrBlank() }
+        ?: return
+    if (env["OPS_GITHUB_OAUTH_CLIENT_SECRET"].isNullOrBlank()) {
+        env["OPS_GITHUB_OAUTH_CLIENT_ID"] = frontendEnv.getValue("GITHUB_CLIENT_ID")
+        env["OPS_GITHUB_OAUTH_CLIENT_SECRET"] = frontendEnv.getValue("GITHUB_CLIENT_SECRET")
+    }
+    env.putIfAbsent("OPS_AUTH_PUBLIC_BASE_URL", "http://localhost")
+    env.putIfAbsent("OPS_AUTH_CALLBACK_PATH", "/api/auth/callback/github")
+    env.putIfAbsent("OPS_AUTH_DEFAULT_RETURN_TO", "http://localhost:8080/")
+}
 
 fun String.jsonString(): String = buildString {
     append('"')
@@ -325,6 +361,7 @@ fun startBackendProcess(console: Boolean): Process {
             it.environment().putIfAbsent("LOG_DIR", logs.absolutePath)
             it.environment()["BACKEND_ENV"] = "local"
             it.environment()["PATH"] = "$javaHome/bin:${System.getenv("PATH").orEmpty()}"
+            it.addLocalGithubOauthEnv()
             if (console) it.inheritIO() else it.redirectOutput(ProcessBuilder.Redirect.appendTo(appLog))
         }
         .start()

@@ -1,12 +1,12 @@
 package net.sdfgsdfg
 
 import io.ktor.server.application.ApplicationCall
+import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
 import net.sdfgsdfg.data.model.OpsViewerDto
 import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Paths
 
-private const val issueWriteCapability = "issues:write"
 private const val ownerUserId = "kaan"
 private const val ownerRole = "admin"
 private const val guestUserId = "guest"
@@ -23,15 +23,34 @@ private val ownerPublicIpFile = Paths.get(
 
 internal fun ApplicationCall.opsViewer(): OpsViewerDto {
     val client = clientInfo()
+    return resolveOpsViewer(client, opsGithubSession() ?: opsGithubBearerSession())
+}
+
+internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSession? = null): OpsViewerDto {
     val ownerProof = ownerNetworkProof(client.clientIp)
-    val proofs = listOfNotNull(ownerProof)
-    return if (ownerProof != null) {
+    val proofs = listOfNotNull(ownerProof, githubSession?.let { "github:${it.login}" })
+    val issueWrite = ownerProof != null
+    val capabilities = if (issueWrite) listOf(OPS_CAPABILITY_ISSUES_WRITE) else emptyList()
+    if (githubSession != null) {
+        return OpsViewerDto(
+            userId = githubSession.login,
+            displayName = githubSession.displayName,
+            role = if (issueWrite) ownerRole else guestRole,
+            proofs = proofs,
+            capabilities = capabilities,
+            avatarUrl = githubSession.avatarUrl,
+            issueWrite = issueWrite,
+            clientHint = client.clientIp.redactedIp(),
+            source = client.source,
+        )
+    }
+    return if (issueWrite) {
         OpsViewerDto(
             userId = ownerUserId,
             displayName = ownerUserId,
             role = ownerRole,
             proofs = proofs,
-            capabilities = listOf(issueWriteCapability),
+            capabilities = capabilities,
             issueWrite = true,
             clientHint = client.clientIp.redactedIp(),
             source = client.source,
@@ -48,16 +67,19 @@ internal fun ApplicationCall.opsViewer(): OpsViewerDto {
     }
 }
 
-internal fun OpsViewerDto.canWriteIssues() = issueWrite || issueWriteCapability in capabilities
+internal fun OpsViewerDto.canWriteIssues() = issueWrite || OPS_CAPABILITY_ISSUES_WRITE in capabilities
 
 internal fun isOwnerNetworkIp(ip: String) = ownerNetworkProof(ip) != null
 
 private fun ownerNetworkProof(ip: String): String? = when {
-    ip == "127.0.0.1" || ip == "::1" -> "loopback"
+    ip.isLoopbackIp() -> "loopback"
     ip.startsWith("192.168.1.") -> "lan"
     ip.matchesCurrentOwnerPublicIp() -> "owner_network"
     else -> null
 }
+
+private fun String.isLoopbackIp() =
+    runCatching { InetAddress.getByName(this).isLoopbackAddress }.getOrDefault(false)
 
 private fun String.matchesCurrentOwnerPublicIp(): Boolean {
     val (ipv4, ipv6) = currentOwnerPublicIps()

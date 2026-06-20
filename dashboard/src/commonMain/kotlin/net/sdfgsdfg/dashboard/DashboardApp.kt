@@ -88,6 +88,16 @@ fun DashboardApp(
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
 
+    fun refreshViewer() {
+        loadOpsViewer(
+            onLoaded = { if (mounted[0]) viewer = it },
+            onFailed = {
+                if (mounted[0]) viewer = OpsViewerDto()
+                issueFrameTrace("viewer-load-failed") { it.ifBlank { "Failed to load ops viewer" } }
+            },
+        )
+    }
+
     fun applySummary(summary: OpsSummaryDto, source: String = "summary") {
         val previous = lastAppliedSummary
         if (
@@ -136,13 +146,7 @@ fun DashboardApp(
         runCatching { focusRequester.requestFocus() }
     }
     LaunchedEffect(Unit) {
-        loadOpsViewer(
-            onLoaded = { viewer = it },
-            onFailed = {
-                viewer = OpsViewerDto()
-                issueFrameTrace("viewer-load-failed") { it.ifBlank { "Failed to load ops viewer" } }
-            },
-        )
+        refreshViewer()
     }
     DisposableEffect(Unit) {
         val close = connectOpsSocket(
@@ -248,6 +252,7 @@ fun DashboardApp(
                             onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
                             socketState = socketState,
                             viewer = viewer,
+                            onViewerChanged = ::refreshViewer,
                         )
                         if (loadState is OpsLoadState.Loading) {
                             TopLoadTrace()

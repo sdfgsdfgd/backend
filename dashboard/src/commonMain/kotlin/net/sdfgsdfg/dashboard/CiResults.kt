@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -72,7 +73,7 @@ internal fun LazyListScope.ciItems(loadState: OpsLoadState, pageWidth: Dp, histo
                 WorkSurface(
                     title = "CI Results Unavailable",
                     detail = loadState.message,
-                    items = listOf("/api/ops/summary", "backend control plane", "dashboard API"),
+                    items = listOf(OPS_SUMMARY_PATH, "backend control plane", "dashboard API"),
                 )
             }
         }

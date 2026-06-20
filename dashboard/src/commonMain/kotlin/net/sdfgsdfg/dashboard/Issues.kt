@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
+import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 
 @Composable
@@ -76,7 +77,7 @@ internal fun Issues(
         is OpsLoadState.Failed -> WorkSurface(
             title = "Issues Unavailable",
             detail = loadState.message,
-            items = listOf("/api/ops/summary", "issue summary DTO", "repo lanes"),
+            items = listOf(OPS_SUMMARY_PATH, "issue summary DTO", "repo lanes"),
         )
         is OpsLoadState.Ready -> Box(modifier = Modifier.fillMaxWidth()) {
             val board = rememberIssueBoardModel(loadState.summary)

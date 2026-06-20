@@ -23,6 +23,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
+import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
+import net.sdfgsdfg.data.model.OPS_ISSUES_PATH
+import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
+import net.sdfgsdfg.data.model.OPS_VIEWER_PATH
 import net.sdfgsdfg.data.model.OpsHostSnapshotDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -56,8 +60,17 @@ class OpsRoutesTest {
         displayName = "kaan",
         role = "admin",
         proofs = listOf("test"),
-        capabilities = listOf("issues:write"),
+        capabilities = listOf(OPS_CAPABILITY_ISSUES_WRITE),
         issueWrite = true,
+    )
+    private val remoteClient = ClientInfo(
+        clientIp = "203.0.113.10",
+        remoteIp = "203.0.113.10",
+        cfIp = null,
+        source = "test",
+        trustedProxy = true,
+        isLocal = false,
+        allowed = true,
     )
     private fun Application.installOpsRouteTestPlugins() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
@@ -71,7 +84,7 @@ class OpsRoutesTest {
             routing { opsRoutes(githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         assertEquals(HttpStatusCode.OK, response.status)
 
         val summary = json.decodeFromString<OpsSummaryDto>(response.body<String>())
@@ -129,7 +142,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(listOf("backend", "server_py", "arcana"), json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.map { it.id })
     }
@@ -158,8 +171,8 @@ class OpsRoutesTest {
             }
         }
 
-        val opsResponse = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
-        val publicResponse = client.get("/api/ops/summary") { header(HttpHeaders.Host, "sdfgsdfg.net") }
+        val opsResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val publicResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "sdfgsdfg.net") }
 
         assertEquals(HttpStatusCode.OK, opsResponse.status)
         assertEquals(HttpStatusCode.NotFound, publicResponse.status)
@@ -210,7 +223,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         val serverPy = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "server_py" }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -248,7 +261,7 @@ class OpsRoutesTest {
 
         val artifactResponse = client.get("/api/ops/artifacts/server-py-unit.json") { header(HttpHeaders.Host, "127.0.0.1") }
         val publicResponse = client.get("/api/ops/artifacts/server-py-unit.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
-        val summaryResponse = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val summaryResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         val serverPy = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "server_py" }
 
         assertEquals(HttpStatusCode.OK, artifactResponse.status)
@@ -294,7 +307,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(listOf("backend", "server_py", "arcana"), json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.map { it.id })
     }
@@ -312,13 +325,60 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/viewer") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val response = client.get(OPS_VIEWER_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val viewer = json.decodeFromString<OpsViewerDto>(response.body<String>())
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("kaan", viewer.userId)
         assertEquals(true, viewer.issueWrite)
-        assertEquals(listOf("issues:write"), viewer.capabilities)
+        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE), viewer.capabilities)
+    }
+
+    @Test
+    fun opsGithubSessionSignsAndExpires() {
+        val session = OpsGithubSession("kaan", "Kaan", "https://avatars.githubusercontent.com/u/1?v=4")
+        val value = signOpsGithubSession(session, "secret", nowMs = 1_000L, ttlMs = 1_000L)
+
+        assertEquals(session, verifyOpsGithubSession(value, "secret", nowMs = 1_500L))
+        assertEquals(null, verifyOpsGithubSession(value, "secret", nowMs = 2_500L))
+        assertEquals(null, verifyOpsGithubSession(value, "wrong", nowMs = 1_500L))
+    }
+
+    @Test
+    fun opsViewerUsesGithubIdentityWithoutGrantingIssueWrite() {
+        val viewer = resolveOpsViewer(remoteClient, OpsGithubSession("octo", "Octo", "avatar.png"))
+
+        assertEquals("octo", viewer.userId)
+        assertEquals("Octo", viewer.displayName)
+        assertEquals("guest", viewer.role)
+        assertEquals(listOf("github:octo"), viewer.proofs)
+        assertEquals(emptyList(), viewer.capabilities)
+        assertEquals("avatar.png", viewer.avatarUrl)
+        assertEquals(false, viewer.issueWrite)
+    }
+
+    @Test
+    fun opsViewerCombinesGithubIdentityWithOwnerIssueWrite() {
+        val ownerClient = remoteClient.copy(clientIp = "127.0.0.1", remoteIp = "127.0.0.1", isLocal = true)
+        val viewer = resolveOpsViewer(ownerClient, OpsGithubSession("octo", "Octo"))
+
+        assertEquals("octo", viewer.userId)
+        assertEquals("Octo", viewer.displayName)
+        assertEquals("admin", viewer.role)
+        assertEquals(listOf("loopback", "github:octo"), viewer.proofs)
+        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE), viewer.capabilities)
+        assertEquals(true, viewer.issueWrite)
+    }
+
+    @Test
+    fun opsViewerTreatsExpandedIpv6LoopbackAsOwner() {
+        val ownerClient = remoteClient.copy(clientIp = "0:0:0:0:0:0:0:1", remoteIp = "0:0:0:0:0:0:0:1", isLocal = true)
+        val viewer = resolveOpsViewer(ownerClient)
+
+        assertEquals("kaan", viewer.userId)
+        assertEquals("admin", viewer.role)
+        assertEquals(listOf("loopback"), viewer.proofs)
+        assertEquals(true, viewer.issueWrite)
     }
 
     @Test
@@ -334,7 +394,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.post("/api/ops/issues") {
+        val response = client.post(OPS_ISSUES_PATH) {
             header(HttpHeaders.Host, "ops.sdfgsdfg.net")
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             setBody("not-json")
@@ -357,7 +417,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.post("/api/ops/issues") {
+        val response = client.post(OPS_ISSUES_PATH) {
             header(HttpHeaders.Host, "ops.sdfgsdfg.net")
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             setBody("not-json")
@@ -365,6 +425,29 @@ class OpsRoutesTest {
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("Invalid issue mutation JSON", response.body<String>())
+    }
+
+    @Test
+    fun opsIssueMutationRejectsRemoteGithubIdentityWithoutOwnerProof() = testApplication {
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { resolveOpsViewer(remoteClient, OpsGithubSession("kaan", "Kaan")) },
+                )
+            }
+        }
+
+        val response = client.post(OPS_ISSUES_PATH) {
+            header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("not-json")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("Issue mutations require admin viewer", response.body<String>())
     }
 
     @Test
@@ -417,7 +500,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         val repos = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos
         val backend = repos.first { it.id == "backend" }
         val serverPy = repos.first { it.id == "server_py" }
@@ -451,7 +534,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val backend = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "backend" }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -496,7 +579,7 @@ class OpsRoutesTest {
             }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         val repos = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos
         val backend = repos.first { it.id == "backend" }
         val serverPy = repos.first { it.id == "server_py" }
@@ -520,7 +603,7 @@ class OpsRoutesTest {
             routing { opsRoutes(localPreview = true, arcanaIngestTargetFile = ingestFile, githubIssues = noGithubIssues, backendFullSuite = noBackendFullSuite) }
         }
 
-        val response = client.get("/api/ops/summary") { header(HttpHeaders.Host, "127.0.0.1") }
+        val response = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "127.0.0.1") }
         val arcana = json.decodeFromString<OpsSummaryDto>(response.body<String>()).repos.first { it.id == "arcana" }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -787,7 +870,7 @@ class OpsRoutesTest {
         }
         assertEquals(HttpStatusCode.Accepted, localWrite.status)
 
-        val summaryResponse = client.get("/api/ops/summary") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val summaryResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val arcana = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "arcana" }
         assertEquals(OpsStatusDto.OK, arcana.status)
         assertEquals("pytest local publisher", arcana.latestRun?.label)

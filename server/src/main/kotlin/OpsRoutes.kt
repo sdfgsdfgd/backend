@@ -37,6 +37,10 @@ import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.data.model.IssueMutationRequestDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
+import net.sdfgsdfg.data.model.OPS_ISSUES_PATH
+import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
+import net.sdfgsdfg.data.model.OPS_VIEWER_PATH
+import net.sdfgsdfg.data.model.OPS_WS_PATH
 import net.sdfgsdfg.data.model.OpsHostSnapshotDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -168,6 +172,7 @@ fun Route.opsRoutes(
     ))
 
     OpsSocketHub.configure(::summary)
+    opsGithubAuthRoutes(::allowed)
 
     suspend fun ApplicationCall.respondJsonArtifact(file: File) {
         if (!allowed(this)) {
@@ -185,7 +190,7 @@ fun Route.opsRoutes(
     }
 
     // Browser UI uses /api/ops/ws as the primary transport; keep this as the canonical snapshot endpoint for fallback and diagnostics.
-    get("/api/ops/summary") {
+    get(OPS_SUMMARY_PATH) {
         if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
@@ -193,7 +198,7 @@ fun Route.opsRoutes(
         call.respond(summary())
     }
 
-    get("/api/ops/viewer") {
+    get(OPS_VIEWER_PATH) {
         if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
@@ -201,7 +206,7 @@ fun Route.opsRoutes(
         call.respond(resolveViewer(call))
     }
 
-    webSocket("/api/ops/ws") {
+    webSocket(OPS_WS_PATH) {
         if (!allowed(call)) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
             return@webSocket
@@ -239,7 +244,7 @@ fun Route.opsRoutes(
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
-    post("/api/ops/issues") {
+    post(OPS_ISSUES_PATH) {
         if (!allowed(call)) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@post
