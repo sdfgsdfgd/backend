@@ -118,6 +118,8 @@ private fun IssuePanel(
     val source = issueSourceBreakdown(listOf(repo.issues))
     val shape = RoundedCornerShape(8.dp)
     var panelBounds by remember { mutableStateOf<Rect?>(null) }
+    val expandedPrefKey = remember(repo.id) { "ops.issues.repoExpanded.${repo.id}" }
+    var expanded by remember(expandedPrefKey) { mutableStateOf(readDashboardPref(expandedPrefKey)?.toBooleanStrictOrNull() ?: true) }
     val currentPanelBounds = rememberUpdatedState(panelBounds)
     val motionScope = rememberCoroutineScope()
     Box(
@@ -132,7 +134,12 @@ private fun IssuePanel(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.weight(1f)) {}
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    MiniActionPill(if (expanded) "hide" else "show", if (active == 0) green else amber) {
+                        expanded = !expanded
+                        writeDashboardPref(expandedPrefKey, expanded.toString())
+                    }
+                }
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         repo.name,
@@ -158,7 +165,12 @@ private fun IssuePanel(
             }
             val stacked = pageWidth < issueLaneStackBreakpoint
             val laneBodyMaxHeight = pageHeight * 2f
-            if (stacked) {
+            if (!expanded) {
+                SideEffect {
+                    drag.pruneLanes(repo.id, emptySet())
+                    issueLanes.forEach { drag.pruneTickets(repo.id, it.status, emptySet()) }
+                }
+            } else if (stacked) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     issueLanes.forEach { lane ->
                         key(lane.status) {

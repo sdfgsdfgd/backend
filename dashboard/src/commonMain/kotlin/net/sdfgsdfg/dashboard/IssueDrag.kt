@@ -115,6 +115,12 @@ internal class IssueBoardDrag {
         if (laneBounds[key] != bounds) laneBounds[key] = bounds
     }
 
+    fun pruneLanes(repoId: String, activeStatuses: Set<String>) {
+        laneBounds.keys
+            .filter { it.substringBefore(':') == repoId && it.substringAfter(':') !in activeStatuses }
+            .forEach { laneBounds.remove(it) }
+    }
+
     fun placeTicket(key: String, bounds: Rect) {
         ticketBounds[key] = bounds
     }
