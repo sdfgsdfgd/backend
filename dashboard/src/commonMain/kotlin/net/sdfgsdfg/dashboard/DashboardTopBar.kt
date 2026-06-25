@@ -589,7 +589,7 @@ private fun OpsViewerBadge(viewer: OpsViewerDto) {
                 .clip(RoundedCornerShape(999.dp))
                 .background(tone),
         )
-        Text(label, color = pillPrimaryText, fontSize = pillPrimaryTextSize, fontFamily = identityFont, fontWeight = FontWeight.Normal, maxLines = 1)
+        Text(label, color = pillPrimaryText, fontSize = 18.sp, fontFamily = identityFont, fontWeight = FontWeight.Normal, maxLines = 1)
         Text(if (writable) viewer.role.ifBlank { "admin" } else "read-only", color = pillMutedText, fontSize = pillMutedTextSize, fontFamily = labelFont, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
