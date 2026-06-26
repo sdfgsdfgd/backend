@@ -453,7 +453,7 @@ private fun IssueTicket(
                             if (dropTarget == null) {
                                 val targetBounds = drag.placedTicket(ticketKey) ?: bounds
                                 val targetOffset = panelTargetOffset(targetBounds) ?: Offset.Zero
-                                releaseOffset.animateTo(targetOffset, spring(dampingRatio = 0.54f, stiffness = 260f)) {
+                                releaseOffset.animateTo(targetOffset, spring(dampingRatio = 0.26f, stiffness = 44f)) {
                                     drag.movePreviewTo(dragSession, value)
                                 }
                             } else {
@@ -475,6 +475,7 @@ private fun IssueTicket(
                                     drag.movePreviewTo(dragSession, value)
                                 }
                             }
+                            releaseOffset.snapTo(Offset.Zero)
                             drag.clearPreview(dragSession)
                         }
                     }
