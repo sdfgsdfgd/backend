@@ -51,7 +51,6 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -64,15 +63,19 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import net.sdfgsdfg.dashboard.tools.FrameWindowProfiler
-import net.sdfgsdfg.dashboard.tools.issueFrameTrace
-import net.sdfgsdfg.dashboard.tools.issueFrameTraceEnabled
-import net.sdfgsdfg.dashboard.tools.issueJfrProfile
-import net.sdfgsdfg.dashboard.tools.issueProfileEnabled
 import net.sdfgsdfg.data.model.IssueItemDto
 
 private val issueLaneStackBreakpoint = 1180.dp
 private const val issueDragLiftScale = 1.7f
+
+private data class IssueBoardActions(
+    val create: (IssueRepoModel, String) -> Unit,
+    val edit: (IssueRepoModel, IssueItemDto) -> Unit,
+    val archiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    val deleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
+    val archive: (IssueRepoModel) -> Unit,
+    val moveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
+)
 
 @Composable
 internal fun IssuePanels(
@@ -90,10 +93,13 @@ internal fun IssuePanels(
     onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
 ) {
     val sortedRepos = remember(repos) { repos.sortedByDescending { it.issues.active } }
+    val actions = remember(onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue) {
+        IssueBoardActions(onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
             key(repo.id) {
-                IssuePanel(repo, generatedAtMs, pageWidth, pageHeight, drag, canWriteIssues, onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
+                IssuePanel(repo, generatedAtMs, pageWidth, pageHeight, drag, canWriteIssues, actions)
             }
         }
     }
@@ -107,12 +113,7 @@ private fun IssuePanel(
     pageHeight: Dp,
     drag: IssueBoardDrag,
     canWriteIssues: Boolean,
-    onCreate: (IssueRepoModel, String) -> Unit,
-    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
-    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onArchive: (IssueRepoModel) -> Unit,
-    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
+    actions: IssueBoardActions,
 ) {
     val active = repo.issues.active
     val source = issueSourceBreakdown(listOf(repo.issues))
@@ -157,7 +158,7 @@ private fun IssuePanel(
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (canWriteIssues || repo.issues.trash > 0) {
-                            ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { onArchive(repo) }
+                            ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { actions.archive(repo) }
                         }
                         StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
                     }
@@ -183,11 +184,7 @@ private fun IssuePanel(
                                 canWriteIssues,
                                 motionScope,
                                 currentPanelBounds,
-                                onCreate,
-                                onEdit,
-                                onArchiveIssue,
-                                onDeleteIssue,
-                                onMoveIssue,
+                                actions,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -206,11 +203,7 @@ private fun IssuePanel(
                                 canWriteIssues,
                                 motionScope,
                                 currentPanelBounds,
-                                onCreate,
-                                onEdit,
-                                onArchiveIssue,
-                                onDeleteIssue,
-                                onMoveIssue,
+                                actions,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -260,11 +253,7 @@ private fun IssueLane(
     canWriteIssues: Boolean,
     motionScope: CoroutineScope,
     currentPanelBounds: State<Rect?>,
-    onCreate: (IssueRepoModel, String) -> Unit,
-    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
-    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
+    actions: IssueBoardActions,
     modifier: Modifier = Modifier,
 ) {
     val optimisticStatuses = drag.optimisticStatuses
@@ -276,65 +265,19 @@ private fun IssueLane(
     val empty = tickets.isEmpty() && countBackfill <= 0
     val shape = RoundedCornerShape(8.dp)
     val laneKey = "${repo.id}:${lane.status}"
-    val previousTraceKeys = remember { arrayOf<List<String>?>(null) }
-    val traceMeasureCounts = remember { mutableMapOf<String, Int>() }
-    val tracePlaceCounts = remember { mutableMapOf<String, Int>() }
-    var removalTraceSeq by remember { mutableStateOf(0) }
-    var removalTraceKey by remember { mutableStateOf<String?>(null) }
-    var removalTraceDetail by remember { mutableStateOf("") }
-    var removalTraceMovedKeys by remember { mutableStateOf(emptySet<String>()) }
-    val traceEnabled = issueFrameTraceEnabled()
-    val profileEnabled = issueProfileEnabled()
+    val diagnostics = rememberIssueLaneDiagnostics(
+        repoId = repo.id,
+        laneStatus = lane.status,
+        ticketKeys = ticketKeys,
+        countBackfill = countBackfill,
+        firstVisibleItemIndex = listState.firstVisibleItemIndex,
+        firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset,
+    )
     LaunchedEffect(headKey) {
         if (headKey != null) listState.animateScrollToItem(0)
     }
     SideEffect {
         drag.pruneTickets(repo.id, lane.status, ticketKeys.toSet())
-    }
-    LaunchedEffect(ticketKeys, countBackfill, profileEnabled) {
-        val previous = previousTraceKeys[0]
-        previousTraceKeys[0] = ticketKeys
-        if (!profileEnabled || previous == null) return@LaunchedEffect
-
-        val previousSet = previous.toSet()
-        val currentSet = ticketKeys.toSet()
-        val created = ticketKeys.filter { it !in previousSet }
-        val removed = previous.filter { it !in currentSet }
-        val moved = ticketKeys.filter { it in previousSet && previous.indexOf(it) != ticketKeys.indexOf(it) }
-        if (created.isEmpty() && removed.isEmpty() && moved.isEmpty()) return@LaunchedEffect
-
-        val laneId = "${repo.id}:${lane.status}"
-        val removedIndex = removed.firstOrNull()?.let(previous::indexOf) ?: -1
-        val shifted = if (removedIndex >= 0) previous.drop(removedIndex + 1).filter { it in currentSet } else moved
-        val detail =
-            "lane=$laneId keys=${previous.size}->${ticketKeys.size} backfill=$countBackfill first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset} removedIndex=$removedIndex shifted=${shifted.size} created=${created.traceKeys()} removed=${removed.traceKeys()} moved=${moved.traceKeys()}"
-        issueFrameTrace("lane-change") { detail }
-        if (removed.isNotEmpty()) {
-            traceMeasureCounts.clear()
-            tracePlaceCounts.clear()
-            removalTraceMovedKeys = shifted.toSet()
-            removalTraceSeq += 1
-            removalTraceDetail = detail
-            removalTraceKey = "$laneId:$removalTraceSeq:${removed.joinToString("|")}"
-        }
-    }
-    removalTraceKey?.let { key ->
-        FrameWindowProfiler(
-            enabled = issueProfileEnabled(),
-            key = key,
-            windowMs = 2_200L,
-            jfr = issueJfrProfile("remove", removalTraceDetail),
-            onSevereFrame = { sample ->
-                issueFrameTrace("remove-frame-skip") {
-                    "$removalTraceDetail frame=${sample.frame} delta=${sample.deltaMs}ms"
-                }
-            },
-            onSummary = { summary ->
-                issueFrameTrace("remove-frame-summary") {
-                    "$removalTraceDetail complete=${summary.complete} elapsed=${summary.elapsedMs}ms frames=${summary.frames} slowOver34=${summary.slowFrames} severeOver80=${summary.severeFrames} worst=${summary.worstFrameMs}ms measured=${traceMeasureCounts.traceCounts()} placed=${tracePlaceCounts.traceCounts()}"
-                }
-            },
-        )
     }
     Column(
         modifier = modifier
@@ -351,7 +294,7 @@ private fun IssueLane(
     ) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (canWriteIssues && lane.status == "todo") MiniActionPill("+", lane.color.copy(alpha = if (empty) 0.55f else 1f)) { onCreate(repo, lane.status) }
+                if (canWriteIssues && lane.status == "todo") MiniActionPill("+", lane.color.copy(alpha = if (empty) 0.55f else 1f)) { actions.create(repo, lane.status) }
             }
             Box(
                 modifier = Modifier
@@ -380,16 +323,13 @@ private fun IssueLane(
                     generatedAtMs = generatedAtMs,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .issueLayoutTrace(traceEnabled, issue.ticketKey(repo.id), removalTraceMovedKeys, traceMeasureCounts, tracePlaceCounts)
+                        .issueLayoutTrace(diagnostics, issue.ticketKey(repo.id))
                         .animateItem(),
                     drag = drag,
                     canWriteIssues = canWriteIssues,
                     motionScope = motionScope,
                     currentPanelBounds = currentPanelBounds,
-                    onEdit = onEdit,
-                    onArchiveIssue = onArchiveIssue,
-                    onDeleteIssue = onDeleteIssue,
-                    onMoveIssue = onMoveIssue,
+                    actions = actions,
                 )
             }
             countBackfill.takeIf { it > 0 }?.let { count ->
@@ -413,10 +353,7 @@ private fun IssueTicket(
     canWriteIssues: Boolean,
     motionScope: CoroutineScope,
     currentPanelBounds: State<Rect?>,
-    onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
-    onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
+    actions: IssueBoardActions,
 ) {
     val ticketKey = issue.ticketKey(repo.id)
     var dragging by remember { mutableStateOf(false) }
@@ -477,7 +414,7 @@ private fun IssueTicket(
                                 change.consume()
                             }
                             if (change.changedToUpIgnoreConsumed()) {
-                                if (!moved) onEdit(repo, issue)
+                                if (!moved) actions.edit(repo, issue)
                                 break
                             }
                         }
@@ -495,7 +432,7 @@ private fun IssueTicket(
                             }
                             return@awaitEachGesture
                         }
-                        val dropTarget = drag.dropTarget(dragSession, bounds.offsetBy(settleFrom), onMoveIssue, keepPreview = true)
+                        val dropTarget = drag.dropTarget(dragSession, bounds.offsetBy(settleFrom), actions.moveIssue, keepPreview = true)
                         motionJob[0]?.cancel()
                         val releasePanelBounds = currentPanelBounds.value
                         val releaseStartBounds = releasePanelBounds?.let { drag.anchorPreviewToPanel(dragSession, it) }
@@ -569,11 +506,14 @@ private fun IssueTicket(
             else -> 0f
         },
         animatedFreshness = false,
+        onEdit = if (editable) {
+            { actions.edit(repo, issue) }
+        } else null,
         onArchive = if (editable && issue.status != "trash") {
-            { onArchiveIssue(repo, issue) }
+            { actions.archiveIssue(repo, issue) }
         } else null,
         onDelete = if (editable) {
-            { onDeleteIssue(repo, issue) }
+            { actions.deleteIssue(repo, issue) }
         } else null,
     )
 }
@@ -599,32 +539,3 @@ private fun IssueCountTicket(lane: IssueLaneSpec, repo: IssueRepoModel, count: I
         }
     }
 }
-
-private fun List<String>.traceKeys(limit: Int = 5) =
-    take(limit).joinToString(prefix = "[", postfix = if (size > limit) ",+${size - limit}]" else "]")
-
-private fun Modifier.issueLayoutTrace(
-    enabled: Boolean,
-    key: String,
-    trackedKeys: Set<String>,
-    measures: MutableMap<String, Int>,
-    places: MutableMap<String, Int>,
-) = if (!enabled || key !in trackedKeys) {
-    this
-} else {
-    layout { measurable, constraints ->
-        measures[key] = (measures[key] ?: 0) + 1
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, placeable.height) {
-            places[key] = (places[key] ?: 0) + 1
-            placeable.place(0, 0)
-        }
-    }
-}
-
-private fun Map<String, Int>.traceCounts(limit: Int = 5) =
-    entries.sortedByDescending { it.value }
-        .take(limit)
-        .joinToString(prefix = "[", postfix = if (size > limit) ",+${size - limit}]" else "]") {
-            "${it.key.substringAfterLast(':')}=${it.value}"
-        }

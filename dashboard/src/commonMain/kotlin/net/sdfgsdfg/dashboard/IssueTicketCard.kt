@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -13,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,6 +32,7 @@ internal fun IssueTicketCard(
     hovered: Boolean = false,
     dragTone: Float = 0f,
     animatedFreshness: Boolean = true,
+    onEdit: (() -> Unit)? = null,
     onArchive: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
@@ -39,7 +42,15 @@ internal fun IssueTicketCard(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
-            .background(panelRaised)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.030f),
+                        panelRaised.copy(alpha = 0.90f),
+                        Color.Black.copy(alpha = 0.11f),
+                    ),
+                ),
+            )
             .background(lane.color.copy(alpha = washAlpha))
             .border(BorderStroke(1.dp, lane.color.copy(alpha = borderAlpha)), RoundedCornerShape(7.dp))
             .padding(9.dp),
@@ -51,22 +62,34 @@ internal fun IssueTicketCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Text("$issueCode · ${issue.sourceLabel.issueSourceShort()}", color = muted, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "$issueCode · ${issue.sourceLabel.issueSourceShort()}",
+                    modifier = Modifier.weight(1f),
+                    color = muted,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (onEdit != null || onArchive != null || onDelete != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        onEdit?.let { EditButton(color = lane.color, compact = true, onClick = it) }
+                        onArchive?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
+                        onDelete?.let { DeleteButton(onClick = it) }
+                    }
+                }
+                timestamp?.let { AgePill(it, generatedAtMs) }
+            }
             Text(issue.title.ifBlank { issue.id }, color = text, fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             issue.description.takeIf { it.isNotBlank() }?.let {
                 Text(it, color = Color(0xFFB9C5D2), fontSize = 11.sp, lineHeight = 15.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
             }
             issue.notes.visibleNotes(issue.description)?.let {
                 Text(it, color = muted, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            timestamp?.let { AgePill(it, generatedAtMs) }
-            if (onArchive != null || onDelete != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    onArchive?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
-                    onDelete?.let { DeleteButton(onClick = it) }
-                }
             }
         }
     }
