@@ -1,5 +1,6 @@
 package net.sdfgsdfg.dashboard
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
@@ -43,17 +44,6 @@ import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 
-internal enum class DashboardTab(val label: String) {
-    Home("Home"),
-    Ci("CI Results"),
-    Issues("Issues"),
-    Arcana("Arcana Sessions");
-
-    companion object {
-        fun fromStoredName(value: String) = if (value == "IssuesNew") Issues else entries.firstOrNull { it.name == value }
-    }
-}
-
 private fun OpsSummaryDto.issueTraceShape() =
     "repos=${repos.joinToString { "${it.id}:${it.issues.active}/${it.issues.items.size}" }}"
 
@@ -61,12 +51,6 @@ private fun String.runLifecycleLabel() = when {
     startsWith("deploy ") -> "deploy"
     this == "live e2e selftest" || this == "live selftest" -> "live selftest"
     else -> this
-}
-
-internal sealed interface OpsLoadState {
-    data object Loading : OpsLoadState
-    data class Ready(val summary: OpsSummaryDto) : OpsLoadState
-    data class Failed(val message: String) : OpsLoadState
 }
 
 @Composable
@@ -237,7 +221,7 @@ fun DashboardApp(
                     }
                 }
                 //endregion
-                val ciSummary = if (selectedTab == DashboardTab.Ci) (loadState as? OpsLoadState.Ready)?.summary else null
+                val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
                 val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
                 LazyColumn(
                     state = listState,
@@ -261,38 +245,35 @@ fun DashboardApp(
                     item(key = "tab-content-top") {
                         Spacer(Modifier.height(14.dp))
                     }
-                    when (selectedTab) {
-                        DashboardTab.Home -> homeItems(loadState, pageWidth)
-                        DashboardTab.Ci -> ciItems(loadState, pageWidth, ciHistoryState)
-                        DashboardTab.Issues -> item(key = "issues") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp),
-                            ) {
-                                Issues(
-                                    loadState = loadState,
-                                    pageWidth = pageWidth,
-                                    pageHeight = pageHeight,
-                                    canWriteIssues = viewer.issueWrite,
-                                    onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
-                                    onEditorActiveChanged = { issueEditorActive = it },
-                                )
+                    item(key = "tab-content") {
+                        Crossfade(
+                            targetState = selectedTab,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = "dashboard-tab-crossfade",
+                        ) { tab ->
+                            when (tab) {
+                                DashboardTab.Home -> HomeTab(loadState, pageWidth)
+                                DashboardTab.Ci -> CiTab(loadState, pageWidth)
+                                DashboardTab.Issues -> Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                ) {
+                                    Issues(
+                                        loadState = loadState,
+                                        pageWidth = pageWidth,
+                                        pageHeight = pageHeight,
+                                        canWriteIssues = viewer.issueWrite,
+                                        onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
+                                        onEditorActiveChanged = { issueEditorActive = it },
+                                    )
+                                }
+                                DashboardTab.Arcana -> ArcanaSessionsTab()
                             }
                         }
-                        DashboardTab.Arcana -> item(key = "arcana") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp),
-                            ) {
-                                WorkSurface(
-                                    title = "Arcana Sessions",
-                                    detail = "WIP. Ask the user what to steal from frontend-compose and frontend-next before this tab is implemented.",
-                                    items = listOf("session chat", "patch review", "local artifacts", "desktop-only actions"),
-                                )
-                            }
-                        }
+                    }
+                    if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
+                        ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
                     }
                     item(key = "tab-content-bottom") {
                         Spacer(Modifier.height(14.dp))

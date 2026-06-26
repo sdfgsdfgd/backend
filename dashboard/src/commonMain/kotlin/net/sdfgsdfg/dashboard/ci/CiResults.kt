@@ -22,13 +22,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,32 +58,26 @@ import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 
-internal fun LazyListScope.ciItems(loadState: OpsLoadState, pageWidth: Dp, historyState: CiHistoryState?) {
+@Composable
+internal fun CiTab(loadState: OpsLoadState, pageWidth: Dp, modifier: Modifier = Modifier) {
     when (loadState) {
-        OpsLoadState.Loading -> item(key = "ci-loading") {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                WorkSurface(
-                    title = "CI Results",
-                    detail = "Waiting for ops summary.",
-                    items = listOf("backend", "server_py", "arcana"),
-                )
-            }
+        OpsLoadState.Loading -> Box(modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            WorkSurface(
+                title = "CI Results",
+                detail = "Waiting for ops summary.",
+                items = listOf("backend", "server_py", "arcana"),
+            )
         }
-        is OpsLoadState.Failed -> item(key = "ci-failed") {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                WorkSurface(
-                    title = "CI Results Unavailable",
-                    detail = loadState.message,
-                    items = listOf(OPS_SUMMARY_PATH, "backend control plane", "dashboard API"),
-                )
-            }
+        is OpsLoadState.Failed -> Box(modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            WorkSurface(
+                title = "CI Results Unavailable",
+                detail = loadState.message,
+                items = listOf(OPS_SUMMARY_PATH, "backend control plane", "dashboard API"),
+            )
         }
-        is OpsLoadState.Ready -> {
-            item(key = "ci-header") {
-                CiHeader(loadState.summary, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp))
-            }
-            verificationItems(loadState.summary, pageWidth)
-            historyState?.let { historyItems(it, loadState.summary.generatedAtMs) }
+        is OpsLoadState.Ready -> Column(modifier.fillMaxWidth()) {
+            CiHeader(loadState.summary, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp))
+            VerificationItems(loadState.summary, pageWidth)
         }
     }
 }
@@ -108,28 +103,31 @@ private fun CiHeader(summary: OpsSummaryDto, modifier: Modifier = Modifier) {
     }
 }
 
-private fun LazyListScope.verificationItems(summary: OpsSummaryDto, pageWidth: Dp) {
+@Composable
+private fun VerificationItems(summary: OpsSummaryDto, pageWidth: Dp) {
     val repos = summary.repos
     if (pageWidth < 980.dp) {
-        itemsIndexed(repos, key = { _, repo -> "ci-repo-${repo.id}" }) { index, repo ->
-            val bottom = if (index == repos.lastIndex) 14.dp else 12.dp
-            CiRepoCard(
-                repo = repo,
-                generatedAtMs = summary.generatedAtMs,
-                fieldCompact = pageWidth < 620.dp,
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = bottom),
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            repos.forEach { repo ->
+                key(repo.id) {
+                    CiRepoCard(
+                        repo = repo,
+                        generatedAtMs = summary.generatedAtMs,
+                        fieldCompact = pageWidth < 620.dp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    )
+                }
+            }
         }
+        Spacer(Modifier.height(14.dp))
     } else {
-        item(key = "ci-repo-grid") {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                repos.forEach { repo ->
-                    key(repo.id) {
-                        CiRepoCard(repo, summary.generatedAtMs, fieldCompact = true, modifier = Modifier.weight(1f))
-                    }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            repos.forEach { repo ->
+                key(repo.id) {
+                    CiRepoCard(repo, summary.generatedAtMs, fieldCompact = true, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -441,7 +439,7 @@ internal data class CiHistoryEvent(
     val key: String,
 )
 
-private fun LazyListScope.historyItems(state: CiHistoryState, generatedAtMs: Long) {
+internal fun LazyListScope.ciHistoryItems(state: CiHistoryState, generatedAtMs: Long) {
     item(key = "ci-history-header") {
         RunHistoryHeader(state, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
     }
@@ -607,10 +605,9 @@ private fun RepoHealthDto.ciRole() = when (id) {
 private fun String.displayRepoName() = if (this == "server_py") "server_py" else replaceFirstChar { it.uppercase() }
 
 private fun TestRunSummaryDto.ciKey(repo: RepoHealthDto): String {
-    val identity = url
-        ?: timestampMs?.toString()
-        ?: listOfNotNull(durationMs?.toString(), coveragePct?.toString(), status.name).joinToString(":")
-    return "${repo.id}-$label-$identity"
+    url?.let { return "${repo.id}:url:$it" }
+    timestampMs?.let { return "${repo.id}:time:$label:$it" }
+    return "${repo.id}:live:$label"
 }
 
 private fun String.historyColor() = when (this) {

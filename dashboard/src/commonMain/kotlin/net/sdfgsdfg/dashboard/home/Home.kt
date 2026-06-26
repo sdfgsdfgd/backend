@@ -3,7 +3,6 @@ package net.sdfgsdfg.dashboard
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -33,8 +32,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,25 +62,49 @@ import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 
-internal fun LazyListScope.homeItems(loadState: OpsLoadState, pageWidth: Dp) {
+@Composable
+internal fun HomeTab(loadState: OpsLoadState, pageWidth: Dp, modifier: Modifier = Modifier) {
     when (loadState) {
-        OpsLoadState.Loading -> item(key = "home-loading") {
-            LoadingPanel(pageWidth, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        OpsLoadState.Loading -> LoadingPanel(pageWidth, modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        is OpsLoadState.Failed -> Box(modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            WorkSurface(
+                title = "Ops Summary Unavailable",
+                detail = loadState.message,
+                items = listOf(OPS_SUMMARY_PATH, "backend service", "local preview route"),
+            )
         }
-        is OpsLoadState.Failed -> item(key = "home-failed") {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                WorkSurface(
-                    title = "Ops Summary Unavailable",
-                    detail = loadState.message,
-                    items = listOf(OPS_SUMMARY_PATH, "backend service", "local preview route"),
-                )
+        is OpsLoadState.Ready -> Column(modifier.fillMaxWidth()) {
+            SummaryStrip(loadState.summary, pageWidth, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
+            RepoItems(loadState.summary.repos, loadState.summary.generatedAtMs, pageWidth)
+        }
+    }
+}
+
+@Composable
+private fun RepoItems(repos: List<RepoHealthDto>, generatedAtMs: Long, pageWidth: Dp) {
+    val stacked = pageWidth < 980.dp
+    if (stacked) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            repos.forEach { repo ->
+                key(repo.id) {
+                    RepoCard(
+                        repo = repo,
+                        generatedAtMs = generatedAtMs,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    )
+                }
             }
         }
-        is OpsLoadState.Ready -> {
-            item(key = "home-summary") {
-                SummaryStrip(loadState.summary, pageWidth, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            repos.forEach { repo ->
+                key(repo.id) {
+                    RepoCard(repo, generatedAtMs, modifier = Modifier.weight(1f))
+                }
             }
-            repoItems(loadState.summary.repos, loadState.summary.generatedAtMs, pageWidth)
         }
     }
 }
@@ -114,33 +137,6 @@ private fun SummaryStrip(summary: OpsSummaryDto, pageWidth: Dp, modifier: Modifi
                 key(metric.name) {
                     Box(modifier = Modifier.weight(1f)) {
                         MetricCard(metric)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun LazyListScope.repoItems(repos: List<RepoHealthDto>, generatedAtMs: Long, pageWidth: Dp) {
-    val stacked = pageWidth < 980.dp
-    if (stacked) {
-        itemsIndexed(repos, key = { _, repo -> "home-repo-${repo.id}" }) { index, repo ->
-            val bottom = if (index == repos.lastIndex) 0.dp else 10.dp
-            RepoCard(
-                repo = repo,
-                generatedAtMs = generatedAtMs,
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = bottom),
-            )
-        }
-    } else {
-        item(key = "home-repo-grid") {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                repos.forEach { repo ->
-                    key(repo.id) {
-                        RepoCard(repo, generatedAtMs, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -272,7 +268,7 @@ private fun SignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
 private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) {
     val summary = remember(signals) { signals.firstOrNull { it.isActiveProcessSummary() } }
     val processRows = remember(signals) { signals.filterNot { it.isActiveProcessSummary() } }
-    val processKeys = remember(processRows) { processRows.map { it.signalKey() } }
+    val processKeys = remember(processRows) { processRows.map { it.processSignalKey() } }
     val freshKeys = rememberFreshKeys(processKeys)
     var expanded by remember { mutableStateOf(readDashboardPref("ops.home.activeExpanded")?.toBooleanStrictOrNull() ?: true) }
 
@@ -298,24 +294,18 @@ private fun ArcanaSignalStack(signals: List<OpsSignalDto>, generatedAtMs: Long) 
                 shrinkVertically(tween(220, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) +
                 slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it / 4 },
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                processRows.forEachIndexed { index, process ->
-                    val rowKey = processKeys[index]
-                    key(rowKey) {
-                        val visibleState = remember {
-                            MutableTransitionState(false).apply { targetState = true }
-                        }
-                        AnimatedVisibility(
-                            visibleState = visibleState,
-                            enter = fadeIn(tween(320, easing = FastOutSlowInEasing)) +
-                                expandVertically(tween(360, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
-                                slideInVertically(tween(360, easing = FastOutSlowInEasing)) { -it / 2 },
-                            exit = fadeOut(tween(140, easing = FastOutSlowInEasing)) +
-                                shrinkVertically(tween(190, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
-                        ) {
-                            ProcessSignalRow(process, generatedAtMs, fresh = rowKey in freshKeys)
-                        }
-                    }
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(processRows, key = { it.processSignalKey() }) { process ->
+                    val rowKey = process.processSignalKey()
+                    ProcessSignalRow(
+                        signal = process,
+                        generatedAtMs = generatedAtMs,
+                        fresh = rowKey in freshKeys,
+                        modifier = Modifier.animateItem(),
+                    )
                 }
             }
         }
@@ -402,7 +392,7 @@ private fun SignalRow(
 }
 
 @Composable
-private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: Boolean = false) {
+private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: Boolean = false, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(7.dp)
     val command = remember(signal.label, signal.detail) {
         signal.detail?.takeIf { signal.label == "arcana" }?.arcanaCommandParts()
@@ -418,6 +408,7 @@ private fun ProcessSignalRow(signal: OpsSignalDto, generatedAtMs: Long, fresh: B
     )
     Row(
         modifier = Modifier
+            .then(modifier)
             .fillMaxWidth()
             .padding(start = 18.dp)
             .clip(shape)
@@ -523,6 +514,8 @@ private fun OpsSignalDto.activeProcessGroups(): List<Pair<String, List<BadgeSpec
     }
 
 private fun OpsSignalDto.signalKey() = "$label-$meta-$timestampMs-$detail"
+
+private fun OpsSignalDto.processSignalKey() = "$label-${meta ?: detail ?: timestampMs ?: label}"
 
 private fun String.arcanaCommandParts(): Pair<String, List<String>> {
     fun compact(value: String, max: Int) = value.replace(Regex("\\s+"), " ")

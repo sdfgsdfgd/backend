@@ -24,13 +24,6 @@ internal expect fun loadOpsViewer(
     onFailed: (String) -> Unit,
 )
 
-internal enum class OpsSocketStatus { CONNECTING, CONNECTED, DISCONNECTED }
-
-internal data class OpsSocketState(
-    val status: OpsSocketStatus = OpsSocketStatus.CONNECTING,
-    val latencyMs: Long? = null,
-)
-
 internal expect fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,
@@ -49,15 +42,6 @@ internal expect fun startOpsGithubAuth(onComplete: () -> Unit)
 internal expect fun endOpsGithubAuth(onComplete: () -> Unit)
 
 internal expect fun cancelOpsGithubAuth()
-
-data class OpsGithubAuthWindowState(
-    val title: String,
-    val code: String? = null,
-    val detail: String,
-    val status: String,
-    val terminal: Boolean = false,
-    val success: Boolean = false,
-)
 
 private val mutableOpsGithubAuthWindowState = MutableStateFlow<OpsGithubAuthWindowState?>(null)
 val opsGithubAuthWindowState: StateFlow<OpsGithubAuthWindowState?> = mutableOpsGithubAuthWindowState.asStateFlow()

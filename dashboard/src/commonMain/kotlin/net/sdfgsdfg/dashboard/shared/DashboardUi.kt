@@ -48,7 +48,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import net.sdfgsdfg.data.model.IssueItemDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -71,15 +70,6 @@ internal val ritualPurpleGlow = Color(0xFF9A6AFF)
 internal val liveProcessCount = Regex("""(\d+) (arcana|codex) live""")
 internal const val OPS_SUMMARY_REFRESH_MS = 45_000L
 internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
-
-
-internal data class FieldSpec(val name: String, val value: String, val detail: String? = null)
-internal data class IssueLaneSpec(val label: String, val status: String, val color: Color, val count: (IssueSummaryDto) -> Int) {
-    fun items(issues: IssueSummaryDto): List<IssueItemDto> =
-        issues.items.filter { it.status == status }.sortedByCreation()
-}
-internal fun List<IssueItemDto>.sortedByCreation() = sortedByDescending { it.createdAtMs ?: Long.MIN_VALUE }
-internal data class BadgeSpec(val label: String, val color: Color, val strong: Boolean = false)
 
 @Composable
 internal fun rememberFreshKeys(keys: List<String>): Set<String> {
