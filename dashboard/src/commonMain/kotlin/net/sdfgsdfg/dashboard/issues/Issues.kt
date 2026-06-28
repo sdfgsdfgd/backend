@@ -93,8 +93,7 @@ internal fun Issues(
                     canWriteIssues = canWriteIssues,
                     onCreate = { repo, status -> editor = IssueEditorState(repo.id, status) },
                     onEdit = { repo, issue -> editor = IssueEditorState(repo.id, issue.status, issue.id, issue.issueEditorText()) },
-                    onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("trash", repo.id, id = issue.id, status = "trash")) },
-                    onDeleteIssue = { repo, issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
+                    onArchiveIssue = { repo, issue -> mutate(IssueMutationRequestDto("archive", repo.id, id = issue.id, status = "archive")) },
                     onArchive = { archiveRepo = it },
                     onMoveIssue = { repo, issue, status -> mutate(IssueMutationRequestDto("move", repo.id, id = issue.id, status = status)) },
                 )
@@ -118,8 +117,6 @@ internal fun Issues(
     archiveRepo?.let { repo ->
         ArchiveDialog(
             repo = repo,
-            canWriteIssues = canWriteIssues,
-            onDelete = { issue -> mutate(IssueMutationRequestDto("delete", repo.id, id = issue.id)) },
             onDismiss = { archiveRepo = null },
         )
     }

@@ -24,17 +24,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import net.sdfgsdfg.data.model.IssueItemDto
 
 @Composable
 internal fun ArchiveDialog(
     repo: IssueRepoModel,
-    canWriteIssues: Boolean,
-    onDelete: (IssueItemDto) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val archived = remember(repo.issues.items) {
-        repo.issues.items.filter { it.status == "trash" }.sortedByCreation()
+        repo.issues.items.filter { it.status == "archive" }.sortedByCreation()
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -65,7 +62,6 @@ internal fun ArchiveDialog(
                                 Text("${repo.issueCode(issue)} · ${issue.title.ifBlank { issue.id }}", color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(issue.description.ifBlank { issue.notes }.ifBlank { " " }, color = Color(0xFFB9C5D2), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            if (canWriteIssues) DeleteButton { onDelete(issue) }
                         }
                     }
                 }

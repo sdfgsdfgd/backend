@@ -72,7 +72,6 @@ private data class IssueBoardActions(
     val create: (IssueRepoModel, String) -> Unit,
     val edit: (IssueRepoModel, IssueItemDto) -> Unit,
     val archiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    val deleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
     val archive: (IssueRepoModel) -> Unit,
     val moveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
 )
@@ -88,13 +87,12 @@ internal fun IssuePanels(
     onCreate: (IssueRepoModel, String) -> Unit,
     onEdit: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchiveIssue: (IssueRepoModel, IssueItemDto) -> Unit,
-    onDeleteIssue: (IssueRepoModel, IssueItemDto) -> Unit,
     onArchive: (IssueRepoModel) -> Unit,
     onMoveIssue: (IssueRepoModel, IssueItemDto, String) -> Unit,
 ) {
     val sortedRepos = remember(repos) { repos.sortedByDescending { it.issues.active } }
-    val actions = remember(onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue) {
-        IssueBoardActions(onCreate, onEdit, onArchiveIssue, onDeleteIssue, onArchive, onMoveIssue)
+    val actions = remember(onCreate, onEdit, onArchiveIssue, onArchive, onMoveIssue) {
+        IssueBoardActions(onCreate, onEdit, onArchiveIssue, onArchive, onMoveIssue)
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sortedRepos.forEach { repo ->
@@ -157,8 +155,8 @@ private fun IssuePanel(
                 }
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (canWriteIssues || repo.issues.trash > 0) {
-                            ArchiveButton(color = if (repo.issues.trash > 0) cyan else muted, count = repo.issues.trash.takeIf { it > 0 }) { actions.archive(repo) }
+                        if (canWriteIssues || repo.issues.archive > 0) {
+                            ArchiveButton(color = if (repo.issues.archive > 0) cyan else muted, count = repo.issues.archive.takeIf { it > 0 }) { actions.archive(repo) }
                         }
                         StatusPill(if (active == 0) "clear" else "$active active", if (active == 0) green else amber)
                     }
@@ -238,8 +236,7 @@ private fun IssueDragOverlay(preview: IssueDragPreview?, generatedAtMs: Long, pa
             },
         dragTone = 1f,
         animatedFreshness = false,
-        onArchive = if (editable && preview.issue.status != "trash") ({}) else null,
-        onDelete = if (editable) ({}) else null,
+        onArchive = if (editable && preview.issue.status != "archive") ({}) else null,
     )
 }
 
@@ -510,11 +507,8 @@ private fun IssueTicket(
         onEdit = if (editable) {
             { actions.edit(repo, issue) }
         } else null,
-        onArchive = if (editable && issue.status != "trash") {
+        onArchive = if (editable && issue.status != "archive") {
             { actions.archiveIssue(repo, issue) }
-        } else null,
-        onDelete = if (editable) {
-            { actions.deleteIssue(repo, issue) }
         } else null,
     )
 }

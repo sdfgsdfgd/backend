@@ -197,7 +197,7 @@ data class IssueSummaryDto(
     val blocked: Int = 0,
     val review: Int = 0,
     val done: Int = 0,
-    val trash: Int = 0,
+    val archive: Int = 0,
     val sources: List<IssueSourceSummaryDto> = emptyList(),
     val items: List<IssueItemDto> = emptyList(),
     val events: List<IssueEventDto> = emptyList(),
@@ -216,7 +216,7 @@ data class IssueSourceSummaryDto(
     val blocked: Int = 0,
     val review: Int = 0,
     val done: Int = 0,
-    val trash: Int = 0,
+    val archive: Int = 0,
 ) {
     val active: Int
         get() = todo + wip + blocked + review

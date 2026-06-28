@@ -970,7 +970,7 @@ private fun repoIssues(repoRoot: File, githubRepo: String, githubIssues: (String
 private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(issueMutationLock) {
     val repoRoot = issueRepoRoots[request.repo] ?: error("Unknown repo: ${request.repo}")
     val op = request.op.lowercase()
-    val status = if (op == "delete" || op == "trash") "trash" else request.status.normalizedIssueStatus() ?: error("Invalid status: ${request.status}")
+    val status = if (op == "archive") "archive" else request.status.normalizedIssueStatus() ?: error("Invalid status: ${request.status}")
     val issuesFile = repoRoot.resolve(".arcana/issues.json")
     val eventsFile = repoRoot.resolve(".arcana/issues.events.jsonl")
     val now = System.currentTimeMillis()
@@ -1013,22 +1013,17 @@ private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(is
             issues[index] = issue
             issue to event(if (status == "done" && before.statusText() != "done") "completed" else "updated", issue, before)
         }
-        "trash" -> {
+        "archive" -> {
             if (index < 0) error("Issue not found: ${request.id}")
             val before = issues[index]
             val issue = before.updatedIssueObject(
                 before["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                "trash",
+                "archive",
                 before["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 now,
             )
             issues[index] = issue
-            issue to event("trashed", issue, before)
-        }
-        "delete" -> {
-            if (index < 0) error("Issue not found: ${request.id}")
-            val issue = issues.removeAt(index)
-            issue to event("deleted", issue)
+            issue to event("archived", issue, before)
         }
         else -> error("Invalid issue op: ${request.op}")
     }
@@ -1249,7 +1244,7 @@ private fun IssueSummaryDto.with(status: String, item: IssueItemDto? = null): Is
         "blocked" -> copy(blocked = blocked + 1)
         "review" -> copy(review = review + 1)
         "done" -> copy(done = done + 1)
-        "trash" -> copy(trash = trash + 1)
+        "archive" -> copy(archive = archive + 1)
         else -> this
     }
     return item?.let { counted.copy(items = counted.items + it.copy(status = normalized)) } ?: counted
@@ -1261,11 +1256,11 @@ private fun String.normalizedIssueStatus() = when (trim().lowercase().replace("-
     "blocked", "blocker" -> "blocked"
     "review", "in_review", "reviewing" -> "review"
     "done", "complete", "completed", "closed" -> "done"
-    "trash", "trashed", "delete", "deleted", "archive", "archived" -> "trash"
+    "archive" -> "archive"
     else -> null
 }
 
-private fun IssueSummaryDto.hasAny(): Boolean = active + done + trash > 0
+private fun IssueSummaryDto.hasAny(): Boolean = active + done + archive > 0
 
 private fun IssueSummaryDto.withSource(id: String, label: String, url: String? = null) = copy(
     sources = listOf(
@@ -1278,7 +1273,7 @@ private fun IssueSummaryDto.withSource(id: String, label: String, url: String? =
             blocked = blocked,
             review = review,
             done = done,
-            trash = trash,
+            archive = archive,
         ),
     ),
 )
@@ -1289,7 +1284,7 @@ private operator fun IssueSummaryDto.plus(other: IssueSummaryDto) = IssueSummary
     blocked = blocked + other.blocked,
     review = review + other.review,
     done = done + other.done,
-    trash = trash + other.trash,
+    archive = archive + other.archive,
     sources = sources + other.sources,
     items = items + other.items,
     events = (events + other.events).sortedByDescending { it.tsMs ?: 0L }.take(80),

@@ -141,29 +141,3 @@ internal fun ArchiveButton(
         }
     }
 }
-
-@Composable
-internal fun DeleteButton(onClick: () -> Unit) {
-    val color = Color(0xFFE7A1A1)
-    val shape = RoundedCornerShape(999.dp)
-    Box(
-        modifier = Modifier
-            .size(25.dp)
-            .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.055f), color.copy(alpha = 0.040f), Color.Black.copy(alpha = 0.14f))))
-            .border(BorderStroke(1.dp, color.copy(alpha = 0.28f)), shape)
-            .clickable(onClick = onClick)
-            .padding(5.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(modifier = Modifier.size(13.dp)) {
-            val stroke = 1.25.dp.toPx()
-            val cx = size.width / 2f
-            val cy = size.height / 2f
-            drawCircle(color.copy(alpha = 0.055f), radius = size.minDimension * 0.42f, center = Offset(cx, cy))
-            drawCircle(color.copy(alpha = 0.34f), radius = size.minDimension * 0.36f, center = Offset(cx, cy), style = Stroke(stroke * 0.82f))
-            drawLine(color.copy(alpha = 0.72f), Offset(size.width * 0.33f, size.height * 0.33f), Offset(size.width * 0.67f, size.height * 0.67f), strokeWidth = stroke, cap = StrokeCap.Round)
-            drawLine(color.copy(alpha = 0.72f), Offset(size.width * 0.67f, size.height * 0.33f), Offset(size.width * 0.33f, size.height * 0.67f), strokeWidth = stroke, cap = StrokeCap.Round)
-        }
-    }
-}

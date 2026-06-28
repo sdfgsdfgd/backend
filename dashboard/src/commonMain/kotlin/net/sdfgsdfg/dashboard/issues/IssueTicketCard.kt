@@ -34,7 +34,6 @@ internal fun IssueTicketCard(
     animatedFreshness: Boolean = true,
     onEdit: (() -> Unit)? = null,
     onArchive: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null,
 ) {
     val timestamp = issue.updatedAtMs ?: issue.createdAtMs ?: issue.completedAtMs
     val washAlpha = ((if (hovered) 0.09f else 0f) + dragTone * 0.11f).coerceAtMost(0.32f)
@@ -75,11 +74,10 @@ internal fun IssueTicketCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (onEdit != null || onArchive != null || onDelete != null) {
+                if (onEdit != null || onArchive != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         onEdit?.let { EditButton(color = lane.color, compact = true, onClick = it) }
                         onArchive?.let { ArchiveButton(color = amber, compact = true, onClick = it) }
-                        onDelete?.let { DeleteButton(onClick = it) }
                     }
                 }
                 timestamp?.let { AgePill(it, generatedAtMs) }

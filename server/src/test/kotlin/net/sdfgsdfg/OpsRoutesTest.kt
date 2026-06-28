@@ -781,7 +781,7 @@ class OpsRoutesTest {
                 { "key": "BCK-003", "title": "stuck", "state": "blocked" },
                 { "key": "BCK-004", "title": "check", "status": "review" },
                 { "key": "BCK-005", "title": "closed", "status": "done", "completed_at_ms": 20 },
-                { "key": "BCK-006", "title": "removed", "status": "trash" }
+                { "key": "BCK-006", "title": "retained", "status": "archive" }
               ]
             }
             """.trimIndent(),
@@ -794,7 +794,7 @@ class OpsRoutesTest {
         assertEquals(1, issues.blocked)
         assertEquals(1, issues.review)
         assertEquals(1, issues.done)
-        assertEquals(1, issues.trash)
+        assertEquals(1, issues.archive)
         assertEquals(4, issues.active)
         assertEquals("arcana", issues.sources.single().id)
         assertEquals(4, issues.sources.single().active)
