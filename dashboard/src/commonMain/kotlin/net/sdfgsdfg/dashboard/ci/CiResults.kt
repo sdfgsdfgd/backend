@@ -1,19 +1,26 @@
 package net.sdfgsdfg.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,10 +49,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -394,6 +403,28 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, activeRunEvents: Li
     }
     val eventKeys = remember(visibleEvents) { visibleEvents.map { it.key } }
     val freshKeys = rememberFreshKeys(eventKeys)
+    var renderedEvents by remember { mutableStateOf(visibleEvents) }
+    var exitingKeys by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(visibleEvents) {
+        val activeKeys = eventKeys.toSet()
+        val nextExitingKeys = (exitingKeys + renderedEvents.mapNotNull { event -> event.key.takeIf { it !in activeKeys } }) - activeKeys
+        val nextEvents = visibleEvents.toMutableList()
+        renderedEvents.forEachIndexed { index, event ->
+            if (event.key in nextExitingKeys && nextEvents.none { it.key == event.key }) {
+                nextEvents.add(index.coerceAtMost(nextEvents.size), event)
+            }
+        }
+        exitingKeys = nextExitingKeys
+        renderedEvents = nextEvents
+    }
+    LaunchedEffect(exitingKeys) {
+        if (exitingKeys.isNotEmpty()) {
+            val settling = exitingKeys
+            delay(ciHistoryExitMs.toLong())
+            exitingKeys -= settling
+            renderedEvents = renderedEvents.filter { it.key !in settling }
+        }
+    }
     var knownEnterKeys by remember { mutableStateOf<Set<String>?>(null) }
     var enterKeys by remember { mutableStateOf(emptySet<String>()) }
     LaunchedEffect(eventKeys) {
@@ -411,10 +442,12 @@ internal fun rememberCiHistoryState(summary: OpsSummaryDto?, activeRunEvents: Li
     return CiHistoryState(
         counts = counts,
         enabled = enabled,
-        visibleEvents = visibleEvents,
+        visibleEvents = renderedEvents,
+        visibleCount = visibleEvents.size,
         total = events.size,
         freshKeys = freshKeys,
         enterKeys = enterKeys,
+        exitingKeys = exitingKeys,
         onToggleRepo = { id ->
             val next = if (id in enabled) enabled - id else enabled + id
             enabled = next
@@ -427,9 +460,11 @@ internal data class CiHistoryState(
     val counts: Map<String, Int>,
     val enabled: Set<String>,
     val visibleEvents: List<CiHistoryEvent>,
+    val visibleCount: Int,
     val total: Int,
     val freshKeys: Set<String>,
     val enterKeys: Set<String>,
+    val exitingKeys: Set<String>,
     val onToggleRepo: (String) -> Unit,
 )
 
@@ -440,13 +475,19 @@ internal data class CiHistoryEvent(
 )
 
 internal fun LazyListScope.ciHistoryItems(state: CiHistoryState, generatedAtMs: Long) {
+    // Viewport churn stays native-fast; true run births/removals animate below.
+    val placementSpec = spring<IntOffset>(
+        dampingRatio = 0.90f,
+        stiffness = 520f,
+        visibilityThreshold = IntOffset.VisibilityThreshold,
+    )
     item(key = "ci-history-header") {
         RunHistoryHeader(state, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
     }
     item(key = "ci-history-empty") {
         AnimatedVisibility(
             visible = state.visibleEvents.isEmpty(),
-            modifier = Modifier.animateItem().fillMaxWidth(),
+            modifier = Modifier.animateItem(fadeInSpec = null, placementSpec = placementSpec, fadeOutSpec = null).fillMaxWidth(),
             enter = fadeIn(tween(220, easing = FastOutSlowInEasing)) +
                 expandVertically(tween(260, easing = FastOutSlowInEasing), expandFrom = Alignment.Top),
             exit = fadeOut(tween(140, easing = FastOutSlowInEasing)) +
@@ -458,23 +499,30 @@ internal fun LazyListScope.ciHistoryItems(state: CiHistoryState, generatedAtMs: 
         }
     }
     items(state.visibleEvents, key = { event -> "ci-history-${event.key}" }) { event ->
+        val entering = event.key in state.enterKeys
+        val exiting = event.key in state.exitingKeys
         val visibleState = remember(event.key) {
-            MutableTransitionState(event.key !in state.enterKeys).apply { targetState = true }
+            MutableTransitionState(!entering && !exiting)
         }
+        visibleState.targetState = !exiting
         AnimatedVisibility(
             visibleState = visibleState,
-            modifier = Modifier.animateItem().fillMaxWidth(),
-            enter = fadeIn(tween(660, easing = FastOutSlowInEasing)) +
-                expandVertically(tween(840, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
-                slideInVertically(tween(840, easing = FastOutSlowInEasing)) { -it / 4 },
-            exit = fadeOut(tween(420, easing = FastOutSlowInEasing)) +
-                shrinkVertically(tween(570, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+            modifier = Modifier.animateItem(fadeInSpec = null, placementSpec = placementSpec, fadeOutSpec = null).fillMaxWidth(),
+            enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) +
+                scaleIn(spring(dampingRatio = 0.82f, stiffness = 360f), initialScale = 0.976f, transformOrigin = TransformOrigin(0.5f, 0f)) +
+                expandVertically(tween(720, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+                slideInVertically(tween(720, easing = FastOutSlowInEasing)) { -it / 3 },
+            exit = fadeOut(tween(160, easing = FastOutSlowInEasing)) +
+                scaleOut(tween(260, easing = FastOutSlowInEasing), targetScale = 0.965f, transformOrigin = TransformOrigin(0.5f, 0f)) +
+                slideOutVertically(tween(ciHistoryExitMs, easing = FastOutSlowInEasing)) { -it / 10 } +
+                shrinkVertically(tween(ciHistoryExitMs, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
         ) {
             RunHistoryRow(
                 repo = event.repo,
                 run = event.run,
                 generatedAtMs = generatedAtMs,
                 fresh = event.key in state.freshKeys,
+                entering = entering,
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
             )
         }
@@ -495,7 +543,7 @@ private fun RunHistoryHeader(state: CiHistoryState, modifier: Modifier = Modifie
                 Text("Recent Runs", color = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text("Unified backend, server_py, and Arcana CI evidence.", color = muted, fontSize = 12.sp)
             }
-            StatusPill("${state.visibleEvents.size}/${state.total} shown", green)
+            StatusPill("${state.visibleCount}/${state.total} shown", green)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             historyRepoIds.forEach { id ->
@@ -514,6 +562,7 @@ private fun RunHistoryHeader(state: CiHistoryState, modifier: Modifier = Modifie
 
 private val historyRepoIds = listOf("backend", "server_py", "arcana")
 private const val historyRepoFilterPrefKey = "ops.ci.enabledRepos"
+private const val ciHistoryExitMs = 300
 
 private fun readHistoryRepoFilter(): Set<String> = readDashboardPref(historyRepoFilterPrefKey)
     ?.split(',')
@@ -546,16 +595,26 @@ private fun HistoryFilterPill(label: String, color: Color, enabled: Boolean, onC
 }
 
 @Composable
-private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false, modifier: Modifier = Modifier) {
-    val flash = if (fresh) 1f else 0f
+private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generatedAtMs: Long, fresh: Boolean = false, entering: Boolean = false, modifier: Modifier = Modifier) {
+    val flash by animateFloatAsState(
+        targetValue = if (fresh) 1f else 0f,
+        animationSpec = tween(if (fresh) 180 else 1100, easing = FastOutSlowInEasing),
+        label = "run-history-flash",
+    )
+    val reveal by animateFloatAsState(
+        targetValue = if (entering) 1f else 0f,
+        animationSpec = tween(if (entering) 160 else 900, easing = FastOutSlowInEasing),
+        label = "run-history-reveal",
+    )
     val running = run.status == OpsStatusDto.WIP
     val color = run.status.color()
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFF0D141B))
-            .background(color.copy(alpha = flash * 0.11f))
-            .border(BorderStroke(1.dp, color.copy(alpha = 0.24f + flash * 0.32f)), RoundedCornerShape(7.dp))
+            .background(color.copy(alpha = flash * 0.11f + reveal * 0.045f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.24f + flash * 0.32f + reveal * 0.18f)), RoundedCornerShape(7.dp))
+            .animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
@@ -584,7 +643,13 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
                         Text("∞", modifier = Modifier.graphicsLayer { rotationZ = rotation }, color = color.copy(alpha = 0.88f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                if (fresh) UpdatePill(color)
+                AnimatedVisibility(
+                    visible = fresh,
+                    enter = fadeIn(tween(180, easing = FastOutSlowInEasing)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.86f),
+                    exit = fadeOut(tween(320, easing = FastOutSlowInEasing)),
+                ) {
+                    UpdatePill(color)
+                }
                 if (running) UpdatePill(color, "running")
                 RunTail(run, generatedAtMs, run.durationMs?.durationLabel() ?: run.status.name, fontSize = 11.sp)
             }
