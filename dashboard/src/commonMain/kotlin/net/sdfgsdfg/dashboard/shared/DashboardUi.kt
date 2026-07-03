@@ -400,7 +400,7 @@ internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
             ?: selfTest?.let { BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN) },
     )
     "arcana" -> listOfNotNull(
-        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.testBadge("pyramid"),
+        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.let { it.testBadge(it.arcanaBadgeKind()) },
         runs.firstOrNull { it.label == "deterministic baseline" }?.testBadge("base"),
         runs.firstOrNull { it.label == "live e2e canaries" }?.testBadge("e2e"),
         runs.firstOrNull { it.label == "benchmark seed" }?.testBadge("bench"),
@@ -410,6 +410,12 @@ internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
 
 private fun TestRunSummaryDto.testBadge(kind: String) =
     BadgeSpec("TEST: $kind ${status.name}", status.color(), strong = status != OpsStatusDto.UNKNOWN)
+
+private fun TestRunSummaryDto.arcanaBadgeKind() = when {
+    label == "q arcana full pyramid" -> "pyramid"
+    label.contains("unit", ignoreCase = true) -> "unit"
+    else -> "test"
+}
 
 internal fun TestRunSummaryDto.isArcanaTestRun() = label.contains("pytest", ignoreCase = true) ||
     label.contains("z_tests", ignoreCase = true) ||
