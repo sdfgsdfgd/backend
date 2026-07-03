@@ -21,6 +21,7 @@ import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
@@ -277,7 +278,7 @@ class OpsRoutesTest {
         val dir = createTempDirectory().toFile()
         val artifact = File(dir, "arcana-ingest.json")
         val layerArtifact = File(dir, "arcana-unit.json")
-        artifact.writeText("""{"status":"OK","label":"q arcana full pyramid"}""")
+        artifact.writeText("""{"status":"OK","label":"$ARCANA_PYRAMID_RUN_LABEL"}""")
         layerArtifact.writeText("""{"label":"unit","summary":"341 passed"}""")
 
         application {
@@ -291,14 +292,16 @@ class OpsRoutesTest {
         val layerResponse = client.get("/api/ops/artifacts/arcana-unit.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val rejectedLayerResponse = client.get("/api/ops/artifacts/arcana-other.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val publicResponse = client.get("/api/ops/artifacts/arcana-ingest.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
+        val publicLayerResponse = client.get("/api/ops/artifacts/arcana-unit.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
 
         assertEquals(HttpStatusCode.OK, opsResponse.status)
         assertEquals("no-store", opsResponse.headers[HttpHeaders.CacheControl])
-        assertEquals("""{"status":"OK","label":"q arcana full pyramid"}""", opsResponse.body<String>())
+        assertEquals("""{"status":"OK","label":"$ARCANA_PYRAMID_RUN_LABEL"}""", opsResponse.body<String>())
         assertEquals(HttpStatusCode.OK, layerResponse.status)
         assertEquals("""{"label":"unit","summary":"341 passed"}""", layerResponse.body<String>())
         assertEquals(HttpStatusCode.NotFound, rejectedLayerResponse.status)
         assertEquals(HttpStatusCode.NotFound, publicResponse.status)
+        assertEquals(HttpStatusCode.NotFound, publicLayerResponse.status)
     }
 
     @Test
@@ -864,7 +867,7 @@ class OpsRoutesTest {
                 """
                 {
                   "status": "OK",
-                  "label": "q arcana full pyramid",
+                  "label": "$ARCANA_PYRAMID_RUN_LABEL",
                   "duration_ms": 123.0,
                   "detail": "370 passed on q @abc1234",
                   "issues": { "todo": 2, "wip": 1, "done": 3 },
@@ -884,7 +887,7 @@ class OpsRoutesTest {
         val summaryResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val arcana = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "arcana" }
         assertEquals(OpsStatusDto.OK, arcana.status)
-        assertEquals("q arcana full pyramid", arcana.latestRun?.label)
+        assertEquals(ARCANA_PYRAMID_RUN_LABEL, arcana.latestRun?.label)
         assertEquals("370 passed on q @abc1234", arcana.latestRun?.detail)
         assertEquals(2, arcana.issues.todo)
         assertEquals(1, arcana.issues.wip)
@@ -894,7 +897,7 @@ class OpsRoutesTest {
         assertEquals(true, arcana.runs.any { it.label == "e2e" && it.status == OpsStatusDto.OK })
         assertEquals(true, arcana.runs.any { it.label == "benchmarks" && it.status == OpsStatusDto.OK })
         assertEquals(80.5, arcana.latestRun?.coveragePct)
-        assertEquals(listOf("q arcana full pyramid"), arcana.history.map { it.label })
+        assertEquals(listOf(ARCANA_PYRAMID_RUN_LABEL), arcana.history.map { it.label })
         assertEquals(false, arcana.runs.any { it.label == "pytest unit" })
         assertEquals(false, arcana.runs.any { it.status == OpsStatusDto.WIP })
         assertEquals(true, ingestFile.readText().contains("timestamp_ms"))

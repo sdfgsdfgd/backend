@@ -52,6 +52,8 @@ import net.sdfgsdfg.data.model.SelfTestCaseSummaryDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.data.model.arcanaLayerArtifactName
+import net.sdfgsdfg.data.model.arcanaTestLayerKeys
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -103,12 +105,7 @@ private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/ac
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 private const val serverPyUnitArtifactUrl = "/api/ops/artifacts/server-py-unit.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
-private val arcanaLayerArtifactNames = setOf(
-    "arcana-unit.json",
-    "arcana-integration.json",
-    "arcana-e2e.json",
-    "arcana-benchmarks.json",
-)
+private val arcanaLayerArtifactNames = arcanaTestLayerKeys.map(::arcanaLayerArtifactName).toSet()
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
 private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()

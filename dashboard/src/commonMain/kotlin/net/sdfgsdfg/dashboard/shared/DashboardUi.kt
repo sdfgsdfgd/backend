@@ -53,6 +53,9 @@ import net.sdfgsdfg.data.model.OpsSignalDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
+import net.sdfgsdfg.data.model.arcanaLayerDisplayName
+import net.sdfgsdfg.data.model.arcanaTestLayerKeys
 import kotlin.math.roundToInt
 
 internal val background = Color(0xFF090C10)
@@ -413,8 +416,6 @@ internal fun RepoHealthDto.arcanaTestRuns(): List<TestRunSummaryDto> =
         .distinctBy { it.arcanaLayerKey() ?: it.label }
         .sortedBy { it.arcanaLayerOrder() }
 
-internal val arcanaTestLayerKeys = listOf("unit", "integration", "e2e", "benchmarks")
-
 internal fun RepoHealthDto.arcanaLayerRuns(fillMissing: Boolean): List<TestRunSummaryDto> {
     val byLayer = arcanaTestRuns()
         .filterNot { it.arcanaLayerKey() == "pyramid" }
@@ -435,7 +436,7 @@ internal fun RepoHealthDto.arcanaLayerRuns(fillMissing: Boolean): List<TestRunSu
 internal fun TestRunSummaryDto.arcanaLayerKey(): String? {
     val text = "$label ${detail.orEmpty()}".lowercase()
     return when {
-        label == "q arcana full pyramid" -> "pyramid"
+        label == ARCANA_PYRAMID_RUN_LABEL -> "pyramid"
         label == "unit" || "unit pytest" in text || "/unit" in text -> "unit"
         label == "integration" || "deterministic baseline" in text || "/integration" in text -> "integration"
         label == "e2e" || "live e2e" in text || "/e2e" in text -> "e2e"
@@ -444,16 +445,7 @@ internal fun TestRunSummaryDto.arcanaLayerKey(): String? {
     }
 }
 
-internal fun String.arcanaLayerLabel() = when (this) {
-    "pyramid" -> "Pyramid"
-    "unit" -> "Unit"
-    "integration" -> "Integration"
-    "e2e" -> "E2E"
-    "benchmarks" -> "Benchmarks"
-    else -> null
-}
-
-internal fun TestRunSummaryDto.arcanaLayerLabel() = arcanaLayerKey()?.arcanaLayerLabel()
+internal fun TestRunSummaryDto.arcanaLayerLabel() = arcanaLayerKey()?.let(::arcanaLayerDisplayName)
 
 internal fun TestRunSummaryDto.arcanaLayerOrder() = when (arcanaLayerKey()) {
     "pyramid" -> 0

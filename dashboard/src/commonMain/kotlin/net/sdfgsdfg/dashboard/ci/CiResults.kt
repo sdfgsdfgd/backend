@@ -994,13 +994,15 @@ private fun String.historyColor() = when (this) {
 private val passedCountRegex = Regex("""(\d+)\s+passed""")
 private val failedCountRegex = Regex("""(\d+)\s+failed""")
 private val errorCountRegex = Regex("""(\d+)\s+errors?""")
+private val skippedCountRegex = Regex("""(\d+)\s+skipped""")
 private fun String?.passedCount(): String? = this?.let { passedCountRegex.find(it)?.groupValues?.getOrNull(1) }
 private fun String?.testCountLabel(): String? {
     val text = this ?: return null
     val passed = passedCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
     val failed = failedCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
     val errors = errorCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-    val total = passed + failed + errors
+    val skipped = skippedCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    val total = passed + failed + errors + skipped
     if (total == 0) return null
     return "$passed/$total"
 }

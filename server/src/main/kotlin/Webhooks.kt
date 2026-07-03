@@ -15,6 +15,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
@@ -250,7 +251,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
 
         val command = profile.commands.single()
-        broadcastRunStarted("arcana", "q arcana full pyramid", "Arcana full pyramid running on q.", ARCANA_INGEST_ARTIFACT_URL)
+        broadcastRunStarted("arcana", ARCANA_PYRAMID_RUN_LABEL, "Arcana full pyramid running on q.", ARCANA_INGEST_ARTIFACT_URL)
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         val exit = webhookArcanaSmokeMutex.withLock {

@@ -4,6 +4,20 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 const val OPS_CAPABILITY_ISSUES_WRITE = "issues:write"
+const val ARCANA_PYRAMID_RUN_LABEL = "q arcana full pyramid"
+
+val arcanaTestLayerKeys = listOf("unit", "integration", "e2e", "benchmarks")
+
+fun arcanaLayerDisplayName(layer: String) = when (layer) {
+    "pyramid" -> "Pyramid"
+    "unit" -> "Unit"
+    "integration" -> "Integration"
+    "e2e" -> "E2E"
+    "benchmarks" -> "Benchmarks"
+    else -> null
+}
+
+fun arcanaLayerArtifactName(layer: String) = "arcana-$layer.json"
 
 @Serializable
 data class OpsSummaryDto(
