@@ -48,6 +48,12 @@ internal actual fun loadOpsViewer(
     onFailed: (String) -> Unit,
 ) = loadOpsData("ops-viewer-loader", "Failed to load ops viewer", onLoaded, onFailed) { fetchOpsJson(OPS_VIEWER_PATH) }
 
+internal actual fun loadOpsText(
+    path: String,
+    onLoaded: (String) -> Unit,
+    onFailed: (String) -> Unit,
+) = loadOpsData("ops-text-loader", "Failed to load ops artifact", onLoaded, onFailed) { fetchOpsText(path) }
+
 private fun <T> loadOpsData(
     threadName: String,
     fallbackError: String,
@@ -290,21 +296,28 @@ internal actual fun mutateIssue(
 }
 
 private inline fun <reified T> fetchOpsJson(path: String): T {
+    return dashboardJson.decodeFromString(fetchOpsText(path))
+}
+
+private fun fetchOpsText(path: String): String {
     val client = HttpClient.newHttpClient()
     var lastError: Throwable? = null
-    opsApiEndpoints().forEach { endpoint ->
+    val absolute = path.startsWith("http://") || path.startsWith("https://")
+    val endpoints = if (absolute) listOf("") else opsApiEndpoints()
+    endpoints.forEach { endpoint ->
         runCatching {
+            val url = if (absolute) path else "$endpoint$path"
             val request = HttpRequest.newBuilder()
-                .uri(URI.create("$endpoint$path"))
+                .uri(URI.create(url))
                 .applyOpsAuth()
                 .GET()
                 .build()
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
             if (response.statusCode() !in 200..299) {
-                error("GET $endpoint$path failed with ${response.statusCode()}")
+                error("GET $url failed with ${response.statusCode()}")
             }
-            activeOpsApiBase = endpoint
-            return dashboardJson.decodeFromString<T>(response.body())
+            if (!absolute) activeOpsApiBase = endpoint
+            return response.body()
         }.onFailure { lastError = it }
     }
     throw lastError ?: error("No ops API endpoints configured")

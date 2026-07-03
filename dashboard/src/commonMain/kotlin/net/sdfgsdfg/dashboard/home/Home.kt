@@ -238,9 +238,7 @@ private fun RepoHealthDto.testStatuses(): List<OpsStatusDto> = when (id) {
         runs.firstOrNull { it.label == "unit tests" }?.status,
         runs.firstOrNull { it.label == "live e2e selftest" }?.status ?: selfTest?.status,
     )
-    "arcana" -> listOfNotNull(
-        latestRun?.takeIf { it.isArcanaTestRun() }?.status,
-    ) + runs.filter { it.isArcanaTestRun() }.map { it.status }
+    "arcana" -> arcanaLayerRuns(fillMissing = true).map { it.status }
     else -> emptyList()
 }
 

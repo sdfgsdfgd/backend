@@ -116,6 +116,25 @@ data class TestRunSummaryDto(
 )
 
 @Serializable
+data class ArcanaLayerArtifactDto(
+    val label: String,
+    val paths: String? = null,
+    val status: OpsStatusDto = OpsStatusDto.UNKNOWN,
+    @SerialName("duration_ms") val durationMs: Double? = null,
+    val summary: String? = null,
+    @SerialName("output_tail") val outputTail: String? = null,
+    val cases: List<ArcanaLayerCaseDto> = emptyList(),
+)
+
+@Serializable
+data class ArcanaLayerCaseDto(
+    val name: String,
+    val status: OpsStatusDto,
+    @SerialName("duration_ms") val durationMs: Double? = null,
+    val detail: String? = null,
+)
+
+@Serializable
 data class OpsSignalDto(
     val label: String,
     val status: OpsStatusDto,

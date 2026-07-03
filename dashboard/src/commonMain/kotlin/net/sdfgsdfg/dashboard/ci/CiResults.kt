@@ -25,6 +25,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +61,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.serialization.decodeFromString
+import net.sdfgsdfg.data.model.ArcanaLayerArtifactDto
+import net.sdfgsdfg.data.model.ArcanaLayerCaseDto
 import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -202,6 +208,8 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
                     )
                 }
             }
+        } else if (repo.id == "arcana") {
+            ArcanaPyramidPanel(repo, runs, generatedAtMs)
         } else {
             if (runs.isEmpty()) PlaceholderTile("test evidence unavailable")
             runs.forEach { run ->
@@ -221,6 +229,307 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ArcanaPyramidPanel(repo: RepoHealthDto, runs: List<TestRunSummaryDto>, generatedAtMs: Long) {
+    val status = remember(runs) { runs.map { it.status }.layerStatus() }
+    var expandedLayers by remember { mutableStateOf(emptySet<String>()) }
+    var layerArtifacts by remember { mutableStateOf(emptyMap<String, ArcanaArtifactState>()) }
+    val shape = RoundedCornerShape(7.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color(0xFF0D141B).copy(alpha = 0.72f))
+            .border(BorderStroke(1.dp, status.color().copy(alpha = 0.24f)), shape)
+            .padding(9.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Test Pyramid", modifier = Modifier.weight(1f), color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            repo.latestRun?.durationMs?.durationLabel()?.let { MiniMetric("time", it, muted) }
+            repo.latestRun?.coveragePct?.let { MiniMetric("coverage", it.percentLabel(), cyan) }
+            MiniMetric("layers", "${runs.count { it.status == OpsStatusDto.OK }}/4", status.color())
+        }
+        runs.forEach { run ->
+            val layerKey = run.arcanaLayerKey().orEmpty()
+            val expanded = layerKey in expandedLayers
+            val artifactState = layerArtifacts[layerKey]
+            val artifactUrl = run.url
+            LaunchedEffect(expanded, layerKey, artifactUrl) {
+                val fresh = artifactState?.let { it.sourceUrl == artifactUrl && (it.loading || it.artifact != null) } == true
+                if (!expanded || artifactUrl == null || fresh) return@LaunchedEffect
+                layerArtifacts = layerArtifacts + (layerKey to ArcanaArtifactState(sourceUrl = artifactUrl, loading = true))
+                loadOpsText(
+                    path = artifactUrl,
+                    onLoaded = { body ->
+                        layerArtifacts = layerArtifacts + (layerKey to runCatching {
+                            ArcanaArtifactState(sourceUrl = artifactUrl, artifact = dashboardJson.decodeFromString<ArcanaLayerArtifactDto>(body))
+                        }.getOrElse { error ->
+                            ArcanaArtifactState(sourceUrl = artifactUrl, error = error.message ?: "artifact decode failed")
+                        })
+                    },
+                    onFailed = { error ->
+                        layerArtifacts = layerArtifacts + (layerKey to ArcanaArtifactState(sourceUrl = artifactUrl, error = error))
+                    },
+                )
+            }
+            key(layerKey) {
+                ArcanaLayerTile(
+                    run = run,
+                    expanded = expanded,
+                    artifactState = artifactState,
+                    onToggle = {
+                        expandedLayers = if (expanded) expandedLayers - layerKey else expandedLayers + layerKey
+                    },
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            repo.latestRun?.timestampMs?.let { MiniMetric("last", it.relativeFrom(generatedAtMs), muted) }
+            repo.latestRun?.detail?.substringAfter("@", missingDelimiterValue = "")?.takeIf { it.isNotBlank() }?.let { MiniMetric("commit", it, muted) }
+        }
+        ArtifactStrip(repo.latestRun?.url ?: runs.firstOrNull { it.url != null }?.url, emptyList())
+    }
+}
+
+@Composable
+private fun ArcanaLayerTile(
+    run: TestRunSummaryDto,
+    expanded: Boolean,
+    artifactState: ArcanaArtifactState?,
+    onToggle: () -> Unit,
+) {
+    val color = if (run.status == OpsStatusDto.UNKNOWN) muted else run.status.color()
+    val result = run.detail.testCountLabel()
+    val value = result ?: if (run.status == OpsStatusDto.UNKNOWN) "-" else run.status.name
+    val subtitle = when {
+        run.status == OpsStatusDto.UNKNOWN -> "pending"
+        run.status != OpsStatusDto.OK -> run.detail.orEmpty()
+        else -> null
+    }
+    val shape = RoundedCornerShape(7.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color(0xFF101821).copy(alpha = 0.44f))
+            .border(BorderStroke(1.dp, color.copy(alpha = if (expanded) 0.50f else if (run.status == OpsStatusDto.UNKNOWN) 0.16f else 0.30f)), shape)
+            .animateContentSize(animationSpec = tween(180, easing = FastOutSlowInEasing))
+            .padding(horizontal = 11.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 42.dp)
+                .clickable(onClick = onToggle),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(color.copy(alpha = if (run.status == OpsStatusDto.UNKNOWN) 0.36f else 0.92f)),
+                    )
+                    Text(run.arcanaLayerLabel().orEmpty(), color = text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                subtitle?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(start = 15.dp),
+                        color = muted,
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                run.durationMs?.durationLabel()?.let { LayerMetric(it, muted) }
+                run.coveragePct?.percentLabel()?.let { LayerMetric(it, cyan) }
+            }
+            Text(value, color = if (result == null) color else text, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(160, easing = FastOutSlowInEasing)) + fadeIn(tween(120)),
+            exit = shrinkVertically(tween(140, easing = FastOutSlowInEasing)) + fadeOut(tween(100)),
+        ) {
+            ArcanaLayerExpanded(run, artifactState)
+        }
+    }
+}
+
+@Composable
+private fun ArcanaLayerExpanded(run: TestRunSummaryDto, artifactState: ArcanaArtifactState?) {
+    val artifact = artifactState?.artifact
+    val cases = remember(artifact) { artifact?.cases.orEmpty().sortedWith(compareBy<ArcanaLayerCaseDto> { it.status.caseRank() }.thenBy { it.name }) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.14f))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)), RoundedCornerShape(6.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        when {
+            run.url == null -> ArtifactMessage("no layer artifact url", muted)
+            artifactState == null || artifactState.loading -> ArtifactMessage("loading artifact...", muted)
+            artifactState.error != null -> ArtifactMessage("artifact unavailable: ${artifactState.error}", OpsStatusDto.WARN.color())
+            artifact != null && cases.isNotEmpty() -> {
+                val failing = cases.count { it.status != OpsStatusDto.OK }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MiniMetric("cases", "${cases.count { it.status == OpsStatusDto.OK }}/${cases.size}", if (failing == 0) green else OpsStatusDto.FAIL.color())
+                    artifact.summary?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, modifier = Modifier.weight(1f), color = muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    run.url?.let { url ->
+                        Text(
+                            "artifact",
+                            modifier = Modifier.clickable { openOpsUrl(url) },
+                            color = cyan,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 238.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    cases.forEach { ArcanaCaseRow(it) }
+                }
+                artifact.outputTail?.takeIf { failing > 0 && it.isNotBlank() }?.let { tail ->
+                    Text(tail.takeLast(700), color = Color(0xFFC7D3E0), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            artifact != null -> {
+                ArtifactMessage(artifact.summary ?: "artifact has no cases", muted)
+                artifact.outputTail?.takeIf { it.isNotBlank() }?.let { tail ->
+                    Text(tail.takeLast(700), color = Color(0xFFC7D3E0), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtifactMessage(message: String, color: Color) {
+    Text(message, color = color, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+}
+
+@Composable
+private fun ArcanaCaseRow(case: ArcanaLayerCaseDto) {
+    val color = case.status.color()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 5.dp)
+                .size(6.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(color),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    case.name.compactCaseName(),
+                    modifier = Modifier.weight(1f),
+                    color = text,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                case.durationMs?.durationLabel()?.let { Text(it, color = muted, fontSize = 9.sp, maxLines = 1) }
+            }
+            case.detail?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it,
+                    color = if (case.status == OpsStatusDto.OK) muted else Color(0xFFD3DCE8),
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private fun String.compactCaseName(): String {
+    val parts = split("::", limit = 2)
+    val file = parts.firstOrNull().orEmpty().substringAfterLast("/")
+    return if (parts.size == 2) "$file::${parts[1]}" else substringAfterLast("/")
+}
+
+private data class ArcanaArtifactState(
+    val sourceUrl: String? = null,
+    val loading: Boolean = false,
+    val artifact: ArcanaLayerArtifactDto? = null,
+    val error: String? = null,
+)
+
+@Composable
+private fun LayerMetric(value: String, color: Color) {
+    Text(
+        value,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.08f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.18f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        color = color,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+    )
+}
+
+private fun List<OpsStatusDto>.layerStatus() = when {
+    OpsStatusDto.FAIL in this -> OpsStatusDto.FAIL
+    OpsStatusDto.WARN in this -> OpsStatusDto.WARN
+    OpsStatusDto.WIP in this -> OpsStatusDto.WIP
+    OpsStatusDto.OK in this -> OpsStatusDto.OK
+    else -> OpsStatusDto.UNKNOWN
+}
+
+private fun OpsStatusDto.caseRank() = when (this) {
+    OpsStatusDto.FAIL -> 0
+    OpsStatusDto.WARN -> 1
+    OpsStatusDto.WIP -> 2
+    OpsStatusDto.UNKNOWN -> 3
+    OpsStatusDto.OK -> 4
+}
+
+@Composable
+private fun MiniMetric(name: String, value: String, color: Color) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.10f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.24f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(name.uppercase(), color = color, fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(value, color = text, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -267,7 +576,7 @@ private fun EvidenceTail(status: OpsStatusDto, generatedAtMs: Long, timestampMs:
     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
         timestampMs?.let { AgePill(it, generatedAtMs) }
         duration?.let { Text(it, color = status.evidenceColor(), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-        if (status != OpsStatusDto.OK) Text(status.name, color = status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        if (status != OpsStatusDto.OK && status != OpsStatusDto.UNKNOWN) Text(status.name, color = status.color(), fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -663,7 +972,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
 private fun RepoHealthDto.ciRole() = when (id) {
     "backend" -> "deploy gate + unit tests + umbrella suite"
     "server_py" -> "unit tests + live e2e"
-    "arcana" -> "full pyramid: deterministic + live e2e + benchmark"
+    "arcana" -> "Unit · Integration · E2E · Benchmarks"
     else -> role
 }
 
@@ -682,14 +991,22 @@ private fun String.historyColor() = when (this) {
     else -> muted
 }
 
+private val passedCountRegex = Regex("""(\d+)\s+passed""")
+private val failedCountRegex = Regex("""(\d+)\s+failed""")
+private val errorCountRegex = Regex("""(\d+)\s+errors?""")
+private fun String?.passedCount(): String? = this?.let { passedCountRegex.find(it)?.groupValues?.getOrNull(1) }
+private fun String?.testCountLabel(): String? {
+    val text = this ?: return null
+    val passed = passedCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    val failed = failedCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    val errors = errorCountRegex.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    val total = passed + failed + errors
+    if (total == 0) return null
+    return "$passed/$total"
+}
+
 private fun TestRunSummaryDto.evidenceTitle(repoId: String) = when {
-    repoId == "arcana" -> when (label) {
-        "q arcana full pyramid" -> "full pyramid"
-        "deterministic baseline" -> "deterministic baseline"
-        "live e2e canaries" -> "live e2e"
-        "benchmark seed" -> "benchmarks"
-        else -> label
-    }
+    repoId == "arcana" -> arcanaLayerLabel() ?: label
     label.startsWith("deploy ") || label == "deploy gate" -> "deploy gate"
     label == "full suite" -> "full suite"
     label == "unit tests" -> "unit tests"
@@ -697,41 +1014,36 @@ private fun TestRunSummaryDto.evidenceTitle(repoId: String) = when {
 }
 
 private fun TestRunSummaryDto.evidenceSubtitle(repoId: String) = when {
-    repoId == "arcana" -> when (label) {
-        "q arcana full pyramid" -> "unit + integration + e2e + benchmarks"
-        "deterministic baseline" -> "unit + integration coverage"
-        "live e2e canaries" -> "real RPC canaries"
-        "benchmark seed" -> "capability score seed"
-        else -> label
+    repoId == "arcana" && status == OpsStatusDto.UNKNOWN -> "pending"
+    repoId == "arcana" -> when (arcanaLayerKey()) {
+        "unit" -> "deterministic"
+        "integration" -> "replay contracts"
+        "e2e" -> "live canaries"
+        "benchmarks" -> "capability scoring"
+        else -> null
     }
     label.startsWith("deploy ") -> label
     label == "full suite" && repoId == "backend" -> "weekly GitHub umbrella"
     else -> null
 }
 
-private fun TestRunSummaryDto.evidenceDetail(repoId: String) = detail.takeUnless { repoId == "arcana" && label == "q arcana full pyramid" }
+private fun TestRunSummaryDto.evidenceDetail(repoId: String) =
+    detail.takeUnless { repoId == "arcana" && (arcanaLayerKey() == "pyramid" || status == OpsStatusDto.UNKNOWN) }
 
 private fun TestRunSummaryDto.arcanaFields(generatedAtMs: Long): List<FieldSpec> {
     val detail = detail.orEmpty()
+    if (status == OpsStatusDto.UNKNOWN) return emptyList()
     return listOfNotNull(
-        Regex("""(\d+)\s+passed""").find(detail)?.groupValues?.getOrNull(1)?.let { FieldSpec(arcanaCountLabel(), "$it passed") },
+        detail.passedCount()?.let { FieldSpec("tests", "$it passed") },
         durationMs?.durationLabel()?.let { FieldSpec("duration", it) },
         timestampMs?.relativeFrom(generatedAtMs)?.let { FieldSpec("last", it) },
         detail.substringAfter("@", missingDelimiterValue = "").takeIf { it.isNotBlank() }?.let { FieldSpec("commit", it) },
     )
 }
 
-private fun TestRunSummaryDto.arcanaCountLabel() = when (label) {
-    "q arcana full pyramid" -> "pyramid"
-    "deterministic baseline" -> "deterministic"
-    "live e2e canaries" -> "e2e"
-    "benchmark seed" -> "benchmarks"
-    else -> "tests"
-}
-
 private fun TestRunSummaryDto.evidenceFields(repoId: String, generatedAtMs: Long): List<FieldSpec> =
     (if (repoId == "arcana") arcanaFields(generatedAtMs) else emptyList()) +
-        listOfNotNull(coveragePct?.let { FieldSpec(if (repoId == "arcana") "det coverage" else "coverage", it.percentLabel()) })
+        listOfNotNull(coveragePct?.let { FieldSpec("coverage", it.percentLabel()) })
 
 private fun OpsStatusDto.evidenceColor() = if (this == OpsStatusDto.OK) cyan else color()
 
@@ -742,6 +1054,7 @@ private fun RepoHealthDto.ciStatus(): OpsStatusDto {
         OpsStatusDto.FAIL in statuses -> OpsStatusDto.FAIL
         OpsStatusDto.WARN in statuses -> OpsStatusDto.WARN
         OpsStatusDto.WIP in statuses -> OpsStatusDto.WIP
+        OpsStatusDto.OK in statuses -> OpsStatusDto.OK
         OpsStatusDto.UNKNOWN in statuses -> OpsStatusDto.UNKNOWN
         else -> OpsStatusDto.OK
     }
@@ -750,7 +1063,7 @@ private fun RepoHealthDto.ciStatus(): OpsStatusDto {
 private fun RepoHealthDto.ciRuns(): List<TestRunSummaryDto> = when (id) {
     "backend" -> listOfNotNull(latestRun) + runs.filter { it.label in setOf("unit tests", "full suite") }
     "server_py" -> runs.filter { it.label in setOf("unit tests", "live e2e selftest", "model matrix") }
-    "arcana" -> runs.filter { it.isArcanaTestRun() }.ifEmpty { listOfNotNull(latestRun).filter { it.isArcanaTestRun() } }
+    "arcana" -> arcanaLayerRuns(fillMissing = true)
     else -> runs.ifEmpty { listOfNotNull(latestRun) }
 }.distinctBy { it.label to it.timestampMs }
 

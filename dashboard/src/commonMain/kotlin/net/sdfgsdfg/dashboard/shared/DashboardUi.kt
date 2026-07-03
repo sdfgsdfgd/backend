@@ -391,39 +391,77 @@ internal fun IssueSummaryDto.badgeSpec() = BadgeSpec(
 
 internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
     "backend" -> listOfNotNull(
-        runs.firstOrNull { it.label == "unit tests" }?.testBadge("unit"),
-        runs.firstOrNull { it.label == "full suite" }?.testBadge("suite"),
+        runs.firstOrNull { it.label == "unit tests" }?.testBadge("Unit"),
+        runs.firstOrNull { it.label == "full suite" }?.testBadge("Suite"),
     )
     "server_py" -> listOfNotNull(
-        runs.firstOrNull { it.label == "unit tests" }?.testBadge("unit"),
-        runs.firstOrNull { it.label == "live e2e selftest" }?.testBadge("e2e")
-            ?: selfTest?.let { BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN) },
+        runs.firstOrNull { it.label == "unit tests" }?.testBadge("Unit"),
+        runs.firstOrNull { it.label == "live e2e selftest" }?.testBadge("E2E")
+            ?: selfTest?.let { BadgeSpec("E2E ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN) },
     )
-    "arcana" -> listOfNotNull(
-        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.let { it.testBadge(it.arcanaBadgeKind()) },
-        runs.firstOrNull { it.label == "deterministic baseline" }?.testBadge("base"),
-        runs.firstOrNull { it.label == "live e2e canaries" }?.testBadge("e2e"),
-        runs.firstOrNull { it.label == "benchmark seed" }?.testBadge("bench"),
-    )
+    "arcana" -> arcanaLayerRuns(fillMissing = true)
+        .filterNot { it.arcanaLayerKey() == "pyramid" }
+        .mapNotNull { run -> run.arcanaLayerLabel()?.let { run.testBadge(it) } }
     else -> emptyList()
 }
 
 private fun TestRunSummaryDto.testBadge(kind: String) =
-    BadgeSpec("TEST: $kind ${status.name}", status.color(), strong = status != OpsStatusDto.UNKNOWN)
+    BadgeSpec("$kind ${if (status == OpsStatusDto.UNKNOWN) "pending" else status.name}", status.color(), strong = status != OpsStatusDto.UNKNOWN)
 
-private fun TestRunSummaryDto.arcanaBadgeKind() = when {
-    label == "q arcana full pyramid" -> "pyramid"
-    label.contains("unit", ignoreCase = true) -> "unit"
-    else -> "test"
+internal fun RepoHealthDto.arcanaTestRuns(): List<TestRunSummaryDto> =
+    (listOfNotNull(latestRun?.takeIf { it.isArcanaTestRun() }) + runs.filter { it.isArcanaTestRun() })
+        .distinctBy { it.arcanaLayerKey() ?: it.label }
+        .sortedBy { it.arcanaLayerOrder() }
+
+internal val arcanaTestLayerKeys = listOf("unit", "integration", "e2e", "benchmarks")
+
+internal fun RepoHealthDto.arcanaLayerRuns(fillMissing: Boolean): List<TestRunSummaryDto> {
+    val byLayer = arcanaTestRuns()
+        .filterNot { it.arcanaLayerKey() == "pyramid" }
+        .associateBy { it.arcanaLayerKey() }
+    return if (fillMissing) {
+        arcanaTestLayerKeys.map { layer ->
+            byLayer[layer] ?: TestRunSummaryDto(
+                label = layer,
+                status = OpsStatusDto.UNKNOWN,
+                detail = "pending next smoke",
+            )
+        }
+    } else {
+        arcanaTestLayerKeys.mapNotNull { byLayer[it] }
+    }
 }
 
-internal fun TestRunSummaryDto.isArcanaTestRun() = label.contains("pytest", ignoreCase = true) ||
-    label.contains("z_tests", ignoreCase = true) ||
-    label == "q arcana full pyramid" ||
-    label == "deterministic baseline" ||
-    label == "live e2e canaries" ||
-    label == "benchmark seed" ||
-    detail?.contains("passed", ignoreCase = true) == true
+internal fun TestRunSummaryDto.arcanaLayerKey(): String? {
+    val text = "$label ${detail.orEmpty()}".lowercase()
+    return when {
+        label == "q arcana full pyramid" -> "pyramid"
+        label == "unit" || "unit pytest" in text || "/unit" in text -> "unit"
+        label == "integration" || "deterministic baseline" in text || "/integration" in text -> "integration"
+        label == "e2e" || "live e2e" in text || "/e2e" in text -> "e2e"
+        label == "benchmark" || label == "benchmarks" || "benchmark seed" in text || "/benchmarks" in text -> "benchmarks"
+        else -> null
+    }
+}
+
+internal fun String.arcanaLayerLabel() = when (this) {
+    "pyramid" -> "Pyramid"
+    "unit" -> "Unit"
+    "integration" -> "Integration"
+    "e2e" -> "E2E"
+    "benchmarks" -> "Benchmarks"
+    else -> null
+}
+
+internal fun TestRunSummaryDto.arcanaLayerLabel() = arcanaLayerKey()?.arcanaLayerLabel()
+
+internal fun TestRunSummaryDto.arcanaLayerOrder() = when (arcanaLayerKey()) {
+    "pyramid" -> 0
+    in arcanaTestLayerKeys -> arcanaTestLayerKeys.indexOf(arcanaLayerKey()) + 1
+    else -> 9
+}
+
+internal fun TestRunSummaryDto.isArcanaTestRun() = arcanaLayerKey() != null
 
 internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {
     val labels = runtimeLabels.ifEmpty { runtimeLabel?.let(::listOf).orEmpty() }

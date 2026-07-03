@@ -24,6 +24,12 @@ internal expect fun loadOpsViewer(
     onFailed: (String) -> Unit,
 )
 
+internal expect fun loadOpsText(
+    path: String,
+    onLoaded: (String) -> Unit,
+    onFailed: (String) -> Unit,
+)
+
 internal expect fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,

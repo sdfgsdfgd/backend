@@ -34,6 +34,32 @@ internal actual fun loadOpsViewer(
 ) = loadOpsJson(opsUrl(OPS_VIEWER_PATH), "GET $OPS_VIEWER_PATH", onLoaded, onFailed)
 
 @OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun loadOpsText(
+    path: String,
+    onLoaded: (String) -> Unit,
+    onFailed: (String) -> Unit,
+) {
+    val url = opsUrl(path)
+    XMLHttpRequest().apply {
+        open("GET", url)
+        withCredentials = true
+        onload = {
+            if (status.toInt() in 200..299) {
+                onLoaded(responseText)
+            } else {
+                onFailed("GET $url failed with $status ${responseText.take(120)}")
+            }
+            null
+        }
+        onerror = {
+            onFailed("GET $url failed")
+            null
+        }
+        send()
+    }
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
 private inline fun <reified T> loadOpsJson(
     url: String,
     label: String,

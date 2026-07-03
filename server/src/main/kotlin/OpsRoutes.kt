@@ -103,6 +103,12 @@ private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/ac
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
 private const val serverPyUnitArtifactUrl = "/api/ops/artifacts/server-py-unit.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
+private val arcanaLayerArtifactNames = setOf(
+    "arcana-unit.json",
+    "arcana-integration.json",
+    "arcana-e2e.json",
+    "arcana-benchmarks.json",
+)
 private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
 private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
@@ -278,6 +284,15 @@ fun Route.opsRoutes(
 
     get(arcanaIngestArtifactUrl) {
         call.respondJsonArtifact(arcanaIngestTargetFile)
+    }
+
+    get("/api/ops/artifacts/{name}") {
+        val name = call.parameters["name"]?.takeIf { it in arcanaLayerArtifactNames }
+        if (name == null) {
+            call.respondText("Not Found", status = HttpStatusCode.NotFound)
+        } else {
+            call.respondJsonArtifact((arcanaIngestTargetFile.parentFile ?: resolveLogDir()).resolve(name))
+        }
     }
 }
 

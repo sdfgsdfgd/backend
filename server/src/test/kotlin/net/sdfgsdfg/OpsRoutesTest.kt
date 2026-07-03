@@ -274,8 +274,11 @@ class OpsRoutesTest {
 
     @Test
     fun arcanaIngestArtifactIsScopedAndDownloadable() = testApplication {
-        val artifact = File(createTempDirectory().toFile(), "arcana-ingest.json")
+        val dir = createTempDirectory().toFile()
+        val artifact = File(dir, "arcana-ingest.json")
+        val layerArtifact = File(dir, "arcana-unit.json")
         artifact.writeText("""{"status":"OK","label":"q arcana full pyramid"}""")
+        layerArtifact.writeText("""{"label":"unit","summary":"341 passed"}""")
 
         application {
             installOpsRouteTestPlugins()
@@ -285,11 +288,16 @@ class OpsRoutesTest {
         }
 
         val opsResponse = client.get("/api/ops/artifacts/arcana-ingest.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val layerResponse = client.get("/api/ops/artifacts/arcana-unit.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
+        val rejectedLayerResponse = client.get("/api/ops/artifacts/arcana-other.json") { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val publicResponse = client.get("/api/ops/artifacts/arcana-ingest.json") { header(HttpHeaders.Host, "sdfgsdfg.net") }
 
         assertEquals(HttpStatusCode.OK, opsResponse.status)
         assertEquals("no-store", opsResponse.headers[HttpHeaders.CacheControl])
         assertEquals("""{"status":"OK","label":"q arcana full pyramid"}""", opsResponse.body<String>())
+        assertEquals(HttpStatusCode.OK, layerResponse.status)
+        assertEquals("""{"label":"unit","summary":"341 passed"}""", layerResponse.body<String>())
+        assertEquals(HttpStatusCode.NotFound, rejectedLayerResponse.status)
         assertEquals(HttpStatusCode.NotFound, publicResponse.status)
     }
 
@@ -861,9 +869,10 @@ class OpsRoutesTest {
                   "detail": "370 passed on q @abc1234",
                   "issues": { "todo": 2, "wip": 1, "done": 3 },
                   "runs": [
-                    { "label": "deterministic baseline", "status": "OK", "detail": "366 passed", "coverage_pct": 80.5 },
-                    { "label": "live e2e canaries", "status": "OK", "detail": "3 passed" },
-                    { "label": "benchmark seed", "status": "OK", "detail": "1 passed" }
+                    { "label": "unit", "status": "OK", "detail": "341 passed" },
+                    { "label": "integration", "status": "OK", "detail": "25 passed" },
+                    { "label": "e2e", "status": "OK", "detail": "3 passed" },
+                    { "label": "benchmarks", "status": "OK", "detail": "1 passed" }
                   ],
                   "coverage_pct": 80.5
                 }
@@ -880,9 +889,10 @@ class OpsRoutesTest {
         assertEquals(2, arcana.issues.todo)
         assertEquals(1, arcana.issues.wip)
         assertEquals(3, arcana.issues.done)
-        assertEquals(true, arcana.runs.any { it.label == "deterministic baseline" && it.status == OpsStatusDto.OK && it.coveragePct == 80.5 })
-        assertEquals(true, arcana.runs.any { it.label == "live e2e canaries" && it.status == OpsStatusDto.OK })
-        assertEquals(true, arcana.runs.any { it.label == "benchmark seed" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "unit" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "integration" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "e2e" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "benchmarks" && it.status == OpsStatusDto.OK })
         assertEquals(80.5, arcana.latestRun?.coveragePct)
         assertEquals(listOf("q arcana full pyramid"), arcana.history.map { it.label })
         assertEquals(false, arcana.runs.any { it.label == "pytest unit" })

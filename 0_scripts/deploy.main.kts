@@ -2,6 +2,7 @@
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.io.StringReader
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.time.LocalDateTime
@@ -9,7 +10,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.system.exitProcess
+import org.xml.sax.InputSource
 
 val app: String = "backend"
 val service: String = "backend.service"
@@ -18,10 +21,12 @@ val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val qHost: String = "q"
 val qArcanaDir: String = "~/Desktop/py/arcana"
-val qArcanaDeterministicTests: String = "z_tests_n_benchmarks/unit z_tests_n_benchmarks/integration"
+val qArcanaUnitTests: String = "z_tests_n_benchmarks/unit"
+val qArcanaIntegrationTests: String = "z_tests_n_benchmarks/integration"
 val qArcanaE2eTests: String = "z_tests_n_benchmarks/e2e"
 val qArcanaBenchmarkTests: String = "z_tests_n_benchmarks/benchmarks"
 val arcanaIngestArtifactUrl: String = "/api/ops/artifacts/arcana-ingest.json"
+fun arcanaLayerArtifactUrl(label: String): String = "/api/ops/artifacts/arcana-$label.json"
 val root: File = File(".").canonicalFile
 val home: File = File(System.getProperty("user.home"))
 val frontendNextEnvFiles: List<File> = listOf(
@@ -228,43 +233,92 @@ fun arcanaSmoke() {
         """.trimIndent(),
     )
 
-    data class Layer(val label: String, val paths: String, val coverage: Boolean = false)
+    qRun("cd $qArcanaDir && .venv/bin/python -m coverage erase")
+
+    data class Layer(val label: String, val paths: String, val coverage: Boolean = false, val appendCoverage: Boolean = false)
+    data class LayerCase(val name: String, val status: String, val durationMs: Long?, val detail: String?)
+    fun junitCases(xml: String): List<LayerCase> = runCatching {
+        val document = DocumentBuilderFactory.newInstance()
+            .apply {
+                isNamespaceAware = false
+                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                setFeature("http://xml.org/sax/features/external-general-entities", false)
+                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            }
+            .newDocumentBuilder()
+            .parse(InputSource(StringReader(xml)))
+        val nodes = document.getElementsByTagName("testcase")
+        (0 until nodes.length).mapNotNull { index ->
+            val node = nodes.item(index) as? org.w3c.dom.Element ?: return@mapNotNull null
+            val className = node.getAttribute("classname").takeIf { it.isNotBlank() }
+            val name = node.getAttribute("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val failure = node.getElementsByTagName("failure").item(0) as? org.w3c.dom.Element
+            val error = node.getElementsByTagName("error").item(0) as? org.w3c.dom.Element
+            val skipped = node.getElementsByTagName("skipped").item(0) as? org.w3c.dom.Element
+            val detailNode = failure ?: error ?: skipped
+            val status = when {
+                failure != null || error != null -> "FAIL"
+                skipped != null -> "WARN"
+                else -> "OK"
+            }
+            LayerCase(
+                name = listOfNotNull(className, name).joinToString("::"),
+                status = status,
+                durationMs = node.getAttribute("time").toDoubleOrNull()?.let { (it * 1_000).toLong() },
+                detail = detailNode?.let {
+                    listOfNotNull(it.getAttribute("message").takeIf(String::isNotBlank), it.textContent?.trim()?.take(600))
+                        .joinToString("\n")
+                        .takeIf(String::isNotBlank)
+                },
+            )
+        }
+    }.getOrElse { emptyList() }
+
     data class LayerResult(val layer: Layer, val code: Int, val out: String, val durationMs: Long) {
+        val junitXml: String? = out
+            .substringAfter("__ARCANA_JUNIT_START__", missingDelimiterValue = "")
+            .substringBefore("__ARCANA_JUNIT_END__", missingDelimiterValue = "")
+            .trim()
+            .takeIf { it.isNotBlank() }
+        val output: String = out.substringBefore("__ARCANA_JUNIT_START__")
         val status: String = if (code == 0) "OK" else "FAIL"
-        val summary: String = out.lineSequence()
+        val summary: String = output.lineSequence()
             .map(String::trim)
             .lastOrNull { it.contains(" passed") || it.contains(" failed") || it.contains(" error") }
             ?: "pytest exit=$code"
         val passed: Int? = Regex("""(\d+)\s+passed""").find(summary)?.groupValues?.get(1)?.toIntOrNull()
-        val coveragePct: Double? = if (layer.coverage) {
-            out.lineSequence()
-                .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
-                .lastOrNull()
-        } else {
-            null
-        }
+        val cases: List<LayerCase> = junitXml?.let(::junitCases).orEmpty()
     }
 
     fun runLayer(layer: Layer): LayerResult {
         val layerStarted = System.nanoTime()
         val command = if (layer.coverage) {
+            val append = if (layer.appendCoverage) "--append " else ""
             """
             set -euo pipefail
             cd $qArcanaDir
-            .venv/bin/python -m coverage erase
+            xml=${'$'}(mktemp)
             set +e
-            .venv/bin/python -m coverage run --source=. --omit='z_tests_n_benchmarks/*' -m pytest ${layer.paths} -q
+            .venv/bin/python -m coverage run ${append}--source=. --omit='z_tests_n_benchmarks/*' -m pytest ${layer.paths} -q --junitxml "${'$'}xml"
             rc=${'$'}?
-            .venv/bin/python -m coverage report --format=total || true
+            printf '\n__ARCANA_JUNIT_START__\n'
+            cat "${'$'}xml" 2>/dev/null || true
+            printf '\n__ARCANA_JUNIT_END__\n'
+            rm -f "${'$'}xml"
             exit ${'$'}rc
             """.trimIndent()
         } else {
             """
             set -euo pipefail
             cd $qArcanaDir
+            xml=${'$'}(mktemp)
             set +e
-            .venv/bin/python -m pytest ${layer.paths} -q
+            .venv/bin/python -m pytest ${layer.paths} -q --junitxml "${'$'}xml"
             rc=${'$'}?
+            printf '\n__ARCANA_JUNIT_START__\n'
+            cat "${'$'}xml" 2>/dev/null || true
+            printf '\n__ARCANA_JUNIT_END__\n'
+            rm -f "${'$'}xml"
             exit ${'$'}rc
             """.trimIndent()
         }
@@ -273,25 +327,54 @@ fun arcanaSmoke() {
     }
 
     val layers = listOf(
-        Layer("deterministic baseline", qArcanaDeterministicTests, coverage = true),
-        Layer("live e2e canaries", qArcanaE2eTests),
-        Layer("benchmark seed", qArcanaBenchmarkTests),
+        Layer("unit", qArcanaUnitTests, coverage = true),
+        Layer("integration", qArcanaIntegrationTests, coverage = true, appendCoverage = true),
+        Layer("e2e", qArcanaE2eTests),
+        Layer("benchmarks", qArcanaBenchmarkTests),
     )
     val results = layers.map(::runLayer)
+    val coveragePct = qRun("cd $qArcanaDir && .venv/bin/python -m coverage report --format=total", check = false, quiet = true)
+        .out
+        .lineSequence()
+        .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
+        .lastOrNull()
+    fun writeLayerArtifact(result: LayerResult) {
+        val cases = result.cases.joinToString(prefix = "[", postfix = "]") { case ->
+            listOfNotNull(
+                "\"name\":${case.name.jsonString()}",
+                "\"status\":${case.status.jsonString()}",
+                case.durationMs?.let { "\"duration_ms\":$it" },
+                case.detail?.let { "\"detail\":${it.jsonString()}" },
+            ).joinToString(prefix = "{", postfix = "}")
+        }
+        val fileName = "arcana-${result.layer.label}.json"
+        val artifact = listOf(
+            "\"label\":${result.layer.label.jsonString()}",
+            "\"paths\":${result.layer.paths.jsonString()}",
+            "\"status\":${result.status.jsonString()}",
+            "\"duration_ms\":${result.durationMs}",
+            "\"summary\":${result.summary.jsonString()}",
+            "\"output_tail\":${result.output.takeLast(12_000).jsonString()}",
+            "\"cases\":$cases",
+        ).joinToString(prefix = "{", postfix = "}")
+        logs.resolve(fileName).writeText(artifact)
+        if (!runningOnQ) {
+            qRun("cd ~/Desktop/kotlin/backend && mkdir -p 0_scripts/logs && printf %s ${artifact.shellQuote()} > ${"0_scripts/logs/$fileName".shellQuote()}")
+        }
+    }
+    results.forEach(::writeLayerArtifact)
     val durationMs = (System.nanoTime() - started) / 1_000_000
     val status = if (results.any { it.code != 0 }) "FAIL" else "OK"
     val totalPassed = results.mapNotNull { it.passed }.takeIf { it.size == results.size && status == "OK" }?.sum()
     val summary = totalPassed?.let { "$it passed" } ?: results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }
     val detail = "$summary on q @$head"
-    val coveragePct = results.firstOrNull { it.layer.coverage }?.coveragePct
     val coverageField = coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" }
     fun layerPayload(result: LayerResult): String = listOfNotNull(
         "\"label\":${result.layer.label.jsonString()}",
         "\"status\":${result.status.jsonString()}",
         "\"duration_ms\":${result.durationMs}",
         "\"detail\":${result.summary.jsonString()}",
-        "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
-        result.coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" },
+        "\"url\":${arcanaLayerArtifactUrl(result.layer.label).jsonString()}",
     ).joinToString(prefix = "{", postfix = "}")
 
     val payload = listOfNotNull(
