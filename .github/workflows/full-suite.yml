@@ -128,7 +128,7 @@ jobs:
         run: python3 .github/scripts/server_py_live_selftest.py
 
   # ---------------------------------------------------------------------------
-  # arcana-smoke: asks backend to run q-local Arcana pytest and publish JSON.
+  # arcana-smoke: asks backend to run q-local Arcana full pyramid and publish JSON.
   # ---------------------------------------------------------------------------
   arcana-smoke:
     name: all-tests / arcana-smoke

@@ -18,7 +18,9 @@ val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val qHost: String = "q"
 val qArcanaDir: String = "~/Desktop/py/arcana"
-val qArcanaTests: String = "z_tests_n_benchmarks/unit z_tests_n_benchmarks/integration z_tests_n_benchmarks/e2e z_tests_n_benchmarks/benchmarks"
+val qArcanaDeterministicTests: String = "z_tests_n_benchmarks/unit z_tests_n_benchmarks/integration"
+val qArcanaE2eTests: String = "z_tests_n_benchmarks/e2e"
+val qArcanaBenchmarkTests: String = "z_tests_n_benchmarks/benchmarks"
 val arcanaIngestArtifactUrl: String = "/api/ops/artifacts/arcana-ingest.json"
 val root: File = File(".").canonicalFile
 val home: File = File(System.getProperty("user.home"))
@@ -213,7 +215,7 @@ fun arcanaSmoke() {
     log("◆", "q arcana full pyramid")
     val head = qRun("cd $qArcanaDir && git rev-parse --short HEAD", quiet = true).out.trim().ifBlank { "unknown" }
     val started = System.nanoTime()
-    val result = qRun(
+    qRun(
         """
         set -euo pipefail
         cd $qArcanaDir
@@ -223,34 +225,75 @@ fun arcanaSmoke() {
           .venv/bin/python -m pip install -r requirements.txt
         fi
         .venv/bin/python -m pip show coverage >/dev/null 2>&1 || .venv/bin/python -m pip install coverage
-        .venv/bin/python -m coverage erase
-        set +e
-        .venv/bin/python -m coverage run --source=. --omit='z_tests_n_benchmarks/*' -m pytest $qArcanaTests -q
-        rc=${'$'}?
-        .venv/bin/python -m coverage report --format=total || true
-        exit ${'$'}rc
         """.trimIndent(),
-        check = false,
     )
+
+    data class Layer(val label: String, val paths: String, val coverage: Boolean = false)
+    data class LayerResult(val layer: Layer, val code: Int, val out: String, val durationMs: Long) {
+        val status: String = if (code == 0) "OK" else "FAIL"
+        val summary: String = out.lineSequence()
+            .map(String::trim)
+            .lastOrNull { it.contains(" passed") || it.contains(" failed") || it.contains(" error") }
+            ?: "pytest exit=$code"
+        val passed: Int? = Regex("""(\d+)\s+passed""").find(summary)?.groupValues?.get(1)?.toIntOrNull()
+        val coveragePct: Double? = if (layer.coverage) {
+            out.lineSequence()
+                .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
+                .lastOrNull()
+        } else {
+            null
+        }
+    }
+
+    fun runLayer(layer: Layer): LayerResult {
+        val layerStarted = System.nanoTime()
+        val command = if (layer.coverage) {
+            """
+            set -euo pipefail
+            cd $qArcanaDir
+            .venv/bin/python -m coverage erase
+            set +e
+            .venv/bin/python -m coverage run --source=. --omit='z_tests_n_benchmarks/*' -m pytest ${layer.paths} -q
+            rc=${'$'}?
+            .venv/bin/python -m coverage report --format=total || true
+            exit ${'$'}rc
+            """.trimIndent()
+        } else {
+            """
+            set -euo pipefail
+            cd $qArcanaDir
+            set +e
+            .venv/bin/python -m pytest ${layer.paths} -q
+            rc=${'$'}?
+            exit ${'$'}rc
+            """.trimIndent()
+        }
+        val result = qRun(command, check = false)
+        return LayerResult(layer, result.code, result.out, (System.nanoTime() - layerStarted) / 1_000_000)
+    }
+
+    val layers = listOf(
+        Layer("deterministic baseline", qArcanaDeterministicTests, coverage = true),
+        Layer("live e2e canaries", qArcanaE2eTests),
+        Layer("benchmark seed", qArcanaBenchmarkTests),
+    )
+    val results = layers.map(::runLayer)
     val durationMs = (System.nanoTime() - started) / 1_000_000
-    val summary = result.out.lineSequence()
-        .map(String::trim)
-        .lastOrNull { it.contains(" passed") || it.contains(" failed") || it.contains(" error") }
-        ?: "pytest exit=${result.code}"
-    val status = if (result.code == 0) "OK" else "FAIL"
+    val status = if (results.any { it.code != 0 }) "FAIL" else "OK"
+    val totalPassed = results.mapNotNull { it.passed }.takeIf { it.size == results.size && status == "OK" }?.sum()
+    val summary = totalPassed?.let { "$it passed" } ?: results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }
     val detail = "$summary on q @$head"
-    val coveragePct = result.out.lineSequence()
-        .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
-        .lastOrNull()
+    val coveragePct = results.firstOrNull { it.layer.coverage }?.coveragePct
     val coverageField = coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" }
-    val runFields = listOfNotNull(
-        "\"label\":${qArcanaTests.jsonString()}",
-        "\"status\":${status.jsonString()}",
-        "\"duration_ms\":$durationMs",
-        "\"detail\":${summary.jsonString()}",
+    fun layerPayload(result: LayerResult): String = listOfNotNull(
+        "\"label\":${result.layer.label.jsonString()}",
+        "\"status\":${result.status.jsonString()}",
+        "\"duration_ms\":${result.durationMs}",
+        "\"detail\":${result.summary.jsonString()}",
         "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
-        coverageField,
-    )
+        result.coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" },
+    ).joinToString(prefix = "{", postfix = "}")
+
     val payload = listOfNotNull(
         "\"status\":${status.jsonString()}",
         "\"label\":\"q arcana full pyramid\"",
@@ -258,10 +301,10 @@ fun arcanaSmoke() {
         "\"detail\":${detail.jsonString()}",
         "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
         coverageField,
-        "\"runs\":[{${runFields.joinToString(",")}}]",
+        "\"runs\":[${results.joinToString(",") { layerPayload(it) }}]",
     ).joinToString(prefix = "{", postfix = "}")
     qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
-    if (result.code != 0) fail("q arcana full pyramid failed: $summary")
+    if (status != "OK") fail("q arcana full pyramid failed: ${results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }}")
     log("✓", "q arcana full pyramid passed: $summary")
 }
 

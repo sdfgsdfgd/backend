@@ -78,10 +78,10 @@ def poll_arcana_smoke(started_ms: int) -> int:
             continue
         arcana = next((repo for repo in summary.get("repos", []) if repo.get("id") == "arcana"), None)
         latest = arcana.get("latest_run") if isinstance(arcana, dict) else None
-        last_payload = latest
+        last_payload = arcana
         if is_fresh_ok(latest, started_ms):
-            write_result(latest)
-            print(json.dumps(latest, indent=2), flush=True)
+            write_result(arcana)
+            print(json.dumps(arcana, indent=2), flush=True)
             return 0
         time.sleep(POLL_INTERVAL)
     payload = {

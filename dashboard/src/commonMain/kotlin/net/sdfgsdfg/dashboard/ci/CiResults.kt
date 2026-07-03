@@ -210,8 +210,8 @@ private fun CiRepoCard(repo: RepoHealthDto, generatedAtMs: Long, fieldCompact: B
                         title = run.evidenceTitle(repo.id),
                         status = run.status,
                         generatedAtMs = generatedAtMs,
-                        timestampMs = run.timestampMs.takeUnless { repo.id == "arcana" },
-                        durationMs = run.durationMs.takeUnless { repo.id == "arcana" },
+                        timestampMs = run.timestampMs,
+                        durationMs = run.durationMs,
                         subtitle = run.evidenceSubtitle(repo.id),
                         detail = run.evidenceDetail(repo.id),
                         fields = run.evidenceFields(repo.id, generatedAtMs),
@@ -663,7 +663,7 @@ private fun RunHistoryRow(repo: RepoHealthDto, run: TestRunSummaryDto, generated
 private fun RepoHealthDto.ciRole() = when (id) {
     "backend" -> "deploy gate + unit tests + umbrella suite"
     "server_py" -> "unit tests + live e2e"
-    "arcana" -> "unit tests; integration/e2e slots ready"
+    "arcana" -> "full pyramid: deterministic + live e2e + benchmark"
     else -> role
 }
 
@@ -683,7 +683,13 @@ private fun String.historyColor() = when (this) {
 }
 
 private fun TestRunSummaryDto.evidenceTitle(repoId: String) = when {
-    repoId == "arcana" -> "unit tests"
+    repoId == "arcana" -> when (label) {
+        "q arcana full pyramid" -> "full pyramid"
+        "deterministic baseline" -> "deterministic baseline"
+        "live e2e canaries" -> "live e2e"
+        "benchmark seed" -> "benchmarks"
+        else -> label
+    }
     label.startsWith("deploy ") || label == "deploy gate" -> "deploy gate"
     label == "full suite" -> "full suite"
     label == "unit tests" -> "unit tests"
@@ -691,27 +697,41 @@ private fun TestRunSummaryDto.evidenceTitle(repoId: String) = when {
 }
 
 private fun TestRunSummaryDto.evidenceSubtitle(repoId: String) = when {
-    repoId == "arcana" -> label
+    repoId == "arcana" -> when (label) {
+        "q arcana full pyramid" -> "unit + integration + e2e + benchmarks"
+        "deterministic baseline" -> "unit + integration coverage"
+        "live e2e canaries" -> "real RPC canaries"
+        "benchmark seed" -> "capability score seed"
+        else -> label
+    }
     label.startsWith("deploy ") -> label
     label == "full suite" && repoId == "backend" -> "weekly GitHub umbrella"
     else -> null
 }
 
-private fun TestRunSummaryDto.evidenceDetail(repoId: String) = detail.takeUnless { repoId == "arcana" }
+private fun TestRunSummaryDto.evidenceDetail(repoId: String) = detail.takeUnless { repoId == "arcana" && label == "q arcana full pyramid" }
 
 private fun TestRunSummaryDto.arcanaFields(generatedAtMs: Long): List<FieldSpec> {
     val detail = detail.orEmpty()
     return listOfNotNull(
-        detail.substringBefore(" passed", missingDelimiterValue = "").takeIf { it.isNotBlank() && it.all(Char::isDigit) }?.let { FieldSpec("unit tests", "$it passed") },
+        Regex("""(\d+)\s+passed""").find(detail)?.groupValues?.getOrNull(1)?.let { FieldSpec(arcanaCountLabel(), "$it passed") },
         durationMs?.durationLabel()?.let { FieldSpec("duration", it) },
         timestampMs?.relativeFrom(generatedAtMs)?.let { FieldSpec("last", it) },
         detail.substringAfter("@", missingDelimiterValue = "").takeIf { it.isNotBlank() }?.let { FieldSpec("commit", it) },
     )
 }
 
+private fun TestRunSummaryDto.arcanaCountLabel() = when (label) {
+    "q arcana full pyramid" -> "pyramid"
+    "deterministic baseline" -> "deterministic"
+    "live e2e canaries" -> "e2e"
+    "benchmark seed" -> "benchmarks"
+    else -> "tests"
+}
+
 private fun TestRunSummaryDto.evidenceFields(repoId: String, generatedAtMs: Long): List<FieldSpec> =
     (if (repoId == "arcana") arcanaFields(generatedAtMs) else emptyList()) +
-        listOfNotNull(coveragePct?.let { FieldSpec("coverage", it.percentLabel()) })
+        listOfNotNull(coveragePct?.let { FieldSpec(if (repoId == "arcana") "det coverage" else "coverage", it.percentLabel()) })
 
 private fun OpsStatusDto.evidenceColor() = if (this == OpsStatusDto.OK) cyan else color()
 
@@ -730,7 +750,7 @@ private fun RepoHealthDto.ciStatus(): OpsStatusDto {
 private fun RepoHealthDto.ciRuns(): List<TestRunSummaryDto> = when (id) {
     "backend" -> listOfNotNull(latestRun) + runs.filter { it.label in setOf("unit tests", "full suite") }
     "server_py" -> runs.filter { it.label in setOf("unit tests", "live e2e selftest", "model matrix") }
-    "arcana" -> listOfNotNull(latestRun).filter { it.isArcanaTestRun() }.ifEmpty { runs.filter { it.isArcanaTestRun() } }
+    "arcana" -> runs.filter { it.isArcanaTestRun() }.ifEmpty { listOfNotNull(latestRun).filter { it.isArcanaTestRun() } }
     else -> runs.ifEmpty { listOfNotNull(latestRun) }
 }.distinctBy { it.label to it.timestampMs }
 

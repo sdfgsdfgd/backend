@@ -400,7 +400,10 @@ internal fun RepoHealthDto.testBadges(): List<BadgeSpec> = when (id) {
             ?: selfTest?.let { BadgeSpec("TEST: e2e ${it.status.name}", it.status.color(), strong = it.status != OpsStatusDto.UNKNOWN) },
     )
     "arcana" -> listOfNotNull(
-        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.testBadge("unit"),
+        (latestRun?.takeIf { it.isArcanaTestRun() } ?: runs.firstOrNull { it.isArcanaTestRun() })?.testBadge("pyramid"),
+        runs.firstOrNull { it.label == "deterministic baseline" }?.testBadge("base"),
+        runs.firstOrNull { it.label == "live e2e canaries" }?.testBadge("e2e"),
+        runs.firstOrNull { it.label == "benchmark seed" }?.testBadge("bench"),
     )
     else -> emptyList()
 }
@@ -410,6 +413,10 @@ private fun TestRunSummaryDto.testBadge(kind: String) =
 
 internal fun TestRunSummaryDto.isArcanaTestRun() = label.contains("pytest", ignoreCase = true) ||
     label.contains("z_tests", ignoreCase = true) ||
+    label == "q arcana full pyramid" ||
+    label == "deterministic baseline" ||
+    label == "live e2e canaries" ||
+    label == "benchmark seed" ||
     detail?.contains("passed", ignoreCase = true) == true
 
 internal fun RepoHealthDto.runtimeBadges(): List<BadgeSpec> {

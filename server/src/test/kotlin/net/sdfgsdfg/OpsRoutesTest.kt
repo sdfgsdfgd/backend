@@ -856,12 +856,14 @@ class OpsRoutesTest {
                 """
                 {
                   "status": "OK",
-                  "label": "pytest local publisher",
+                  "label": "q arcana full pyramid",
                   "duration_ms": 123.0,
-                  "detail": "unit spine passed",
+                  "detail": "370 passed on q @abc1234",
                   "issues": { "todo": 2, "wip": 1, "done": 3 },
                   "runs": [
-                    { "label": "pytest unit", "status": "OK", "detail": "83 tests", "coverage_pct": 80.5 }
+                    { "label": "deterministic baseline", "status": "OK", "detail": "366 passed", "coverage_pct": 80.5 },
+                    { "label": "live e2e canaries", "status": "OK", "detail": "3 passed" },
+                    { "label": "benchmark seed", "status": "OK", "detail": "1 passed" }
                   ],
                   "coverage_pct": 80.5
                 }
@@ -873,15 +875,17 @@ class OpsRoutesTest {
         val summaryResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val arcana = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "arcana" }
         assertEquals(OpsStatusDto.OK, arcana.status)
-        assertEquals("pytest local publisher", arcana.latestRun?.label)
-        assertEquals("unit spine passed", arcana.latestRun?.detail)
+        assertEquals("q arcana full pyramid", arcana.latestRun?.label)
+        assertEquals("370 passed on q @abc1234", arcana.latestRun?.detail)
         assertEquals(2, arcana.issues.todo)
         assertEquals(1, arcana.issues.wip)
         assertEquals(3, arcana.issues.done)
-        assertEquals(true, arcana.runs.any { it.label == "pytest unit" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "deterministic baseline" && it.status == OpsStatusDto.OK && it.coveragePct == 80.5 })
+        assertEquals(true, arcana.runs.any { it.label == "live e2e canaries" && it.status == OpsStatusDto.OK })
+        assertEquals(true, arcana.runs.any { it.label == "benchmark seed" && it.status == OpsStatusDto.OK })
         assertEquals(80.5, arcana.latestRun?.coveragePct)
-        assertEquals(listOf("pytest local publisher"), arcana.history.map { it.label })
-        assertEquals(false, arcana.runs.any { it.label == "pytest unit spine" })
+        assertEquals(listOf("q arcana full pyramid"), arcana.history.map { it.label })
+        assertEquals(false, arcana.runs.any { it.label == "pytest unit" })
         assertEquals(false, arcana.runs.any { it.status == OpsStatusDto.WIP })
         assertEquals(true, ingestFile.readText().contains("timestamp_ms"))
     }
