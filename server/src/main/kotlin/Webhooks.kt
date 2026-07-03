@@ -250,7 +250,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
 
         val command = profile.commands.single()
-        broadcastRunStarted("arcana", "q arcana unit pytest", "Arcana pytest running on q.", ARCANA_INGEST_ARTIFACT_URL)
+        broadcastRunStarted("arcana", "q arcana full pyramid", "Arcana full pyramid running on q.", ARCANA_INGEST_ARTIFACT_URL)
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         val exit = webhookArcanaSmokeMutex.withLock {

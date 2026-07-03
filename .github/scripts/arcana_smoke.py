@@ -12,8 +12,8 @@ SUMMARY_URL = "https://ops.sdfgsdfg.net/api/ops/summary"
 RESULT_PATH = Path("arcana-smoke.json")
 RECENT_WINDOW_MS = 60_000
 POLL_INTERVAL = 3
-POLL_TIMEOUT = 180
-HTTP_TIMEOUT = 30
+POLL_TIMEOUT = 10_200
+HTTP_TIMEOUT = 120
 SECRET_HEADER = "X-Arcana-Smoke-Secret"
 BASE_HEADERS = {
     "Accept": "*/*",
@@ -51,7 +51,17 @@ def trigger_arcana_smoke() -> None:
                 raise SystemExit(json.dumps(trigger_payload, indent=2))
     except urllib.error.HTTPError as error:
         preview = error.read().decode("utf-8", errors="replace")[:1_200]
+        if error.code in {520, 524}:
+            print(f"[arcana-smoke] trigger returned HTTP {error.code}; polling ops summary.", flush=True)
+            return
         raise SystemExit(f"arcana-smoke webhook failed with HTTP {error.code}: {preview}")
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            print("[arcana-smoke] trigger timed out; polling ops summary.", flush=True)
+            return
+        raise
+    except TimeoutError:
+        print("[arcana-smoke] trigger timed out; polling ops summary.", flush=True)
 
 
 def poll_arcana_smoke(started_ms: int) -> int:

@@ -18,7 +18,7 @@ val postgresPort: Int = 5432
 val javaHome: String = "/usr/lib/jvm/java-21-openjdk-amd64"
 val qHost: String = "q"
 val qArcanaDir: String = "~/Desktop/py/arcana"
-val qArcanaTests: String = "z_tests_n_benchmarks/unit"
+val qArcanaTests: String = "z_tests_n_benchmarks/unit z_tests_n_benchmarks/integration z_tests_n_benchmarks/e2e z_tests_n_benchmarks/benchmarks"
 val arcanaIngestArtifactUrl: String = "/api/ops/artifacts/arcana-ingest.json"
 val root: File = File(".").canonicalFile
 val home: File = File(System.getProperty("user.home"))
@@ -210,7 +210,7 @@ fun qRun(command: String, check: Boolean = true, quiet: Boolean = false): Result
     run(if (runningOnQ) command else "ssh $qHost ${command.shellQuote()}", check = check, quiet = quiet)
 
 fun arcanaSmoke() {
-    log("◆", "q arcana pytest")
+    log("◆", "q arcana full pyramid")
     val head = qRun("cd $qArcanaDir && git rev-parse --short HEAD", quiet = true).out.trim().ifBlank { "unknown" }
     val started = System.nanoTime()
     val result = qRun(
@@ -253,7 +253,7 @@ fun arcanaSmoke() {
     )
     val payload = listOfNotNull(
         "\"status\":${status.jsonString()}",
-        "\"label\":\"q arcana unit pytest\"",
+        "\"label\":\"q arcana full pyramid\"",
         "\"duration_ms\":$durationMs",
         "\"detail\":${detail.jsonString()}",
         "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
@@ -261,8 +261,8 @@ fun arcanaSmoke() {
         "\"runs\":[{${runFields.joinToString(",")}}]",
     ).joinToString(prefix = "{", postfix = "}")
     qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
-    if (result.code != 0) fail("q arcana pytest failed: $summary")
-    log("✓", "q arcana pytest passed: $summary")
+    if (result.code != 0) fail("q arcana full pyramid failed: $summary")
+    log("✓", "q arcana full pyramid passed: $summary")
 }
 
 fun localTests() {

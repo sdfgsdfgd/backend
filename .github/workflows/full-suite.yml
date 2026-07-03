@@ -3,8 +3,9 @@ name: Backend Full Suite
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 7 * * 1"
-      timezone: Australia/Melbourne
+    # GitHub schedules are UTC. This is Monday 04:30 in Melbourne during AEST,
+    # and Monday 05:30 during AEDT.
+    - cron: "30 18 * * 0"
 
 permissions:
   contents: read
@@ -132,7 +133,7 @@ jobs:
   arcana-smoke:
     name: all-tests / arcana-smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
