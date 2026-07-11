@@ -24,8 +24,6 @@ dependencies {
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.kotlinx.rpc.krpc.ktor.server)
     implementation(libs.kotlinx.rpc.krpc.ktor.client)
-    implementation(libs.koin.ktor)
-    implementation(libs.koin.logger.slf4j)
     implementation(libs.ktor.server.html.builder)
     implementation(libs.kotlinx.html)
     implementation(libs.ktor.server.metrics.micrometer)

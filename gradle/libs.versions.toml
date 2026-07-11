@@ -1,5 +1,4 @@
 [versions]
-koin-version                    = "3.5.6"
 kotlin-version                  = "2.3.21"
 compose-version                 = "1.11.0"     # May 2026 stable; keep shared UI in :dashboard and app entrypoints thin.
 compose-material3-version       = "1.9.0"
@@ -26,8 +25,6 @@ ktor-server-websockets                  = { module = "io.ktor:ktor-server-websoc
 ktor-network-tls                        = { module = "io.ktor:ktor-network-tls", version.ref = "ktor-version" }
 ktor-serialization-kotlinx-json         = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor-version" }
 ktor-server-content-negotiation         = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor-version" }
-koin-ktor                               = { module = "io.insert-koin:koin-ktor", version.ref = "koin-version" }
-koin-logger-slf4j                       = { module = "io.insert-koin:koin-logger-slf4j", version.ref = "koin-version" }
 ktor-server-html-builder                = { module = "io.ktor:ktor-server-html-builder", version.ref = "ktor-version" }
 kotlinx-html                            = { module = "org.jetbrains.kotlinx:kotlinx-html", version.ref = "kotlinx-html-version" }
 kotlinx-serialization-json              = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-version" }

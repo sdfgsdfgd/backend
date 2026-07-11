@@ -4,6 +4,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.request.host
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveText
@@ -11,6 +12,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.websocket.webSocket
@@ -150,7 +152,7 @@ private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
 private val issueMutationLock = Any()
 
-fun Route.opsRoutes(
+internal fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
     arcanaIngestTargetFile: File = defaultArcanaIngestFile,
     arcanaIngestHistoryFile: File = defaultArcanaIngestHistoryFile,
@@ -164,12 +166,14 @@ fun Route.opsRoutes(
     enablePeerSnapshots: Boolean = false,
     peerSnapshot: (Boolean) -> OpsHostSnapshotDto? = ::peerHostSnapshot,
     resolveViewer: (ApplicationCall) -> OpsViewerDto = { it.opsViewer() },
+    opsSocketHub: OpsSocketHub = OpsSocketHub(),
 ) {
+    application.monitor.subscribe(ApplicationStopped) { opsSocketHub.close() }
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
         return opsHost || (localPreview && call.clientInfo().isLocal)
     }
-    fun summary() = OpsSocketHub.withActiveRuns(opsSummary(
+    fun summary() = opsSocketHub.withActiveRuns(opsSummary(
         localPreview,
         arcanaIngestTargetFile,
         arcanaIngestHistoryFile,
@@ -181,9 +185,10 @@ fun Route.opsRoutes(
         githubIssues,
         backendFullSuite,
         if (enablePeerSnapshots) peerSnapshot(localPreview) else null,
+        opsSocketHub.clientCount,
     ))
 
-    OpsSocketHub.configure(::summary)
+    opsSocketHub.configure(::summary)
     opsGithubAuthRoutes(::allowed)
 
     suspend fun ApplicationCall.respondJsonArtifact(file: File) {
@@ -232,7 +237,7 @@ fun Route.opsRoutes(
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
             return@webSocket
         }
-        OpsSocketHub.serve(this)
+        opsSocketHub.serve(this)
     }
 
     get("/api/ops/host-snapshot") {
@@ -261,7 +266,7 @@ fun Route.opsRoutes(
         arcanaIngestTargetFile.parentFile?.mkdirs()
         arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
         appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
-        OpsSocketHub.broadcastSummary()
+        opsSocketHub.broadcastSummary()
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
@@ -285,7 +290,7 @@ fun Route.opsRoutes(
             call.respondText(it.message ?: "Issue mutation failed", status = HttpStatusCode.BadRequest)
             return@post
         }
-        OpsSocketHub.broadcastIssuePatch()
+        opsSocketHub.broadcastIssuePatch()
         call.respond(summary().issuePatch())
     }
 
@@ -422,6 +427,7 @@ private fun opsSummary(
     githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
     backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
     peerSnapshot: OpsHostSnapshotDto? = null,
+    socketClients: Int = 0,
 ): OpsSummaryDto {
     val ownServerPySelfTest = latestServerPySelfTest(selfTestFile)?.toOpsSelfTestSummary()
     val ownSnapshot = hostSnapshot(localPreview, ownServerPySelfTest)
@@ -460,7 +466,6 @@ private fun opsSummary(
             "verifyServer, dashboard build-if-needed, installServer, local smoke."
         },
     )
-    val socketClients = OpsSocketHub.clientCount
     val backendLatestRun = if (localPreview) backendCurrentRun else backendHistory.firstOrNull() ?: backendCurrentRun
     val arcanaLatestRun = arcanaIngest?.toRunSummary()
     val serverPyHistory = (runHistory(selfTestHistoryFile) + runHistory(serverPyUnitHistoryFile))

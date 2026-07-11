@@ -25,9 +25,9 @@ private val webhookDeployMutex = Mutex()
 private val webhookSelfTestMutex = Mutex()
 private val webhookArcanaSmokeMutex = Mutex()
 
-fun Route.githubWebhookRoute() {
-    post("/webhook/github") { call.processGitHubWebhook(targetOverride = null) }
-    post("/webhook/github/{target}") { call.processGitHubWebhook(targetOverride = call.parameters["target"]) }
+internal fun Route.githubWebhookRoute(opsSocketHub: OpsSocketHub) {
+    post("/webhook/github") { call.processGitHubWebhook(targetOverride = null, opsSocketHub) }
+    post("/webhook/github/{target}") { call.processGitHubWebhook(targetOverride = call.parameters["target"], opsSocketHub) }
 }
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -88,7 +88,7 @@ private val repoToSlug: Map<String, String> = deploymentProfiles
     }
     .toMap()
 
-private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?) {
+private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?, opsSocketHub: OpsSocketHub) {
     val deploymentLog = File(resolveLogDir(), "webhook.log")
     val payload = runCatching { receiveText() }.getOrElse { error ->
         log(
@@ -179,6 +179,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
             """$SERVER_PY_READY_CMD && curl -fsS -H 'Content-Type: application/json' -H 'X-GitHub-Event: manual-selftest' -d $quotedPayloadBody http://127.0.0.1/api/selftest/run"""
 
         broadcastRunStarted(
+            opsSocketHub,
             repoId = "server_py",
             label = "live selftest",
             detail = "Live browser/gRPC selftest running.",
@@ -252,7 +253,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         }
 
         val command = profile.commands.single()
-        broadcastRunStarted("arcana", ARCANA_PYRAMID_RUN_LABEL, "Arcana full pyramid running on q.", ARCANA_INGEST_ARTIFACT_URL)
+        broadcastRunStarted(opsSocketHub, "arcana", ARCANA_PYRAMID_RUN_LABEL, "Arcana full pyramid running on q.", ARCANA_INGEST_ARTIFACT_URL)
         val stdoutLines = mutableListOf<String>()
         val stderrLines = mutableListOf<String>()
         val exit = webhookArcanaSmokeMutex.withLock {
@@ -275,25 +276,26 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
 
     if (matchedSlug == "default") {
         broadcastRunStarted(
+            opsSocketHub,
             repoId = "backend",
             label = "deploy ${extractPushHeadSha(payload)?.take(7) ?: "pending"}",
             detail = "verifyServer, dashboard build-if-needed, installServer, local smoke.",
         )
     } else if (matchedSlug == "server-py") {
-        broadcastRunStarted("server_py", "unit tests", "Restarting server_py; unit tests queued.", SERVER_PY_UNIT_ARTIFACT_URL)
+        broadcastRunStarted(opsSocketHub, "server_py", "unit tests", "Restarting server_py; unit tests queued.", SERVER_PY_UNIT_ARTIFACT_URL)
     }
     webhookDeployMutex.withLock {
         for (command in profile.commands) {
             runWebhookCommand(matchedSlug, command, deploymentLog)
         }
         if (matchedSlug == "server-py") {
-            runServerPyUnitTests(deploymentLog)
+            runServerPyUnitTests(deploymentLog, opsSocketHub)
         }
     }
 }
 
-private fun broadcastRunStarted(repoId: String, label: String, detail: String, url: String? = null) {
-    OpsSocketHub.broadcastRunStarted(
+private fun broadcastRunStarted(opsSocketHub: OpsSocketHub, repoId: String, label: String, detail: String, url: String? = null) {
+    opsSocketHub.broadcastRunStarted(
         repoId,
         TestRunSummaryDto(
             label = label,
@@ -305,7 +307,7 @@ private fun broadcastRunStarted(repoId: String, label: String, detail: String, u
     )
 }
 
-private suspend fun runServerPyUnitTests(logFile: File): Int {
+private suspend fun runServerPyUnitTests(logFile: File, opsSocketHub: OpsSocketHub): Int {
     val startedAtMs = System.currentTimeMillis()
     val started = System.nanoTime()
     val junitFile = File.createTempFile("server-py-unit-", ".xml")
@@ -344,7 +346,7 @@ private suspend fun runServerPyUnitTests(logFile: File): Int {
     junitFile.delete()
     serverPyUnitFile.writeText(json.encodeToString(artifact))
     appendRunHistory(serverPyUnitHistoryFile, artifact.toRunSummary(SERVER_PY_UNIT_ARTIFACT_URL))
-    OpsSocketHub.broadcastSummary()
+    opsSocketHub.broadcastSummary()
     return exit
 }
 

@@ -10,6 +10,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collect
@@ -33,13 +34,15 @@ import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.isFreshForIssuePatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val opsSocketRefreshMs = 45_000L
 private const val opsSocketBroadcastDebounceMs = 120L
 private const val issuePatchEventLimit = 6
 
 @OptIn(FlowPreview::class)
-internal object OpsSocketHub {
+/** Runtime-local fanout and transient run state; separate instances must never cross-contaminate. */
+internal class OpsSocketHub : AutoCloseable {
     private data class Client(val session: DefaultWebSocketServerSession, val sendLock: Mutex = Mutex())
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -55,6 +58,7 @@ internal object OpsSocketHub {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
+    private val closed = AtomicBoolean()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
 
@@ -134,6 +138,15 @@ internal object OpsSocketHub {
         }
         resolved.forEach(activeRuns::remove)
         return summary.copy(repos = repos)
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        scope.cancel()
+        clients.clear()
+        activeRuns.clear()
+        summaryProvider = null
+        loopJob = null
     }
 
     private fun broadcast(message: OpsSocketMessageDto) {

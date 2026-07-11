@@ -24,6 +24,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -44,6 +45,8 @@ import java.io.RandomAccessFile
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.encoding.Base64
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
@@ -59,30 +62,12 @@ import kotlin.time.Duration.Companion.seconds
 //    .build()
 // ---
 
-val isLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
-private val linuxGroup by lazy { EpollEventLoopGroup() }   // reuse one pool
-
-val channel: ManagedChannel = if (isLinux) {
-    NettyChannelBuilder
-        .forAddress(DomainSocketAddress("/tmp/server_py/server_py.sock"))
-        .eventLoopGroup(linuxGroup)
-        .channelType(EpollDomainSocketChannel::class.java)
-        .usePlaintext()
-        .build()
-} else { // We're on OSX
-    NettyChannelBuilder
-        .forAddress("127.0.0.1", 1453)
-        .usePlaintext()
-        .build()
-}
-
 // Reuse the same JSON shape the ContentNegotiation plugin uses
 private val heartbeatJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
 }
 
-private val botStub = BotGrpcKt.BotCoroutineStub(channel)
 private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
 private val webhookRuntimeLockFile = File(resolveLogDir(), "webhook-runtime.lock")
 private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
@@ -93,24 +78,52 @@ private const val ASK_JOB_RUNNING_TTL_MS = 2L * 60 * 60 * 1000
 private const val ZEN_STATUS_ASSOCIATION_WINDOW_MS = 2L * 60 * 60 * 1000
 private const val ARCANA_RPC_ID_HEADER = "X-Arcana-Rpc-Id"
 
-private val askJobScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-private val askJobs = ConcurrentHashMap<String, AskJob>()
+/** One process bridge; request-id jobs remain claimable after an HTTP writer disconnects. */
+internal class ServerPyBridge : AutoCloseable {
+    private val linuxGroup = if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) EpollEventLoopGroup() else null
+    private val channel: ManagedChannel = linuxGroup?.let { group ->
+        NettyChannelBuilder
+            .forAddress(DomainSocketAddress("/tmp/server_py/server_py.sock"))
+            .eventLoopGroup(group)
+            .channelType(EpollDomainSocketChannel::class.java)
+            .usePlaintext()
+            .build()
+    } ?: NettyChannelBuilder
+        .forAddress("127.0.0.1", 1453)
+        .usePlaintext()
+        .build()
+    internal val botStub = BotGrpcKt.BotCoroutineStub(channel)
+    internal val askJobScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    internal val askJobs = ConcurrentHashMap<String, AskJob>()
+    private val closed = AtomicBoolean()
 
-private data class AskJob(
-    val rpcId: String,
-    val backendId: String,
-    val startedAtMs: Long,
-    val deferred: Deferred<AskJobResult>,
-) {
-    @Volatile
-    var completedAtMs: Long? = null
+    internal data class AskJob(
+        val rpcId: String,
+        val backendId: String,
+        val startedAtMs: Long,
+        val deferred: Deferred<AskJobResult>,
+    ) {
+        @Volatile
+        var completedAtMs: Long? = null
+    }
+
+    internal data class AskJobResult(
+        val status: HttpStatusCode,
+        val payload: String,
+        val textChars: Int = 0,
+    )
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        askJobScope.cancel()
+        askJobs.clear()
+        try {
+            channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)
+        } finally {
+            linuxGroup?.shutdownGracefully()?.awaitUninterruptibly(5, TimeUnit.SECONDS)
+        }
+    }
 }
-
-private data class AskJobResult(
-    val status: HttpStatusCode,
-    val payload: String,
-    val textChars: Int = 0,
-)
 
 private fun cleanRpcId(value: String?): String? =
     value?.trim()?.take(96)?.takeIf { it.isNotBlank() && it.all { ch -> ch.isLetterOrDigit() || ch in "._-" } }
@@ -118,7 +131,7 @@ private fun cleanRpcId(value: String?): String? =
 private fun statusPayload(status: String, rpcId: String): String =
     heartbeatJson.encodeToString(mapOf("status" to status, "request_id" to rpcId))
 
-private fun pruneAskJobs() {
+private fun ServerPyBridge.pruneAskJobs() {
     val now = System.currentTimeMillis()
     askJobs.entries.removeIf { entry ->
         val job = entry.value
@@ -128,13 +141,13 @@ private fun pruneAskJobs() {
     }
 }
 
-private fun startAskJob(
+private fun ServerPyBridge.startAskJob(
     rpcId: String,
     backendId: String,
     req: AskRequest,
     wantTts: Boolean,
     log: org.slf4j.Logger,
-): AskJob {
+): ServerPyBridge.AskJob {
     val startedAtMs = System.currentTimeMillis()
     val startedAtNs = System.nanoTime()
     fun elapsedMs() = (System.nanoTime() - startedAtNs) / 1_000_000
@@ -150,7 +163,7 @@ private fun startAskJob(
                 )
             )
             log.info("[gRPC][$backendId][$rpcId] job result ready elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")
-            AskJobResult(HttpStatusCode.OK, payload, reply.text.length)
+            ServerPyBridge.AskJobResult(HttpStatusCode.OK, payload, reply.text.length)
         } catch (err: io.grpc.StatusException) {
             val (status, code) = when (err.status.code) {
                 io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
@@ -166,7 +179,7 @@ private fun startAskJob(
                 )
             )
             log.warn("[gRPC][$backendId][$rpcId] job grpc failed status=${err.status.code} elapsed_ms=${elapsedMs()} desc=${err.status.description}")
-            AskJobResult(status, payload)
+            ServerPyBridge.AskJobResult(status, payload)
         } catch (err: Throwable) {
             val payload = heartbeatJson.encodeToString(
                 mapOf(
@@ -175,10 +188,10 @@ private fun startAskJob(
                 )
             )
             log.error("[gRPC][$backendId][$rpcId] job failed elapsed_ms=${elapsedMs()}", err)
-            AskJobResult(HttpStatusCode.BadGateway, payload)
+            ServerPyBridge.AskJobResult(HttpStatusCode.BadGateway, payload)
         }
     }
-    val job = AskJob(rpcId, backendId, startedAtMs, deferred)
+    val job = ServerPyBridge.AskJob(rpcId, backendId, startedAtMs, deferred)
     deferred.invokeOnCompletion { cause ->
         job.completedAtMs = System.currentTimeMillis()
         if (cause == null) {
@@ -193,15 +206,15 @@ private fun startAskJob(
 /*
  * ---------- REST → gRPC unary bridge ----------
  */
-fun Route.grpc() {
+internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketHub) {
     get("/api/ask/result/{id}") {
-        pruneAskJobs()
+        serverPyBridge.pruneAskJobs()
         val rpcId = cleanRpcId(call.parameters["id"])
         if (rpcId == null) {
             call.respondText(statusPayload("bad_request", ""), ContentType.Application.Json, HttpStatusCode.BadRequest)
             return@get
         }
-        val job = askJobs[rpcId]
+        val job = serverPyBridge.askJobs[rpcId]
         if (job == null) {
             application.log.info("[gRPC][$rpcId] result claim unknown")
             call.respondText(statusPayload("unknown", rpcId), ContentType.Application.Json, HttpStatusCode.NotFound)
@@ -223,7 +236,7 @@ fun Route.grpc() {
     }
 
     post("/api/ask") {
-        pruneAskJobs()
+        serverPyBridge.pruneAskJobs()
         val heartbeatSeconds = 20.seconds
         val body = call.receive<AskRequestDto>()
         val requestId = "ask-${UUID.randomUUID().toString().take(8)}"
@@ -254,8 +267,8 @@ fun Route.grpc() {
             .setNewTab(body.newTab)
             .setEndSession(body.endSession)
             .build()
-        val job = askJobs.computeIfAbsent(rpcId) {
-            startAskJob(rpcId, requestId, req, body.wantTts, application.log)
+        val job = serverPyBridge.askJobs.computeIfAbsent(rpcId) {
+            serverPyBridge.startAskJob(rpcId, requestId, req, body.wantTts, application.log)
         }
 
         call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
@@ -324,7 +337,7 @@ fun Route.grpc() {
             write(": keep-alive\n\n")      // first  bytes → resets Netty timer
             flush()
 
-            botStub.askStream(req).collect { chunk ->
+            serverPyBridge.botStub.askStream(req).collect { chunk ->
                 application.log.info("[gRPC] streaming collected chunk --> ${chunk.text.take(14)}...${chunk.text.takeLast(14)}")
 
                 write("data:${chunk.text}\n\n")
@@ -355,7 +368,7 @@ fun Route.grpc() {
         withWebhookRuntimeLock(onAcquired = { waitedMs ->
             application.log.info("[gRPC] [selftest] webhook runtime lock acquired waited_ms=$waitedMs")
         }) {
-            val result = runCatching { botStub.selfTest(req) }
+            val result = runCatching { serverPyBridge.botStub.selfTest(req) }
             val dto = result.fold(
                 onSuccess = {
                     SelfTestResultDto(
@@ -397,7 +410,7 @@ fun Route.grpc() {
             )
 
             val enriched = dto.withZenStatus()
-            persistSelfTestResult(enriched)
+            persistSelfTestResult(enriched, opsSocketHub)
             call.respond(enriched)
         }
     }
@@ -412,11 +425,11 @@ fun Route.grpc() {
     }
 }
 
-private fun persistSelfTestResult(result: SelfTestResultDto) {
+private fun persistSelfTestResult(result: SelfTestResultDto, opsSocketHub: OpsSocketHub) {
     runCatching {
         selfTestResultFile.writeText(heartbeatJson.encodeToString(result))
         appendRunHistory(serverPySelfTestHistoryFile, result.toOpsSelfTestSummary().toRunSummary())
-        OpsSocketHub.broadcastSummary()
+        opsSocketHub.broadcastSummary()
     }.onFailure {
         println("[gRPC] [selftest] failed to persist result: ${it.message}")
     }

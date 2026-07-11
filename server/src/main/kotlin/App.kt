@@ -4,6 +4,7 @@ import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.ContentType
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.log
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.embeddedServer
@@ -18,19 +19,11 @@ import io.ktor.server.websocket.webSocket
 import io.ktor.server.request.host
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.uri
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.joinAll
-import proxy.SimpleReverseProxy
 import proxy.HostRouter
 import proxy.HostRule
-import kotlin.time.Duration.Companion.seconds
 import io.ktor.client.request.headers
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.CloseReason
@@ -56,17 +49,19 @@ fun main() {
 
 // ---[ ModuleS ]----- //
 fun Application.module() {
+    val runtime = BackendRuntime()
+    // Native event loops and clients follow the Ktor application, including hot/test restarts.
+    monitor.subscribe(ApplicationStopped) { runtime.close() }
     cfg()
     db()
-    routes()
-    analytics()
+    routes(runtime)
 }
 
 // ------------[ Routes ]--------------
-private fun Application.routes() = routing {
+private fun Application.routes(runtime: BackendRuntime) = routing {
     // Host-aware reverse proxy targets. Add more domains by extending this list.
     val hostRouter = HostRouter(
-        httpClient = httpClient,
+        httpClient = runtime.proxyHttp,
         rules = listOf(
             HostRule(
                 hosts = setOf("x.sdfgsdfg.net"),
@@ -126,7 +121,7 @@ private fun Application.routes() = routing {
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
     // [ Ops API ] --> public on ops.sdfgsdfg.net; local preview only when deploy stamps BACKEND_ENV=local.
-    opsRoutes(enablePeerSnapshots = true)
+    opsRoutes(enablePeerSnapshots = true, opsSocketHub = runtime.opsSocket)
 
     get("/_q/probe") {
         val token = syntheticProbeToken
@@ -149,10 +144,10 @@ private fun Application.routes() = routing {
     ws()
 
     // [ gRPC ]
-    grpc()
+    grpc(runtime.serverPy, runtime.opsSocket)
 
     // [ Webhooks ]
-    githubWebhookRoute()
+    githubWebhookRoute(runtime.opsSocket)
 
     host(listOf("kaanos.com", "www.kaanos.com")) {
         staticFiles("/", cvStaticDir, index = "index.html")
@@ -181,7 +176,7 @@ private fun Application.routes() = routing {
         val serverCall = call
         val clientSession = this
         val trusted = isOwnerNetworkIp(remoteIp)
-        wsClient.webSocket(urlString = targetUrl, request = {
+        runtime.proxyWebSocket.webSocket(urlString = targetUrl, request = {
             headers {
                 listOf("Cookie", "Authorization", "Origin", "User-Agent").forEach { header ->
                     call.request.headers[header]?.let { value ->
@@ -227,23 +222,6 @@ private fun Application.routes() = routing {
     route("/{...}") {
         handle {
             hostRouter.proxy(call)
-        }
-    }
-}
-
-//    ✨    [   ANALYTICS  -  Websocket Monitor etc...   ]     ✨
-private fun Application.analytics() {
-    launch(
-        context = CoroutineScope(Dispatchers.IO + SupervisorJob()).coroutineContext,
-        start = CoroutineStart.UNDISPATCHED
-    ) {
-        while (isActive) {
-            runCatching { ConnectionCounter.count() }
-                .onFailure { log.error("Error in WS monitor:", it) }
-                .getOrNull()
-                ?.takeIf { it > 0 }
-                ?.let { count -> log.info("[WS] Currently $count active connection(s).") }
-            delay(30.seconds)
         }
     }
 }

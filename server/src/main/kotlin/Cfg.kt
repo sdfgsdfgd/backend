@@ -21,7 +21,7 @@ import io.ktor.server.request.queryString
 import io.ktor.server.websocket.WebSockets
 import kotlinx.serialization.json.Json
 
-val httpClient = HttpClient(Apache5) {
+internal fun proxyHttpClient() = HttpClient(Apache5) {
     followRedirects = false
     engine {
         followRedirects = false
@@ -32,7 +32,7 @@ val httpClient = HttpClient(Apache5) {
     }
 }
 
-val wsClient = HttpClient(CIO) {
+internal fun proxyWebSocketClient() = HttpClient(CIO) {
     install(ClientWebSockets)
 }
 
