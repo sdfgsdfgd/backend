@@ -31,6 +31,7 @@ fun main() {
     ComposeViewport(viewportContainerId = "dashboard") {
         var arrowShiftSignal by remember { mutableStateOf(0) }
         val wheelScrollDeltas = remember { Channel<Float>(Channel.UNLIMITED) }
+        val nativeWheelRegionHovered = remember { booleanArrayOf(false) }
         DisposableEffect(Unit) {
             val listener = { event: Event ->
                 when ((event as? KeyboardEvent)?.key) {
@@ -52,7 +53,8 @@ fun main() {
             val target = document.getElementById("dashboard") ?: document
             val listener = { event: Event ->
                 val wheel = event as? WheelEvent
-                if (wheel != null && !wheel.ctrlKey) {
+                if (wheel != null && !wheel.ctrlKey && !nativeWheelRegionHovered[0]) {
+                    // Compose owns nested regions and hands boundary deltas back to the page naturally.
                     event.preventDefault()
                     event.stopPropagation()
                     val modeScale = when (wheel.deltaMode) {
@@ -74,6 +76,7 @@ fun main() {
             arrowShiftSignal = arrowShiftSignal,
             focusedArrowKeys = false,
             externalScrollDeltas = wheelScrollDeltas,
+            onNativeWheelRegionChanged = { nativeWheelRegionHovered[0] = it },
         )
     }
     window.setTimeout({

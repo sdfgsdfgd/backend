@@ -522,7 +522,7 @@ class OpsRoutesTest {
         assertEquals("local + remote q", backend.runtimeLabel)
         assertEquals(OpsStatusDto.OK, serverPy.selfTest?.status)
         assertEquals("peer selftest", serverPy.latestRun?.detail)
-        assertEquals(listOf("unit tests", "live e2e selftest", "model matrix"), serverPy.runs.map { it.label })
+        assertEquals(listOf("unit tests", "live e2e selftest"), serverPy.runs.map { it.label })
         assertEquals(33.0, serverPy.runs.first().coveragePct)
         assertEquals("https://ops.sdfgsdfg.net/api/ops/artifacts/server-py-unit.json", serverPy.runs.first().url)
         assertEquals(listOf("local", "remote q"), arcana.runtimeLabels)

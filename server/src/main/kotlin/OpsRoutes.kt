@@ -51,6 +51,8 @@ import net.sdfgsdfg.data.model.RepoHealthDto
 import net.sdfgsdfg.data.model.SelfTestCaseSummaryDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
+import net.sdfgsdfg.data.model.TestArtifactDto
+import net.sdfgsdfg.data.model.TestCaseDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.arcanaLayerArtifactName
 import net.sdfgsdfg.data.model.arcanaTestLayerKeys
@@ -102,7 +104,11 @@ private val issueRepoRoots = mapOf("backend" to backendRepo, "server_py" to serv
 private val serverPySocket = File("/tmp/server_py/server_py.sock")
 private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
+private const val backendDeployArtifactUrl = "/api/ops/artifacts/backend-deploy.json"
+private const val backendUnitArtifactUrl = "/api/ops/artifacts/backend-unit.json"
+private const val backendFullSuiteArtifactUrl = "/api/ops/artifacts/backend-full-suite.json"
 private const val serverPySelfTestArtifactUrl = "/api/ops/artifacts/server-py-selftest.json"
+private const val serverPyLiveE2eArtifactUrl = "/api/ops/artifacts/server-py-live-e2e.json"
 private const val serverPyUnitArtifactUrl = "/api/ops/artifacts/server-py-unit.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
 private val arcanaLayerArtifactNames = arcanaTestLayerKeys.map(::arcanaLayerArtifactName).toSet()
@@ -112,6 +118,8 @@ private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
 private val backendFullSuiteLock = Any()
 private var backendFullSuiteCache: CachedTestRun? = null
+private val backendFullSuiteArtifactLock = Any()
+private var backendFullSuiteArtifactCache: CachedTestArtifact? = null
 private const val githubWorkflowCacheMs = 10 * 60 * 1_000L
 private const val localRuntimeLabel = "local"
 private const val qRuntimeLabel = "remote q"
@@ -126,6 +134,7 @@ private const val activeProcessesLabel = "active"
 private data class CachedIssueSummary(val expiresAtMs: Long, val summary: IssueSummaryDto)
 private data class CachedPeerSnapshot(val url: String, val snapshot: OpsHostSnapshotDto?, val nextAttemptAtMs: Long, val misses: Int = 0)
 private data class CachedTestRun(val expiresAtMs: Long, val run: TestRunSummaryDto)
+private data class CachedTestArtifact(val expiresAtMs: Long, val artifact: TestArtifactDto)
 private data class TestTotals(val tests: Int, val failures: Int, val errors: Int, val skipped: Int, val durationMs: Double, val coveragePct: Double? = null) {
     val passed: Int = (tests - failures - errors - skipped).coerceAtLeast(0)
     val status: OpsStatusDto = if (failures + errors > 0) OpsStatusDto.FAIL else OpsStatusDto.OK
@@ -190,6 +199,15 @@ fun Route.opsRoutes(
             response.headers.append(HttpHeaders.CacheControl, "no-store")
             respondText(artifact.readText(), ContentType.Application.Json)
         }
+    }
+
+    suspend fun ApplicationCall.respondTestArtifact(artifact: TestArtifactDto?) {
+        if (!allowed(this) || artifact == null) {
+            respondText("Not Found", status = HttpStatusCode.NotFound)
+            return
+        }
+        response.headers.append(HttpHeaders.CacheControl, "no-store")
+        respond(artifact)
     }
 
     // Browser UI uses /api/ops/ws as the primary transport; keep this as the canonical snapshot endpoint for fallback and diagnostics.
@@ -271,8 +289,25 @@ fun Route.opsRoutes(
         call.respond(summary().issuePatch())
     }
 
+    get(backendDeployArtifactUrl) {
+        call.respondTestArtifact(runHistory(deployHistorySourceFile).firstOrNull()?.let(::deployGateArtifact))
+    }
+
+    get(backendUnitArtifactUrl) {
+        call.respondTestArtifact(backendUnitArtifact())
+    }
+
+    get(backendFullSuiteArtifactUrl) {
+        call.respondTestArtifact(backendFullSuiteArtifact())
+    }
+
     get(serverPySelfTestArtifactUrl) {
+        // GitHub and operators consume this raw cross-repo contract; the dashboard uses the normalized sibling below.
         call.respondJsonArtifact(selfTestArtifactFile)
+    }
+
+    get(serverPyLiveE2eArtifactUrl) {
+        call.respondTestArtifact(latestServerPySelfTest(selfTestArtifactFile)?.toTestArtifact())
     }
 
     get(serverPyUnitArtifactUrl) {
@@ -288,7 +323,15 @@ fun Route.opsRoutes(
         if (name == null) {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
         } else {
-            call.respondJsonArtifact((arcanaIngestTargetFile.parentFile ?: resolveLogDir()).resolve(name))
+            val file = (arcanaIngestTargetFile.parentFile ?: resolveLogDir()).resolve(name)
+            val artifact = runCatching { opsJson.decodeFromString<TestArtifactDto>(file.readText()) }.getOrNull()
+            if (artifact?.ledgerSha == null) {
+                call.respondJsonArtifact(file)
+            } else {
+                call.respondTestArtifact(artifact.withCapabilityContracts(
+                    arcanaRepo.resolve("z_tests_n_benchmarks/ledgers/capability_contracts.json"),
+                ))
+            }
         }
     }
 }
@@ -825,15 +868,16 @@ internal fun appendRunHistory(file: File, run: TestRunSummaryDto) = runCatching 
 private fun backendRuns(latestRun: TestRunSummaryDto, fullSuite: TestRunSummaryDto): List<TestRunSummaryDto> {
     val serverChecks = backendTestTotals()
     return listOf(
-        latestRun,
+        latestRun.copy(artifactUrl = backendDeployArtifactUrl),
         TestRunSummaryDto(
             "unit tests",
             serverChecks?.status ?: OpsStatusDto.UNKNOWN,
             durationMs = serverChecks?.durationMs,
             detail = serverChecks?.detail ?: "No backend test result XML found.",
+            artifactUrl = backendUnitArtifactUrl,
             coveragePct = serverChecks?.coveragePct,
         ),
-        fullSuite,
+        fullSuite.copy(artifactUrl = backendFullSuiteArtifactUrl),
     )
 }
 
@@ -846,6 +890,7 @@ private fun backendFullSuiteRun(): TestRunSummaryDto {
             OpsStatusDto.UNKNOWN,
             detail = "Latest GitHub umbrella status unavailable.",
             url = backendFullSuiteUrl,
+            artifactUrl = backendFullSuiteArtifactUrl,
         ))
         backendFullSuiteCache = CachedTestRun(now + githubWorkflowCacheMs, run)
         return run
@@ -871,7 +916,85 @@ private fun fetchBackendFullSuiteRun() = runCatching {
         durationMs = started?.let { start -> updated?.minus(start)?.toDouble() },
         detail = "backend-local, server_py contract/live, Arcana smoke, public ingress, dashboard web/desktop.",
         url = run.text("html_url") ?: backendFullSuiteUrl,
+        artifactUrl = backendFullSuiteArtifactUrl,
     )
+}
+
+private fun backendFullSuiteArtifact(): TestArtifactDto? {
+    val now = System.currentTimeMillis()
+    synchronized(backendFullSuiteArtifactLock) {
+        backendFullSuiteArtifactCache?.takeIf { it.expiresAtMs > now }?.artifact?.let { return it }
+        val run = backendFullSuiteRun()
+        val runId = run.url?.substringAfter("/actions/runs/", missingDelimiterValue = "")?.substringBefore('/')?.takeIf(String::isNotBlank)
+            ?: return null
+        val artifact = fetchBackendFullSuiteArtifact(run, runId).getOrNull() ?: return null
+        backendFullSuiteArtifactCache = CachedTestArtifact(now + githubWorkflowCacheMs, artifact)
+        return artifact
+    }
+}
+
+private fun fetchBackendFullSuiteArtifact(run: TestRunSummaryDto, runId: String) = runCatching {
+    val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/backend/actions/runs/$runId/jobs?per_page=100"))
+        .timeout(Duration.ofSeconds(3))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "sdfgsdfg-backend-ops")
+        .build()
+    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() !in 200..299) error("GitHub jobs HTTP ${response.statusCode()}")
+    backendFullSuiteArtifact(
+        run,
+        opsJson.parseToJsonElement(response.body()).jsonObject["jobs"]?.jsonArray.orEmpty().mapNotNull { it as? JsonObject },
+    )
+}
+
+internal fun backendFullSuiteArtifact(run: TestRunSummaryDto, rawJobs: List<JsonObject>): TestArtifactDto {
+    val jobs = rawJobs
+        .filterNot { it.text("name") == "all-tests" }
+        .mapNotNull { job ->
+            val rawName = job.text("name")?.removePrefix("all-tests / ") ?: return@mapNotNull null
+            val started = job.instantMs("started_at")
+            val completed = job.instantMs("completed_at")
+            TestCaseDto(
+                name = fullSuiteJobTitle(rawName),
+                scope = "full suite testchain",
+                status = githubRunStatus(job),
+                durationMs = started?.let { start -> completed?.minus(start)?.toDouble() },
+                detail = fullSuiteJobMeaning(rawName),
+                url = job.text("html_url"),
+            )
+        }
+    return TestArtifactDto(
+        label = "full suite",
+        status = run.status,
+        timestampMs = run.timestampMs,
+        durationMs = run.durationMs,
+        detail = run.detail,
+        url = run.url,
+        summary = "${jobs.count { it.status == OpsStatusDto.OK }}/${jobs.size} testchain branches passed",
+        cases = jobs,
+    )
+}
+
+private fun fullSuiteJobTitle(name: String) = when (name) {
+    "local-tests" -> "Local backend runtime"
+    "server-py-contract-tests" -> "server_py wire contract"
+    "server-py-live-selftest" -> "server_py live browser"
+    "arcana-smoke" -> "Arcana full pyramid"
+    "public-ingress" -> "Public ingress"
+    "dashboard-web" -> "Dashboard web build"
+    "dashboard-desktop" -> "Dashboard desktop build"
+    else -> name.replace('-', ' ').replaceFirstChar(Char::uppercase)
+}
+
+private fun fullSuiteJobMeaning(name: String) = when (name) {
+    "local-tests" -> "Builds the server distribution, starts PostgreSQL and backend, then probes local tests and security metrics."
+    "server-py-contract-tests" -> "Proves backend and server_py still agree on the shared selftest JSON wire format."
+    "server-py-live-selftest" -> "Runs the real q browser bridge canary and its live model selector audit."
+    "arcana-smoke" -> "Runs Arcana's unit, integration, E2E, and benchmark layers on q."
+    "public-ingress" -> "Probes the public backend, ops summary, and dashboard shell through production ingress."
+    "dashboard-web" -> "Compiles the production Kotlin/Wasm dashboard distribution."
+    "dashboard-desktop" -> "Compiles the Compose Desktop dashboard artifact."
+    else -> name.replace('-', ' ')
 }
 
 private fun githubRunStatus(run: JsonObject) = when (run.text("status")) {
@@ -906,6 +1029,25 @@ private fun backendTestTotals(repo: File = backendRepo): TestTotals? = runCatchi
         }
         ?.let { it.copy(coveragePct = backendCoveragePct(repo)) }
 }.getOrNull()
+
+private fun backendUnitArtifact(repo: File = backendRepo): TestArtifactDto? {
+    val sources = listOf(
+        "core" to repo.resolve("core/build/test-results/jvmTest"),
+        "server" to repo.resolve("server/build/test-results/test"),
+    ).flatMap { (label, dir) ->
+        dir.listFiles { file -> file.isFile && file.name.startsWith("TEST-") && file.extension == "xml" }
+            .orEmpty()
+            .map { JunitEvidenceSource(label, it) }
+    }
+    val totals = backendTestTotals(repo)
+    return junitArtifact(
+        label = "unit tests",
+        sources = sources,
+        durationMs = totals?.durationMs,
+        detail = totals?.detail,
+        coveragePct = totals?.coveragePct,
+    )
+}
 
 private fun File.testTotals(): TestTotals? = runCatching {
     val root = xmlRoot()
@@ -947,16 +1089,13 @@ private fun List<OpsStatusDto>.ciStatus() = when {
 }
 
 private fun serverPyRuns(selfTest: SelfTestSummaryDto?, unit: TestRunSummaryDto?, latestRun: TestRunSummaryDto) = buildList {
-    unit?.let { add(it.copy(url = it.url ?: serverPyUnitArtifactUrl)) }
+    unit?.let { add(it.copy(artifactUrl = it.artifactUrl ?: serverPyUnitArtifactUrl)) }
     if (selfTest == null) return@buildList
-    add(latestRun.copy(label = "live e2e selftest", url = selfTest.workflowUrl ?: serverPyLiveSelftestUrl))
-    if (selfTest.caseCount > 0) {
-        add(TestRunSummaryDto(
-            label = "model matrix",
-            status = if (selfTest.casePassCount == selfTest.caseCount) OpsStatusDto.OK else OpsStatusDto.FAIL,
-            detail = "${selfTest.casePassCount}/${selfTest.caseCount} model cases passing.",
-        ))
-    }
+    add(latestRun.copy(
+        label = "live e2e selftest",
+        url = selfTest.workflowUrl ?: serverPyLiveSelftestUrl,
+        artifactUrl = serverPyLiveE2eArtifactUrl,
+    ))
 }
 
 private fun arcanaRuns(latestRun: TestRunSummaryDto?, ingest: ArcanaIngestDto?) = buildList {

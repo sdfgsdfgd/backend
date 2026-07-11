@@ -126,26 +126,52 @@ data class TestRunSummaryDto(
     @SerialName("duration_ms") val durationMs: Double? = null,
     val detail: String? = null,
     val url: String? = null,
+    @SerialName("artifact_url") val artifactUrl: String? = null,
     @SerialName("coverage_pct") val coveragePct: Double? = null,
 )
 
 @Serializable
-data class ArcanaLayerArtifactDto(
+enum class TestArtifactKindDto {
+    CASES,
+    MODEL_SELECTORS,
+}
+
+@Serializable
+data class TestArtifactDto(
     val label: String,
-    val paths: String? = null,
     val status: OpsStatusDto = OpsStatusDto.UNKNOWN,
+    @SerialName("timestamp_ms") val timestampMs: Long? = null,
     @SerialName("duration_ms") val durationMs: Double? = null,
+    val detail: String? = null,
+    val url: String? = null,
+    @SerialName("coverage_pct") val coveragePct: Double? = null,
+    val kind: TestArtifactKindDto = TestArtifactKindDto.CASES,
+    val paths: String? = null,
     val summary: String? = null,
     @SerialName("output_tail") val outputTail: String? = null,
-    val cases: List<ArcanaLayerCaseDto> = emptyList(),
+    @SerialName("source_revision") val sourceRevision: String? = null,
+    @SerialName("ledger_sha") val ledgerSha: String? = null,
+    val cases: List<TestCaseDto> = emptyList(),
 )
 
 @Serializable
-data class ArcanaLayerCaseDto(
+data class TestCaseDto(
     val name: String,
     val status: OpsStatusDto,
+    val scope: String? = null,
     @SerialName("duration_ms") val durationMs: Double? = null,
     val detail: String? = null,
+    val url: String? = null,
+    val contracts: List<TestContractRefDto> = emptyList(),
+)
+
+@Serializable
+data class TestContractRefDto(
+    val id: String,
+    val subsystem: String? = null,
+    @SerialName("subsystem_name") val subsystemName: String? = null,
+    @SerialName("subsystem_purpose") val subsystemPurpose: String? = null,
+    val capability: String? = null,
 )
 
 @Serializable

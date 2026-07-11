@@ -219,6 +219,9 @@ fun qRun(command: String, check: Boolean = true, quiet: Boolean = false): Result
 fun arcanaSmoke() {
     log("◆", "q arcana full pyramid")
     val head = qRun("cd $qArcanaDir && git rev-parse --short HEAD", quiet = true).out.trim().ifBlank { "unknown" }
+    // Snapshot identity lets backend enrich cases from the ledger without projecting later taxonomy changes onto this run.
+    val ledgerSha = qRun("cd $qArcanaDir && sha256sum z_tests_n_benchmarks/ledgers/capability_contracts.json", quiet = true)
+        .out.substringBefore(' ').trim().takeIf(String::isNotBlank)
     val started = System.nanoTime()
     qRun(
         """
@@ -236,7 +239,7 @@ fun arcanaSmoke() {
     qRun("cd $qArcanaDir && .venv/bin/python -m coverage erase")
 
     data class Layer(val label: String, val paths: String, val coverage: Boolean = false, val appendCoverage: Boolean = false)
-    data class LayerCase(val name: String, val status: String, val durationMs: Long?, val detail: String?)
+    data class LayerCase(val scope: String?, val name: String, val status: String, val durationMs: Long?, val detail: String?)
     fun junitCases(xml: String): List<LayerCase> = runCatching {
         val document = DocumentBuilderFactory.newInstance()
             .apply {
@@ -262,7 +265,8 @@ fun arcanaSmoke() {
                 else -> "OK"
             }
             LayerCase(
-                name = listOfNotNull(className, name).joinToString("::"),
+                scope = className,
+                name = name,
                 status = status,
                 durationMs = node.getAttribute("time").toDoubleOrNull()?.let { (it * 1_000).toLong() },
                 detail = detailNode?.let {
@@ -341,6 +345,7 @@ fun arcanaSmoke() {
     fun writeLayerArtifact(result: LayerResult) {
         val cases = result.cases.joinToString(prefix = "[", postfix = "]") { case ->
             listOfNotNull(
+                case.scope?.let { "\"scope\":${it.jsonString()}" },
                 "\"name\":${case.name.jsonString()}",
                 "\"status\":${case.status.jsonString()}",
                 case.durationMs?.let { "\"duration_ms\":$it" },
@@ -348,13 +353,15 @@ fun arcanaSmoke() {
             ).joinToString(prefix = "{", postfix = "}")
         }
         val fileName = "arcana-${result.layer.label}.json"
-        val artifact = listOf(
+        val artifact = listOfNotNull(
             "\"label\":${result.layer.label.jsonString()}",
             "\"paths\":${result.layer.paths.jsonString()}",
             "\"status\":${result.status.jsonString()}",
             "\"duration_ms\":${result.durationMs}",
             "\"summary\":${result.summary.jsonString()}",
             "\"output_tail\":${result.output.takeLast(12_000).jsonString()}",
+            "\"source_revision\":${head.jsonString()}",
+            ledgerSha?.let { "\"ledger_sha\":${it.jsonString()}" },
             "\"cases\":$cases",
         ).joinToString(prefix = "{", postfix = "}")
         logs.resolve(fileName).writeText(artifact)
@@ -374,7 +381,7 @@ fun arcanaSmoke() {
         "\"status\":${result.status.jsonString()}",
         "\"duration_ms\":${result.durationMs}",
         "\"detail\":${result.summary.jsonString()}",
-        "\"url\":${arcanaLayerArtifactUrl(result.layer.label).jsonString()}",
+        "\"artifact_url\":${arcanaLayerArtifactUrl(result.layer.label).jsonString()}",
     ).joinToString(prefix = "{", postfix = "}")
 
     val payload = listOfNotNull(

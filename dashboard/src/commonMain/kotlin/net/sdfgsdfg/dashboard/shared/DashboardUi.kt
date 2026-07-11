@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -73,6 +74,8 @@ internal val ritualPurpleGlow = Color(0xFF9A6AFF)
 internal val liveProcessCount = Regex("""(\d+) (arcana|codex) live""")
 internal const val OPS_SUMMARY_REFRESH_MS = 45_000L
 internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
+// Wasm's outer wheel bridge yields while a native Compose nested scroller owns the pointer.
+internal val LocalNativeWheelRegionChanged = staticCompositionLocalOf<((Boolean) -> Unit)?> { null }
 
 @Composable
 internal fun rememberFreshKeys(keys: List<String>): Set<String> {

@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ fun DashboardApp(
     focusedArrowKeys: Boolean = true,
     // CMP-10297 workaround: raw WheelEvent deltas from wasmJsMain.
     externalScrollDeltas: ReceiveChannel<Float>? = null,
+    onNativeWheelRegionChanged: ((Boolean) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
@@ -174,109 +176,111 @@ fun DashboardApp(
         .focusRequester(focusRequester)
         .focusable()
 
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = cyan,
-            secondary = green,
-            surface = panel,
-            background = background,
-        ),
-    ) {
-        Surface(
-            modifier = if (focusedArrowKeys) {
-                surfaceModifier.onPreviewKeyEvent {
-                    if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    if (issueEditorActive) return@onPreviewKeyEvent false
-                    when (it.key) {
-                        Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
-                        Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
-                        else -> false
-                    }
-                }
-            } else {
-                surfaceModifier
-            },
-            color = background,
+    CompositionLocalProvider(LocalNativeWheelRegionChanged provides onNativeWheelRegionChanged) {
+        MaterialTheme(
+            colorScheme = darkColorScheme(
+                primary = cyan,
+                secondary = green,
+                surface = panel,
+                background = background,
+            ),
         ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val pageBottomGutter = maxHeight * 0.28f
-                val pageWidth = maxWidth
-                val pageHeight = maxHeight
-                OpsWallpaper()
-                val listState = rememberLazyListState()
-                //region CMP-10297 scroll workaround
-                // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
-                // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
-                // precision-trackpad fling deltas internally.
-                // https://youtrack.jetbrains.com/issue/CMP-10297
-                LaunchedEffect(externalScrollDeltas, listState) {
-                    val deltas = externalScrollDeltas ?: return@LaunchedEffect
-                    while (true) {
-                        var pending = deltas.receiveCatching().getOrNull() ?: break
+            Surface(
+                modifier = if (focusedArrowKeys) {
+                    surfaceModifier.onPreviewKeyEvent {
+                        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        if (issueEditorActive) return@onPreviewKeyEvent false
+                        when (it.key) {
+                            Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                            Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                            else -> false
+                        }
+                    }
+                } else {
+                    surfaceModifier
+                },
+                color = background,
+            ) {
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val pageBottomGutter = maxHeight * 0.28f
+                    val pageWidth = maxWidth
+                    val pageHeight = maxHeight
+                    OpsWallpaper()
+                    val listState = rememberLazyListState()
+                    //region CMP-10297 scroll workaround
+                    // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
+                    // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
+                    // precision-trackpad fling deltas internally.
+                    // https://youtrack.jetbrains.com/issue/CMP-10297
+                    LaunchedEffect(externalScrollDeltas, listState) {
+                        val deltas = externalScrollDeltas ?: return@LaunchedEffect
                         while (true) {
-                            pending += deltas.tryReceive().getOrNull() ?: break
-                        }
-                        if (pending != 0f && !issueEditorActiveState.value) listState.scrollBy(pending)
-                        withFrameNanos { }
-                    }
-                }
-                //endregion
-                val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
-                val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    contentPadding = PaddingValues(bottom = pageBottomGutter),
-                ) {
-                    item {
-                        Header(
-                            selectedTab = selectedTab,
-                            onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
-                            socketState = socketState,
-                            viewer = viewer,
-                            onViewerChanged = ::refreshViewer,
-                        )
-                        if (loadState is OpsLoadState.Loading) {
-                            TopLoadTrace()
+                            var pending = deltas.receiveCatching().getOrNull() ?: break
+                            while (true) {
+                                pending += deltas.tryReceive().getOrNull() ?: break
+                            }
+                            if (pending != 0f && !issueEditorActiveState.value) listState.scrollBy(pending)
+                            withFrameNanos { }
                         }
                     }
-                    item(key = "tab-content-top") {
-                        Spacer(Modifier.height(14.dp))
-                    }
-                    item(key = "tab-content") {
-                        Crossfade(
-                            targetState = selectedTab,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = "dashboard-tab-crossfade",
-                        ) { tab ->
-                            when (tab) {
-                                DashboardTab.Home -> HomeTab(loadState, pageWidth)
-                                DashboardTab.Ci -> CiTab(loadState, pageWidth)
-                                DashboardTab.Issues -> Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp),
-                                ) {
-                                    Issues(
-                                        loadState = loadState,
-                                        pageWidth = pageWidth,
-                                        pageHeight = pageHeight,
-                                        canWriteIssues = viewer.issueWrite,
-                                        onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
-                                        onEditorActiveChanged = { issueEditorActive = it },
-                                    )
-                                }
-                                DashboardTab.Arcana -> ArcanaSessionsTab()
+                    //endregion
+                    val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
+                    val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        contentPadding = PaddingValues(bottom = pageBottomGutter),
+                    ) {
+                        item {
+                            Header(
+                                selectedTab = selectedTab,
+                                onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
+                                socketState = socketState,
+                                viewer = viewer,
+                                onViewerChanged = ::refreshViewer,
+                            )
+                            if (loadState is OpsLoadState.Loading) {
+                                TopLoadTrace()
                             }
                         }
-                    }
-                    if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
-                        ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
-                    }
-                    item(key = "tab-content-bottom") {
-                        Spacer(Modifier.height(14.dp))
+                        item(key = "tab-content-top") {
+                            Spacer(Modifier.height(14.dp))
+                        }
+                        item(key = "tab-content") {
+                            Crossfade(
+                                targetState = selectedTab,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = "dashboard-tab-crossfade",
+                            ) { tab ->
+                                when (tab) {
+                                    DashboardTab.Home -> HomeTab(loadState, pageWidth)
+                                    DashboardTab.Ci -> CiTab(loadState, pageWidth)
+                                    DashboardTab.Issues -> Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp),
+                                    ) {
+                                        Issues(
+                                            loadState = loadState,
+                                            pageWidth = pageWidth,
+                                            pageHeight = pageHeight,
+                                            canWriteIssues = viewer.issueWrite,
+                                            onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
+                                            onEditorActiveChanged = { issueEditorActive = it },
+                                        )
+                                    }
+                                    DashboardTab.Arcana -> ArcanaSessionsTab()
+                                }
+                            }
+                        }
+                        if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
+                            ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
+                        }
+                        item(key = "tab-content-bottom") {
+                            Spacer(Modifier.height(14.dp))
+                        }
                     }
                 }
             }

@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
 import net.sdfgsdfg.data.model.OpsStatusDto
+import net.sdfgsdfg.data.model.TestArtifactDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
 
@@ -307,11 +308,12 @@ private fun broadcastRunStarted(repoId: String, label: String, detail: String, u
 private suspend fun runServerPyUnitTests(logFile: File): Int {
     val startedAtMs = System.currentTimeMillis()
     val started = System.nanoTime()
+    val junitFile = File.createTempFile("server-py-unit-", ".xml")
     val stdout = mutableListOf<String>()
     val stderr = mutableListOf<String>()
     val exit = runWebhookCommand(
         slug = "server-py-unit",
-        command = "cd $SERVER_PY_REPO_DIR || exit 1; venv/bin/python -m pip show coverage >/dev/null 2>&1 || venv/bin/python -m pip install coverage || exit 1; set +e; venv/bin/python -m coverage erase; venv/bin/python -m coverage run --source=. --omit='tests/*' -m pytest -m unit -q; rc=${'$'}?; venv/bin/python -m coverage report --format=total || true; exit ${'$'}rc",
+        command = "cd $SERVER_PY_REPO_DIR || exit 1; venv/bin/python -m pip show coverage >/dev/null 2>&1 || venv/bin/python -m pip install coverage || exit 1; set +e; venv/bin/python -m coverage erase; venv/bin/python -m coverage run --source=. --omit='tests/*' -m pytest -m unit -q --junitxml='${junitFile.absolutePath}'; rc=${'$'}?; venv/bin/python -m coverage report --format=total || true; exit ${'$'}rc",
         logFile = logFile,
         stdoutLines = stdout,
         stderrLines = stderr,
@@ -322,17 +324,26 @@ private suspend fun runServerPyUnitTests(logFile: File): Int {
         .map(String::trim)
         .firstOrNull { line -> line.contains(" passed") || line.contains(" failed") || line.contains(" error") }
         ?: "pytest exit=$exit"
-    val run = TestRunSummaryDto(
+    val durationMs = (System.nanoTime() - started) / 1_000_000.0
+    val coveragePct = lines.coveragePct()
+    val artifact = junitArtifact(
+        label = "unit tests",
+        sources = listOf(JunitEvidenceSource(file = junitFile)),
+        timestampMs = startedAtMs,
+        durationMs = durationMs,
+        detail = summary,
+        coveragePct = coveragePct,
+    )?.copy(status = status) ?: TestArtifactDto(
         label = "unit tests",
         status = status,
         timestampMs = startedAtMs,
-        durationMs = (System.nanoTime() - started) / 1_000_000.0,
+        durationMs = durationMs,
         detail = summary,
-        url = SERVER_PY_UNIT_ARTIFACT_URL,
-        coveragePct = lines.coveragePct(),
+        coveragePct = coveragePct,
     )
-    serverPyUnitFile.writeText(json.encodeToString(run))
-    appendRunHistory(serverPyUnitHistoryFile, run)
+    junitFile.delete()
+    serverPyUnitFile.writeText(json.encodeToString(artifact))
+    appendRunHistory(serverPyUnitHistoryFile, artifact.toRunSummary(SERVER_PY_UNIT_ARTIFACT_URL))
     OpsSocketHub.broadcastSummary()
     return exit
 }

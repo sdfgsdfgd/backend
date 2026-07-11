@@ -8,8 +8,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.browser.document
@@ -35,14 +35,20 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
             .padding(top = 6.dp)
             .size(36.dp)
             .onGloballyPositioned { coordinates ->
-                val position = coordinates.positionInWindow()
+                // DOM lights bypass Compose clipping; cached/offscreen LazyColumn slots must stay hidden.
+                val bounds = coordinates.boundsInWindow(clipBounds = false)
+                val clipped = coordinates.boundsInWindow(clipBounds = true)
                 val next = StatusLightBounds(
-                    x = position.x / density,
-                    y = position.y / density,
-                    width = coordinates.size.width / density,
-                    height = coordinates.size.height / density,
+                    x = bounds.left / density,
+                    y = bounds.top / density,
+                    width = bounds.width / density,
+                    height = bounds.height / density,
                 )
-                syncStatusLightBounds(id, next)
+                syncStatusLightBounds(
+                    id,
+                    next,
+                    clipped.width >= bounds.width - 0.5f && clipped.height >= bounds.height - 0.5f,
+                )
             },
     ) {}
 
@@ -59,8 +65,10 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
     }
 }
 
-private fun syncStatusLightBounds(id: String, bounds: StatusLightBounds) {
+private fun syncStatusLightBounds(id: String, bounds: StatusLightBounds, fullyVisible: Boolean) {
     val element = statusLight(id)
+    element.style.visibility = if (fullyVisible) "visible" else "hidden"
+    if (!fullyVisible) return
     val slot = minOf(bounds.width, bounds.height)
     val size = slot * 1.9f
     val x = bounds.x + bounds.width / 2f - size / 2f

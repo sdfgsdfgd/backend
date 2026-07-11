@@ -106,6 +106,7 @@ class CoreDtoSerializationTest {
                             status = OpsStatusDto.OK,
                             timestampMs = 9L,
                             durationMs = 12.0,
+                            artifactUrl = "/api/ops/artifacts/backend-deploy.json",
                             coveragePct = 88.8,
                         ),
                         runs = listOf(
@@ -181,6 +182,7 @@ class CoreDtoSerializationTest {
         assertEquals(listOf("remote q", "local"), repo.getValue("runtime_labels").jsonArray.map { it.jsonPrimitive.content })
         assertEquals(9L, run.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals(12.0, run.getValue("duration_ms").jsonPrimitive.double)
+        assertEquals("/api/ops/artifacts/backend-deploy.json", run.getValue("artifact_url").jsonPrimitive.content)
         assertEquals(88.8, run.getValue("coverage_pct").jsonPrimitive.double)
         assertEquals("public ingress", pyramidRun.getValue("label").jsonPrimitive.content)
         assertEquals("deploy abc1234", historyRun.getValue("label").jsonPrimitive.content)
@@ -210,6 +212,7 @@ class CoreDtoSerializationTest {
         assertFalse("runtimeLabel" in repo)
         assertFalse("runtimeLabels" in repo)
         assertFalse("latestRun" in repo)
+        assertFalse("artifactUrl" in run)
         assertFalse("coveragePct" in run)
         assertFalse("selfTest" in repo)
         assertFalse("timestampLabel" in selfTest)
@@ -327,5 +330,52 @@ class CoreDtoSerializationTest {
         assertFalse("serverPyTransport" in hostSnapshot)
         assertFalse("serverPySelfTest" in hostSnapshot)
         assertFalse("arcanaSignals" in hostSnapshot)
+    }
+
+    @Test
+    fun testArtifactsKeepRepositoryNeutralWireNames() {
+        val artifact = json.parseToJsonElement(json.encodeToString(
+            TestArtifactDto(
+                label = "integration",
+                status = OpsStatusDto.OK,
+                timestampMs = 41L,
+                durationMs = 512.0,
+                coveragePct = 71.0,
+                kind = TestArtifactKindDto.MODEL_SELECTORS,
+                sourceRevision = "abc1234",
+                ledgerSha = "deadbeef",
+                cases = listOf(
+                    TestCaseDto(
+                        name = "test_model_selector[sol-pro]",
+                        scope = "tests.integration.provider",
+                        status = OpsStatusDto.OK,
+                        durationMs = 18.0,
+                        contracts = listOf(
+                            TestContractRefDto(
+                                id = "integration.provider.rpc-model-selectors",
+                                subsystem = "command-provider-surface",
+                                subsystemName = "Command, Provider, And Transport Surface",
+                                subsystemPurpose = "Protect provider boundaries.",
+                                capability = "Model routing remains exact.",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )).jsonObject
+        val case = artifact.getValue("cases").jsonArray.single().jsonObject
+        val contract = case.getValue("contracts").jsonArray.single().jsonObject
+
+        assertEquals("MODEL_SELECTORS", artifact.getValue("kind").jsonPrimitive.content)
+        assertEquals(41L, artifact.getValue("timestamp_ms").jsonPrimitive.long)
+        assertEquals("abc1234", artifact.getValue("source_revision").jsonPrimitive.content)
+        assertEquals("deadbeef", artifact.getValue("ledger_sha").jsonPrimitive.content)
+        assertEquals("tests.integration.provider", case.getValue("scope").jsonPrimitive.content)
+        assertEquals("Command, Provider, And Transport Surface", contract.getValue("subsystem_name").jsonPrimitive.content)
+        assertEquals("Protect provider boundaries.", contract.getValue("subsystem_purpose").jsonPrimitive.content)
+        assertFalse("sourceRevision" in artifact)
+        assertFalse("ledgerSha" in artifact)
+        assertFalse("subsystemName" in contract)
+        assertFalse("subsystemPurpose" in contract)
     }
 }
