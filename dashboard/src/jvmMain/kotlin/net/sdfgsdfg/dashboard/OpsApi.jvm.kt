@@ -32,6 +32,8 @@ import java.util.prefs.Preferences
 
 private const val githubTokenPrefKey = "ops.github.token"
 private val dashboardPrefs = Preferences.userRoot().node("net/sdfgsdfg/dashboard")
+// One selector/pool serves the desktop process; Compose owns sockets, main owns transport shutdown.
+private val opsHttp = HttpClient.newHttpClient()
 private var activeOpsApiBase: String? = null
 private enum class OpsApiMode { Dev, Local, Prod }
 @Volatile private var activeGithubToken: String? = readDashboardPref(githubTokenPrefKey)
@@ -198,7 +200,6 @@ internal actual fun connectOpsSocket(
     onState: (OpsSocketState) -> Unit,
 ): () -> Unit {
     val active = AtomicBoolean(true)
-    val client = HttpClient.newHttpClient()
     var socket: WebSocket? = null
 
     fun send(type: String, clientTimestamp: Long? = null) {
@@ -214,7 +215,7 @@ internal actual fun connectOpsSocket(
                     val wsUrl = endpoint
                         .replaceFirst("https://", "wss://")
                         .replaceFirst("http://", "ws://") + OPS_WS_PATH
-                    val builder = client.newWebSocketBuilder().applyOpsAuth()
+                    val builder = opsHttp.newWebSocketBuilder().applyOpsAuth()
                     val listener = object : WebSocket.Listener {
                         private var text = ""
 
@@ -300,7 +301,6 @@ private inline fun <reified T> fetchOpsJson(path: String): T {
 }
 
 private fun fetchOpsText(path: String): String {
-    val client = HttpClient.newHttpClient()
     var lastError: Throwable? = null
     val absolute = path.startsWith("http://") || path.startsWith("https://")
     val endpoints = if (absolute) listOf("") else opsApiEndpoints()
@@ -312,7 +312,7 @@ private fun fetchOpsText(path: String): String {
                 .applyOpsAuth()
                 .GET()
                 .build()
-            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            val response = opsHttp.send(request, HttpResponse.BodyHandlers.ofString())
             if (response.statusCode() !in 200..299) {
                 error("GET $url failed with ${response.statusCode()}")
             }
@@ -349,11 +349,10 @@ private inline fun <reified T> postOpsJson(path: String, body: String = ""): T {
 }
 
 private fun postOps(path: String, body: String = ""): Pair<Int, String> {
-    val client = HttpClient.newHttpClient()
     var lastError: Throwable? = null
     opsApiEndpoints().forEach { endpoint ->
         runCatching {
-            val response = client.send(
+            val response = opsHttp.send(
                 HttpRequest.newBuilder()
                     .uri(URI.create("$endpoint$path"))
                     .header("Content-Type", "application/json")
@@ -378,6 +377,11 @@ private fun HttpRequest.Builder.applyOpsAuth(): HttpRequest.Builder = apply {
 
 private fun WebSocket.Builder.applyOpsAuth(): WebSocket.Builder = apply {
     activeGithubToken?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
+}
+
+fun closeOpsTransport() {
+    cancelOpsGithubAuth()
+    opsHttp.shutdownNow()
 }
 
 private fun opsApiEndpoints(): List<String> =

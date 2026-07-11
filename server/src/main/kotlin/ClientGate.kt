@@ -94,7 +94,7 @@ fun ApplicationCall.clientInfo(): ClientInfo {
     return info
 }
 
-fun Application.installEdgeGatekeeper() {
+internal fun Application.installEdgeGatekeeper(events: RequestEvents) {
     intercept(ApplicationCallPipeline.Setup) {
         val info = call.clientInfo()
         if (info.allowed) return@intercept
@@ -120,7 +120,7 @@ fun Application.installEdgeGatekeeper() {
             append("ua".kvDim(ua))
         }
         logGate(plain, color, warn = true)
-        RequestEvents.record(
+        events.record(
             ip = info.clientIp,
             host = host,
             method = call.request.httpMethod.value,

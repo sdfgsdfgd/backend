@@ -5,6 +5,7 @@ import io.ktor.http.Url
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.host
 import io.ktor.server.request.uri
+import net.sdfgsdfg.RequestEvents
 import net.sdfgsdfg.clientInfo
 import org.slf4j.LoggerFactory
 
@@ -18,8 +19,9 @@ data class HostRule(
  * Minimal host-to-target switcher to keep the proxy logic tidy.
  * Add new domains by appending HostRule entries; unknown hosts fall back to defaultTarget.
  */
-class HostRouter(
+internal class HostRouter(
     httpClient: HttpClient,
+    requestEvents: RequestEvents,
     rules: List<HostRule>,
     private val defaultTarget: Url
 ) {
@@ -31,7 +33,7 @@ class HostRouter(
 
     private val proxies: Map<Url, SimpleReverseProxy> = buildMap {
         (normalizedRules.map { it.target }.toSet() + defaultTarget).forEach { target ->
-            put(target, SimpleReverseProxy(httpClient, target))
+            put(target, SimpleReverseProxy(httpClient, target, requestEvents))
         }
     }
 

@@ -125,9 +125,6 @@ fun DashboardApp(
         )
     }
 
-    DisposableEffect(Unit) {
-        onDispose { mounted[0] = false }
-    }
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
     }
@@ -151,7 +148,10 @@ fun DashboardApp(
             },
             onState = { if (mounted[0]) socketState = it },
         )
-        onDispose { close() }
+        onDispose {
+            mounted[0] = false
+            close()
+        }
     }
     LaunchedEffect(socketState.status) {
         if (socketState.status != OpsSocketStatus.DISCONNECTED) return@LaunchedEffect

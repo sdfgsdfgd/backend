@@ -36,7 +36,7 @@ internal fun proxyWebSocketClient() = HttpClient(CIO) {
     install(ClientWebSockets)
 }
 
-private val RequestEventPlugin = createApplicationPlugin("RequestEventPlugin") {
+private fun requestEventPlugin(events: RequestEvents) = createApplicationPlugin("RequestEventPlugin") {
     onCall { call ->
         call.attributes.put(RequestEventStartKey, System.nanoTime())
     }
@@ -49,7 +49,7 @@ private val RequestEventPlugin = createApplicationPlugin("RequestEventPlugin") {
         val ua = call.request.headers[HttpHeaders.UserAgent]
         val suspicion = detectSuspicious(rawQuery, ua)
         val client = call.clientInfo()
-        RequestEvents.record(
+        events.record(
             ip = client.clientIp,
             host = call.request.host(),
             method = call.request.httpMethod.value,
@@ -68,7 +68,7 @@ private val RequestEventPlugin = createApplicationPlugin("RequestEventPlugin") {
 }
 
 // *** *** TODO:  Add  2 sequence within 15 secs    `port-knocking`    authentication
-fun Application.cfg() {
+internal fun Application.cfg(events: RequestEvents) {
     // [ Configure ]
     install(ContentNegotiation) {
         json(Json {
@@ -101,8 +101,8 @@ fun Application.cfg() {
         timeoutMillis = 30_000
     }
 
-    install(RequestEventPlugin)
-    installEdgeGatekeeper()
+    install(requestEventPlugin(events))
+    installEdgeGatekeeper(events)
 }
 
 private fun detectSuspicious(rawQuery: String?, ua: String?): Pair<String, Int>? {

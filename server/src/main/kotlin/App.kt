@@ -52,8 +52,8 @@ fun Application.module() {
     val runtime = BackendRuntime()
     // Native event loops and clients follow the Ktor application, including hot/test restarts.
     monitor.subscribe(ApplicationStopped) { runtime.close() }
-    cfg()
-    db()
+    runtime.requestEvents.init()
+    cfg(runtime.requestEvents)
     routes(runtime)
 }
 
@@ -62,6 +62,7 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
     // Host-aware reverse proxy targets. Add more domains by extending this list.
     val hostRouter = HostRouter(
         httpClient = runtime.proxyHttp,
+        requestEvents = runtime.requestEvents,
         rules = listOf(
             HostRule(
                 hosts = setOf("x.sdfgsdfg.net"),
@@ -98,7 +99,7 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
         }
         val reason = call.request.queryParameters["reason"]?.trim()?.take(200)
         val country = call.request.queryParameters["country"]?.trim()?.take(2)?.uppercase()
-        RequestEvents.blacklist(ip, reason ?: "manual", country, async = false)
+        runtime.requestEvents.blacklist(ip, reason ?: "manual", country, async = false)
         call.respondText("OK")
     }
 
@@ -114,14 +115,14 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
             return@get
         }
         val note = call.request.queryParameters["note"]?.trim()?.take(200)
-        RequestEvents.allowlist(ip, note, async = false)
+        runtime.requestEvents.allowlist(ip, note)
         call.respondText("OK")
     }
 
     get("/test") { call.respondText(" 🥰  [ OK ]") }
 
     // [ Ops API ] --> public on ops.sdfgsdfg.net; local preview only when deploy stamps BACKEND_ENV=local.
-    opsRoutes(enablePeerSnapshots = true, opsSocketHub = runtime.opsSocket)
+    opsRoutes(enablePeerSnapshots = true, opsSocketHub = runtime.opsSocket, opsHttp = runtime.opsHttp)
 
     get("/_q/probe") {
         val token = syntheticProbeToken
@@ -137,7 +138,7 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respondText(RequestEvents.prometheusMetrics(), ContentType.Text.Plain)
+        call.respondText(runtime.requestEvents.prometheusMetrics(), ContentType.Text.Plain)
     }
 
     // [ WS ]
@@ -224,8 +225,4 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
             hostRouter.proxy(call)
         }
     }
-}
-
-private fun Application.db() {
-    RequestEvents.init()
 }

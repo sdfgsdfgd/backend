@@ -4,6 +4,7 @@ import io.ktor.server.application.ApplicationCall
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
 import net.sdfgsdfg.data.model.OpsViewerDto
 import java.net.InetAddress
+import java.net.http.HttpClient
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -21,9 +22,9 @@ private val ownerPublicIpFile = Paths.get(
 @Volatile private var ownerIpv6Cache: String? = null
 @Volatile private var ownerIpCacheAtMs: Long = 0
 
-internal fun ApplicationCall.opsViewer(): OpsViewerDto {
+internal suspend fun ApplicationCall.opsViewer(http: HttpClient): OpsViewerDto {
     val client = clientInfo()
-    return resolveOpsViewer(client, opsGithubSession() ?: opsGithubBearerSession())
+    return resolveOpsViewer(client, opsGithubSession() ?: opsGithubBearerSession(http))
 }
 
 internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSession? = null): OpsViewerDto {

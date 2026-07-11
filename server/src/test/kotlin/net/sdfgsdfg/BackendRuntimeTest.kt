@@ -34,6 +34,7 @@ class BackendRuntimeTest {
         BackendRuntime().run {
             close()
             close()
+            assertTrue(opsHttp.isTerminated)
         }
     }
 }

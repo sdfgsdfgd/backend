@@ -24,6 +24,8 @@ import kotlinx.html.script
 import kotlinx.html.style
 import kotlinx.html.title
 import kotlinx.html.unsafe
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -64,7 +66,6 @@ private const val sessionMaxAgeSeconds = (sessionTtlMs / 1_000L).toInt()
 private const val stateMaxAgeSeconds = (stateTtlMs / 1_000L).toInt()
 private const val bearerCacheMs = 60_000L
 private val githubOauthJson = Json { ignoreUnknownKeys = true }
-private val githubOauthHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 private val secureRandom = SecureRandom()
 private val githubBearerCache = mutableMapOf<String, CachedGithubBearerSession>()
 
@@ -72,7 +73,7 @@ internal data class OpsGithubSession(val login: String, val displayName: String,
 private data class CachedGithubBearerSession(val expiresAtMs: Long, val session: OpsGithubSession?)
 private data class VerifiedGithubState(val returnTo: String?, val popup: Boolean)
 
-fun Route.opsGithubAuthRoutes(allowed: (ApplicationCall) -> Boolean) {
+internal fun Route.opsGithubAuthRoutes(http: HttpClient, allowed: (ApplicationCall) -> Boolean) {
     val callbackPath = opsGithubCallbackPath()
 
     get(OPS_AUTH_GITHUB_START_PATH) {
@@ -109,7 +110,7 @@ fun Route.opsGithubAuthRoutes(allowed: (ApplicationCall) -> Boolean) {
             call.respondText("GitHub device auth is not configured", status = HttpStatusCode.ServiceUnavailable)
             return@post
         }
-        val start = startGithubDevice(config.clientId).getOrElse {
+        val start = startGithubDevice(http, config.clientId).getOrElse {
             call.respondText(it.message ?: "GitHub device auth failed", status = HttpStatusCode.BadGateway)
             return@post
         }
@@ -129,14 +130,14 @@ fun Route.opsGithubAuthRoutes(allowed: (ApplicationCall) -> Boolean) {
             call.respondText("Invalid GitHub device poll JSON", status = HttpStatusCode.BadRequest)
             return@post
         }
-        val token = pollGithubDevice(config.clientId, poll.deviceCode).getOrElse {
+        val token = pollGithubDevice(http, config.clientId, poll.deviceCode).getOrElse {
             call.respondText(it.message ?: "GitHub device auth failed", status = HttpStatusCode.BadGateway)
             return@post
         } ?: run {
             call.respondText("authorization_pending", status = HttpStatusCode.Accepted)
             return@post
         }
-        fetchGithubSession(token).getOrElse {
+        fetchGithubSession(http, token).getOrElse {
             call.respondText("GitHub user lookup failed", status = HttpStatusCode.BadGateway)
             return@post
         }
@@ -158,10 +159,10 @@ fun Route.opsGithubAuthRoutes(allowed: (ApplicationCall) -> Boolean) {
             return redirectOpsAuthError("bad_state")
         }
         val returnTo = verifiedState.returnTo
-        val token = exchangeGithubCode(config, code).getOrElse {
+        val token = exchangeGithubCode(http, config, code).getOrElse {
             return redirectOpsAuthError("token_exchange_failed", returnTo, verifiedState.popup)
         }
-        val session = fetchGithubSession(token).getOrElse {
+        val session = fetchGithubSession(http, token).getOrElse {
             return redirectOpsAuthError("user_fetch_failed", returnTo, verifiedState.popup)
         }
         clearOpsCookie(stateCookie, path = stateCookiePath)
@@ -197,7 +198,7 @@ internal fun ApplicationCall.opsGithubSession(
     nowMs: Long = System.currentTimeMillis(),
 ): OpsGithubSession? = verifyOpsGithubSession(request.cookies[opsGithubSessionCookie], secret, nowMs)
 
-internal fun ApplicationCall.opsGithubBearerSession(nowMs: Long = System.currentTimeMillis()): OpsGithubSession? {
+internal suspend fun ApplicationCall.opsGithubBearerSession(http: HttpClient, nowMs: Long = System.currentTimeMillis()): OpsGithubSession? {
     val header = request.headers[HttpHeaders.Authorization]?.trim() ?: return null
     if (!header.startsWith("Bearer ", ignoreCase = true)) return null
     val token = header.substringAfter(' ')
@@ -207,7 +208,7 @@ internal fun ApplicationCall.opsGithubBearerSession(nowMs: Long = System.current
     synchronized(githubBearerCache) {
         githubBearerCache[token]?.takeIf { it.expiresAtMs > nowMs }?.let { return it.session }
     }
-    val session = fetchGithubSession(token).getOrNull()
+    val session = fetchGithubSession(http, token).getOrNull()
     synchronized(githubBearerCache) {
         githubBearerCache[token] = CachedGithubBearerSession(nowMs + bearerCacheMs, session)
     }
@@ -291,7 +292,7 @@ private fun githubAuthorizeUrl(clientId: String, redirectUri: String, state: Str
         "&scope=${url("read:user")}" +
         "&state=${url(state)}"
 
-private fun exchangeGithubCode(config: OpsGithubAuthConfig, code: String): Result<String> = runCatching {
+private suspend fun exchangeGithubCode(http: HttpClient, config: OpsGithubAuthConfig, code: String) = http.ioResult {
     val body = formBody(
         "client_id" to config.clientId,
         "client_secret" to config.clientSecret,
@@ -304,13 +305,13 @@ private fun exchangeGithubCode(config: OpsGithubAuthConfig, code: String): Resul
         .header("Content-Type", "application/x-www-form-urlencoded")
         .POST(HttpRequest.BodyPublishers.ofString(body))
         .build()
-    val response = githubOauthHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub token exchange failed with ${response.statusCode()}")
     githubOauthJson.parseToJsonElement(response.body()).jsonObject.text("access_token")
         ?: error("GitHub token exchange returned no access token")
 }
 
-private fun startGithubDevice(clientId: String): Result<OpsGithubDeviceStartDto> = runCatching {
+private suspend fun startGithubDevice(http: HttpClient, clientId: String) = http.ioResult {
     val body = formBody("client_id" to clientId, "scope" to "read:user")
     val request = HttpRequest.newBuilder(URI.create("https://github.com/login/device/code"))
         .timeout(Duration.ofSeconds(8))
@@ -318,7 +319,7 @@ private fun startGithubDevice(clientId: String): Result<OpsGithubDeviceStartDto>
         .header("Content-Type", "application/x-www-form-urlencoded")
         .POST(HttpRequest.BodyPublishers.ofString(body))
         .build()
-    val response = githubOauthHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub device start failed with ${response.statusCode()}")
     val json = githubOauthJson.parseToJsonElement(response.body()).jsonObject
     OpsGithubDeviceStartDto(
@@ -331,7 +332,7 @@ private fun startGithubDevice(clientId: String): Result<OpsGithubDeviceStartDto>
     )
 }
 
-private fun pollGithubDevice(clientId: String, deviceCode: String): Result<String?> = runCatching {
+private suspend fun pollGithubDevice(http: HttpClient, clientId: String, deviceCode: String) = http.ioResult {
     val body = formBody(
         "client_id" to clientId,
         "device_code" to deviceCode,
@@ -343,7 +344,7 @@ private fun pollGithubDevice(clientId: String, deviceCode: String): Result<Strin
         .header("Content-Type", "application/x-www-form-urlencoded")
         .POST(HttpRequest.BodyPublishers.ofString(body))
         .build()
-    val response = githubOauthHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub device poll failed with ${response.statusCode()}")
     val json = githubOauthJson.parseToJsonElement(response.body()).jsonObject
     when (val error = json.text("error")) {
@@ -353,7 +354,7 @@ private fun pollGithubDevice(clientId: String, deviceCode: String): Result<Strin
     }
 }
 
-private fun fetchGithubSession(token: String): Result<OpsGithubSession> = runCatching {
+private suspend fun fetchGithubSession(http: HttpClient, token: String) = http.ioResult {
     val request = HttpRequest.newBuilder(URI.create("https://api.github.com/user"))
         .timeout(Duration.ofSeconds(8))
         .header("Accept", "application/vnd.github+json")
@@ -361,7 +362,7 @@ private fun fetchGithubSession(token: String): Result<OpsGithubSession> = runCat
         .header("User-Agent", "ops-dashboard")
         .GET()
         .build()
-    val response = githubOauthHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub user lookup failed with ${response.statusCode()}")
     val user = githubOauthJson.parseToJsonElement(response.body()).jsonObject
     val login = user.text("login")?.lowercase() ?: error("GitHub user response has no login")
@@ -371,6 +372,11 @@ private fun fetchGithubSession(token: String): Result<OpsGithubSession> = runCat
         avatarUrl = user.text("avatar_url").takeUnless { it.isNullOrBlank() },
     )
 }
+
+private suspend fun <T> HttpClient.ioResult(block: HttpClient.() -> T): Result<T> =
+    withContext(Dispatchers.IO) {
+        runCatching { this@ioResult.block() }
+    }
 
 private fun signOpsGithubState(
     state: String,

@@ -26,6 +26,7 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.utils.io.copyAndClose
 import net.sdfgsdfg.clientInfo
+import net.sdfgsdfg.IpDisposition
 import net.sdfgsdfg.RequestEventRecordedKey
 import net.sdfgsdfg.RequestEvents
 import net.sdfgsdfg.isOwnerNetworkIp
@@ -37,9 +38,10 @@ import java.net.URISyntaxException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-class SimpleReverseProxy(
+internal class SimpleReverseProxy(
     private val httpClient: HttpClient,
-    private val targetBaseUrl: Url
+    private val targetBaseUrl: Url,
+    private val requestEvents: RequestEvents,
 ) {
     private val i = AtomicInteger(0)
     private val logger = LoggerFactory.getLogger("proxy.SimpleReverseProxy")
@@ -74,8 +76,9 @@ class SimpleReverseProxy(
         val suspiciousReason = suspicion?.first
         val suspiciousSeverity = suspicion?.second
         val trusted = isOwnerNetworkIp(remote)
-        val allowlisted = RequestEvents.isAllowlisted(remote)
-        if (!trusted && !allowlisted && RequestEvents.isBlacklisted(remote)) {
+        val disposition = if (trusted) IpDisposition.ALLOW else requestEvents.disposition(remote)
+        val allowlisted = disposition == IpDisposition.ALLOW
+        if (disposition == IpDisposition.BLOCK) {
             val (clientPlain, clientColor) = clientTag(client, allowLookup = true)
             val plain = buildString {
                 append("[BLOCK][BLACKLISTED] ")
@@ -96,9 +99,9 @@ class SimpleReverseProxy(
                 append("ua".kvDim(ua ?: "-"))
             }
             log(plain, color, warn = true)
-            RequestEvents.blacklist(remote, reason = null, countryCode = null)
+            requestEvents.blacklist(remote, reason = null, countryCode = null)
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-            RequestEvents.record(
+            requestEvents.record(
                 ip = remote,
                 host = host,
                 method = methodValue,
@@ -144,9 +147,9 @@ class SimpleReverseProxy(
                     append("ua".kvDim(ua ?: "-"))
                 }
                 log(plain, color, warn = true)
-                RequestEvents.blacklist(remote, reason = reason, countryCode = countryCode)
+                requestEvents.blacklist(remote, reason = reason, countryCode = countryCode)
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-                RequestEvents.record(
+                requestEvents.record(
                     ip = remote,
                     host = host,
                     method = methodValue,
@@ -174,10 +177,10 @@ class SimpleReverseProxy(
         } catch (e: Exception) {
             if (isIllegalQuery(e)) {
                 if (!trusted && !allowlisted) {
-                    RequestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
+                    requestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
                 }
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-                RequestEvents.record(
+                requestEvents.record(
                     ip = remote,
                     host = host,
                     method = methodValue,
@@ -196,7 +199,7 @@ class SimpleReverseProxy(
                 return
             }
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-            RequestEvents.record(
+            requestEvents.record(
                 ip = remote,
                 host = host,
                 method = methodValue,
@@ -278,9 +281,9 @@ class SimpleReverseProxy(
             val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
             if (isIllegalQuery(e)) {
                 if (!trusted && !allowlisted) {
-                    RequestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
+                    requestEvents.blacklist(remote, reason = "ILLEGAL_QUERY_CHAR", countryCode = countryCode)
                 }
-                RequestEvents.record(
+                requestEvents.record(
                     ip = remote,
                     host = host,
                     method = methodValue,
@@ -298,7 +301,7 @@ class SimpleReverseProxy(
                 call.silentDrop()
                 return
             }
-            RequestEvents.record(
+            requestEvents.record(
                 ip = remote,
                 host = host,
                 method = methodValue,
@@ -400,7 +403,7 @@ class SimpleReverseProxy(
             log(proxyInPlain, proxyInColor)
         }
 
-        RequestEvents.record(
+        requestEvents.record(
             ip = remote,
             host = host,
             method = methodValue,

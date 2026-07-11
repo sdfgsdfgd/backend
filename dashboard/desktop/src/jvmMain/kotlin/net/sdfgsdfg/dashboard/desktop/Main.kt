@@ -54,6 +54,7 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import net.sdfgsdfg.dashboard.DashboardApp
 import net.sdfgsdfg.dashboard.OpsGithubAuthWindowState
+import net.sdfgsdfg.dashboard.closeOpsTransport
 import net.sdfgsdfg.dashboard.dismissOpsGithubAuthWindow
 import net.sdfgsdfg.dashboard.opsGithubAuthWindowState
 import java.awt.MouseInfo
@@ -63,47 +64,51 @@ import java.awt.datatransfer.StringSelection
 import java.awt.Window as AwtWindow
 import kotlin.math.roundToInt
 
-fun main() = application {
-    val authState by opsGithubAuthWindowState.collectAsState()
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Trio Ops Cockpit",
-        state = WindowState(
-            position = WindowPosition.Aligned(Alignment.Center),
-            size = desktopInitialSize(),
-        ),
-    ) {
-        DashboardApp()
-    }
-    authState?.let { state ->
+fun main() = try {
+    application(exitProcessOnExit = false) {
+        val authState by opsGithubAuthWindowState.collectAsState()
         Window(
-            onCloseRequest = ::dismissOpsGithubAuthWindow,
-            title = "GitHub Login",
+            onCloseRequest = ::exitApplication,
+            title = "Trio Ops Cockpit",
             state = WindowState(
                 position = WindowPosition.Aligned(Alignment.Center),
-                size = DpSize(520.dp, 310.dp),
+                size = desktopInitialSize(),
             ),
-            transparent = true,
-            undecorated = true,
-            resizable = false,
-            alwaysOnTop = true,
         ) {
-            val awtWindow = window
-            GitHubAuthWindow(
-                state,
-                Modifier
-                    .dragWindow(awtWindow)
-                    .onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
-                            dismissOpsGithubAuthWindow()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-            )
+            DashboardApp()
+        }
+        authState?.let { state ->
+            Window(
+                onCloseRequest = ::dismissOpsGithubAuthWindow,
+                title = "GitHub Login",
+                state = WindowState(
+                    position = WindowPosition.Aligned(Alignment.Center),
+                    size = DpSize(520.dp, 310.dp),
+                ),
+                transparent = true,
+                undecorated = true,
+                resizable = false,
+                alwaysOnTop = true,
+            ) {
+                val awtWindow = window
+                GitHubAuthWindow(
+                    state,
+                    Modifier
+                        .dragWindow(awtWindow)
+                        .onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
+                                dismissOpsGithubAuthWindow()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                )
+            }
         }
     }
+} finally {
+    closeOpsTransport()
 }
 
 private fun desktopInitialSize(): DpSize {

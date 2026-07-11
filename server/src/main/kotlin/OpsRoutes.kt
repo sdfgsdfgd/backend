@@ -18,6 +18,8 @@ import io.ktor.server.routing.post
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -114,8 +116,6 @@ private const val serverPyLiveE2eArtifactUrl = "/api/ops/artifacts/server-py-liv
 private const val serverPyUnitArtifactUrl = "/api/ops/artifacts/server-py-unit.json"
 private const val arcanaIngestArtifactUrl = "/api/ops/artifacts/arcana-ingest.json"
 private val arcanaLayerArtifactNames = arcanaTestLayerKeys.map(::arcanaLayerArtifactName).toSet()
-private val githubHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
-private val opsPeerHttp = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build()
 private val githubIssueCache = mutableMapOf<String, CachedIssueSummary>()
 private const val githubIssueCacheMs = 5 * 60 * 1_000L
 private val backendFullSuiteLock = Any()
@@ -161,19 +161,30 @@ internal fun Route.opsRoutes(
     serverPyUnitFile: File = defaultServerPyUnitFile,
     serverPyUnitHistoryFile: File = defaultServerPyUnitHistoryFile,
     deployHistorySourceFile: File = deployHistoryFile,
-    githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
-    backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
+    githubIssues: ((String) -> IssueSummaryDto)? = null,
+    backendFullSuite: (() -> TestRunSummaryDto)? = null,
     enablePeerSnapshots: Boolean = false,
-    peerSnapshot: (Boolean) -> OpsHostSnapshotDto? = ::peerHostSnapshot,
-    resolveViewer: (ApplicationCall) -> OpsViewerDto = { it.opsViewer() },
-    opsSocketHub: OpsSocketHub = OpsSocketHub(),
+    peerSnapshot: ((Boolean) -> OpsHostSnapshotDto?)? = null,
+    resolveViewer: (suspend (ApplicationCall) -> OpsViewerDto)? = null,
+    opsSocketHub: OpsSocketHub? = null,
+    opsHttp: HttpClient? = null,
 ) {
-    application.monitor.subscribe(ApplicationStopped) { opsSocketHub.close() }
+    val http = opsHttp ?: HttpClient.newHttpClient()
+    val socketHub = opsSocketHub ?: OpsSocketHub()
+    val issueSource = githubIssues ?: { repo -> githubIssues(repo, http) }
+    val fullSuiteSource = backendFullSuite ?: { backendFullSuiteRun(http) }
+    val peerSource = peerSnapshot ?: { preview -> peerHostSnapshot(preview, http) }
+    val viewer: suspend (ApplicationCall) -> OpsViewerDto = resolveViewer ?: { call -> call.opsViewer(http) }
+    // Only standalone/test fallbacks close here; injected resources retain their runtime owner.
+    if (opsHttp == null || opsSocketHub == null) application.monitor.subscribe(ApplicationStopped) {
+        if (opsHttp == null) http.close()
+        if (opsSocketHub == null) socketHub.close()
+    }
     fun allowed(call: ApplicationCall): Boolean {
         val opsHost = call.request.host().substringBefore(':').lowercase() == "ops.sdfgsdfg.net"
         return opsHost || (localPreview && call.clientInfo().isLocal)
     }
-    fun summary() = opsSocketHub.withActiveRuns(opsSummary(
+    fun summary() = socketHub.withActiveRuns(opsSummary(
         localPreview,
         arcanaIngestTargetFile,
         arcanaIngestHistoryFile,
@@ -182,14 +193,14 @@ internal fun Route.opsRoutes(
         serverPyUnitFile,
         serverPyUnitHistoryFile,
         deployHistorySourceFile,
-        githubIssues,
-        backendFullSuite,
-        if (enablePeerSnapshots) peerSnapshot(localPreview) else null,
-        opsSocketHub.clientCount,
+        issueSource,
+        fullSuiteSource,
+        if (enablePeerSnapshots) peerSource(localPreview) else null,
+        socketHub.clientCount,
     ))
 
-    opsSocketHub.configure(::summary)
-    opsGithubAuthRoutes(::allowed)
+    socketHub.configure(::summary)
+    opsGithubAuthRoutes(http, ::allowed)
 
     suspend fun ApplicationCall.respondJsonArtifact(file: File) {
         if (!allowed(this)) {
@@ -221,7 +232,7 @@ internal fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(summary())
+        call.respond(withContext(Dispatchers.IO) { summary() })
     }
 
     get(OPS_VIEWER_PATH) {
@@ -229,7 +240,7 @@ internal fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@get
         }
-        call.respond(resolveViewer(call))
+        call.respond(viewer(call))
     }
 
     webSocket(OPS_WS_PATH) {
@@ -237,7 +248,7 @@ internal fun Route.opsRoutes(
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
             return@webSocket
         }
-        opsSocketHub.serve(this)
+        socketHub.serve(this)
     }
 
     get("/api/ops/host-snapshot") {
@@ -263,10 +274,12 @@ internal fun Route.opsRoutes(
             it.copy(timestampMs = it.timestampMs ?: System.currentTimeMillis())
         }
 
-        arcanaIngestTargetFile.parentFile?.mkdirs()
-        arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
-        appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
-        opsSocketHub.broadcastSummary()
+        withContext(Dispatchers.IO) {
+            arcanaIngestTargetFile.parentFile?.mkdirs()
+            arcanaIngestTargetFile.writeText(opsJson.encodeToString(ingest))
+            appendRunHistory(arcanaIngestHistoryFile, ingest.toRunSummary())
+        }
+        socketHub.broadcastSummary()
         call.respondText("""{"ok":true}""", ContentType.Application.Json, HttpStatusCode.Accepted)
     }
 
@@ -275,7 +288,7 @@ internal fun Route.opsRoutes(
             call.respondText("Not Found", status = HttpStatusCode.NotFound)
             return@post
         }
-        if (!resolveViewer(call).canWriteIssues()) {
+        if (!viewer(call).canWriteIssues()) {
             call.respondText("Issue mutations require admin viewer", status = HttpStatusCode.Forbidden)
             return@post
         }
@@ -286,12 +299,12 @@ internal fun Route.opsRoutes(
             call.respondText("Invalid issue mutation JSON", status = HttpStatusCode.BadRequest)
             return@post
         }
-        runCatching { mutateLocalIssue(mutation) }.getOrElse {
+        runCatching { withContext(Dispatchers.IO) { mutateLocalIssue(mutation) } }.getOrElse {
             call.respondText(it.message ?: "Issue mutation failed", status = HttpStatusCode.BadRequest)
             return@post
         }
-        opsSocketHub.broadcastIssuePatch()
-        call.respond(summary().issuePatch())
+        socketHub.broadcastIssuePatch()
+        call.respond(withContext(Dispatchers.IO) { summary().issuePatch() })
     }
 
     get(backendDeployArtifactUrl) {
@@ -303,7 +316,7 @@ internal fun Route.opsRoutes(
     }
 
     get(backendFullSuiteArtifactUrl) {
-        call.respondTestArtifact(backendFullSuiteArtifact())
+        call.respondTestArtifact(withContext(Dispatchers.IO) { backendFullSuiteArtifact(http, fullSuiteSource) })
     }
 
     get(serverPySelfTestArtifactUrl) {
@@ -424,8 +437,8 @@ private fun opsSummary(
     serverPyUnitFile: File = defaultServerPyUnitFile,
     serverPyUnitHistoryFile: File = defaultServerPyUnitHistoryFile,
     historyFile: File = deployHistoryFile,
-    githubIssues: (String) -> IssueSummaryDto = ::githubIssues,
-    backendFullSuite: () -> TestRunSummaryDto = ::backendFullSuiteRun,
+    githubIssues: (String) -> IssueSummaryDto,
+    backendFullSuite: () -> TestRunSummaryDto,
     peerSnapshot: OpsHostSnapshotDto? = null,
     socketClients: Int = 0,
 ): OpsSummaryDto {
@@ -566,14 +579,14 @@ private fun hostSnapshot(
 private fun TestRunSummaryDto.withPeerArtifactUrl(localPreview: Boolean): TestRunSummaryDto =
     if (localPreview && url?.startsWith("/") == true) copy(url = "https://ops.sdfgsdfg.net$url") else this
 
-private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
+private fun peerHostSnapshot(localPreview: Boolean, http: HttpClient): OpsHostSnapshotDto? {
     val url = if (localPreview) qHostSnapshotUrl else macHostSnapshotUrl
     val now = System.currentTimeMillis()
     val previous = synchronized(peerSnapshotLock) { peerSnapshotCache?.takeIf { it.url == url } }
     if (previous != null && previous.nextAttemptAtMs > now) {
         return previous.snapshot?.takeIf { now - it.generatedAtMs <= peerSnapshotStaleMs }
     }
-    val fetched = fetchPeerHostSnapshot(url)
+    val fetched = fetchPeerHostSnapshot(url, http)
     val snapshot = fetched.getOrNull()
         ?: (if (!localPreview) sshMacProcessSnapshot() else null)
         ?: previous?.snapshot?.takeIf { now - it.generatedAtMs <= peerSnapshotStaleMs }
@@ -589,13 +602,13 @@ private fun peerHostSnapshot(localPreview: Boolean): OpsHostSnapshotDto? {
     }
 }
 
-private fun fetchPeerHostSnapshot(url: String) = runCatching {
+private fun fetchPeerHostSnapshot(url: String, http: HttpClient) = runCatching {
     val request = HttpRequest.newBuilder(URI.create(url))
         .timeout(Duration.ofMillis(900))
         .header("Accept", "application/json")
         .header("User-Agent", "sdfgsdfg-backend-ops-peer")
         .build()
-    val response = opsPeerHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = http.send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("Ops peer snapshot HTTP ${response.statusCode()}")
     opsJson.decodeFromString<OpsHostSnapshotDto>(response.body())
 }
@@ -886,11 +899,11 @@ private fun backendRuns(latestRun: TestRunSummaryDto, fullSuite: TestRunSummaryD
     )
 }
 
-private fun backendFullSuiteRun(): TestRunSummaryDto {
+private fun backendFullSuiteRun(http: HttpClient): TestRunSummaryDto {
     val now = System.currentTimeMillis()
     synchronized(backendFullSuiteLock) {
         backendFullSuiteCache?.takeIf { it.expiresAtMs > now }?.run?.let { return it }
-        val run = fetchBackendFullSuiteRun().getOrDefault(TestRunSummaryDto(
+        val run = fetchBackendFullSuiteRun(http).getOrDefault(TestRunSummaryDto(
             "full suite",
             OpsStatusDto.UNKNOWN,
             detail = "Latest GitHub umbrella status unavailable.",
@@ -902,13 +915,13 @@ private fun backendFullSuiteRun(): TestRunSummaryDto {
     }
 }
 
-private fun fetchBackendFullSuiteRun() = runCatching {
+private fun fetchBackendFullSuiteRun(http: HttpClient) = runCatching {
     val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/backend/actions/workflows/full-suite.yml/runs?per_page=1"))
         .timeout(Duration.ofSeconds(2))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "sdfgsdfg-backend-ops")
         .build()
-    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = http.send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub workflow HTTP ${response.statusCode()}")
     val run = opsJson.parseToJsonElement(response.body()).jsonObject["workflow_runs"]?.jsonArray?.firstOrNull()?.jsonObject
         ?: error("No backend full-suite runs")
@@ -925,26 +938,26 @@ private fun fetchBackendFullSuiteRun() = runCatching {
     )
 }
 
-private fun backendFullSuiteArtifact(): TestArtifactDto? {
+private fun backendFullSuiteArtifact(http: HttpClient, fullSuite: () -> TestRunSummaryDto): TestArtifactDto? {
     val now = System.currentTimeMillis()
     synchronized(backendFullSuiteArtifactLock) {
         backendFullSuiteArtifactCache?.takeIf { it.expiresAtMs > now }?.artifact?.let { return it }
-        val run = backendFullSuiteRun()
+        val run = fullSuite()
         val runId = run.url?.substringAfter("/actions/runs/", missingDelimiterValue = "")?.substringBefore('/')?.takeIf(String::isNotBlank)
             ?: return null
-        val artifact = fetchBackendFullSuiteArtifact(run, runId).getOrNull() ?: return null
+        val artifact = fetchBackendFullSuiteArtifact(run, runId, http).getOrNull() ?: return null
         backendFullSuiteArtifactCache = CachedTestArtifact(now + githubWorkflowCacheMs, artifact)
         return artifact
     }
 }
 
-private fun fetchBackendFullSuiteArtifact(run: TestRunSummaryDto, runId: String) = runCatching {
+private fun fetchBackendFullSuiteArtifact(run: TestRunSummaryDto, runId: String, http: HttpClient) = runCatching {
     val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/backend/actions/runs/$runId/jobs?per_page=100"))
         .timeout(Duration.ofSeconds(3))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "sdfgsdfg-backend-ops")
         .build()
-    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = http.send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub jobs HTTP ${response.statusCode()}")
     backendFullSuiteArtifact(
         run,
@@ -1274,13 +1287,13 @@ private fun JsonObject.issueChanges(after: JsonObject): Map<String, JsonElement>
     }
     .toMap()
 
-private fun githubIssues(repo: String): IssueSummaryDto {
+private fun githubIssues(repo: String, http: HttpClient): IssueSummaryDto {
     val now = System.currentTimeMillis()
     synchronized(githubIssueCache) {
         githubIssueCache[repo]?.takeIf { it.expiresAtMs > now }?.summary
     }?.let { return it }
 
-    val summary = fetchGithubIssues(repo)
+    val summary = fetchGithubIssues(repo, http)
         .getOrDefault(IssueSummaryDto())
         .withSource("github", "GitHub Issues", "https://github.com/sdfgsdfgd/$repo/issues")
     synchronized(githubIssueCache) {
@@ -1289,13 +1302,13 @@ private fun githubIssues(repo: String): IssueSummaryDto {
     return summary
 }
 
-private fun fetchGithubIssues(repo: String) = runCatching {
+private fun fetchGithubIssues(repo: String, http: HttpClient) = runCatching {
     val request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/sdfgsdfgd/$repo/issues?state=open&per_page=100"))
         .timeout(Duration.ofSeconds(2))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "sdfgsdfg-backend-ops")
         .build()
-    val response = githubHttp.send(request, HttpResponse.BodyHandlers.ofString())
+    val response = http.send(request, HttpResponse.BodyHandlers.ofString())
     if (response.statusCode() !in 200..299) error("GitHub issues HTTP ${response.statusCode()}")
     githubIssueSummary(opsJson.parseToJsonElement(response.body()))
 }
