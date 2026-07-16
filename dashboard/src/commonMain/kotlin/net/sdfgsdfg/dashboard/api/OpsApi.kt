@@ -33,7 +33,15 @@ internal expect fun loadOpsText(
 internal expect fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,
-): () -> Unit
+): OpsSocketConnection
+
+internal class OpsSocketConnection(
+    private val sendMessage: (OpsSocketMessageDto) -> Boolean,
+    private val closeSocket: () -> Unit,
+) {
+    fun send(message: OpsSocketMessageDto) = sendMessage(message)
+    fun close() = closeSocket()
+}
 
 internal expect fun mutateIssue(
     request: IssueMutationRequestDto,

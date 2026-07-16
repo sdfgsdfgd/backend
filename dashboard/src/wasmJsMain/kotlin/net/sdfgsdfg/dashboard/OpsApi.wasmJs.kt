@@ -185,18 +185,22 @@ internal actual fun writeDashboardPref(key: String, value: String?) {
 internal actual fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,
-): () -> Unit {
+): OpsSocketConnection {
     var active = true
     var socket: WebSocket? = null
     var pingTimer = 0
     var reconnectTimer = 0
 
-    fun send(type: String, clientTimestamp: Long? = null) {
-        val ws = socket ?: return
+    fun send(message: OpsSocketMessageDto): Boolean {
+        val ws = socket ?: return false
         if (ws.readyState == WebSocket.OPEN) {
-            ws.send(dashboardJson.encodeToString(OpsSocketMessageDto(type, clientTimestamp)))
+            ws.send(dashboardJson.encodeToString(message))
+            return true
         }
+        return false
     }
+
+    fun send(type: String, clientTimestamp: Long? = null) = send(OpsSocketMessageDto(type, clientTimestamp))
 
     fun connect() {
         if (!active) return
@@ -239,7 +243,7 @@ internal actual fun connectOpsSocket(
     }
 
     connect()
-    return {
+    return OpsSocketConnection(::send) {
         active = false
         window.clearInterval(pingTimer)
         window.clearTimeout(reconnectTimer)

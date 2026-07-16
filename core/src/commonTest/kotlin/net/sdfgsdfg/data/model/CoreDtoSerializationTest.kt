@@ -5,11 +5,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 
 // Purpose: protect public JSON wire names shared by backend, server_py,
 // GitHub Actions artifacts, and the dashboard clients. These are compatibility
@@ -17,6 +19,173 @@ import kotlinx.serialization.json.long
 // repo/process boundaries.
 class CoreDtoSerializationTest {
     private val json = Json { encodeDefaults = true }
+
+    @Test
+    fun workspaceSocketDtosKeepTypedWireNames() {
+        val command = json.parseToJsonElement(
+            json.encodeToString(
+                OpsSocketMessageDto(
+                    type = "workspace_command",
+                    workspaceCommand = OpsWorkspaceCommandDto(
+                        requestId = "repo-1",
+                        action = OpsWorkspaceActionDto.SELECT_REPOSITORY,
+                        repositoryId = 42L,
+                    ),
+                ),
+            ),
+        ).jsonObject
+        val commandPayload = command.getValue("workspace_command").jsonObject
+        assertEquals("repo-1", commandPayload.getValue("request_id").jsonPrimitive.content)
+        assertEquals("select_repository", commandPayload.getValue("action").jsonPrimitive.content)
+        assertEquals(42L, commandPayload.getValue("repository_id").jsonPrimitive.long)
+        assertFalse("workspaceCommand" in command)
+        assertFalse("requestId" in commandPayload)
+        assertFalse("repositoryId" in commandPayload)
+
+        val event = json.parseToJsonElement(
+            json.encodeToString(
+                OpsSocketMessageDto(
+                    type = "workspace_event",
+                    workspaceEvent = OpsWorkspaceEventDto(
+                        requestId = "repo-1",
+                        kind = OpsWorkspaceEventKindDto.REPOSITORIES,
+                        status = OpsWorkspaceEventStatusDto.READY,
+                        repositories = listOf(
+                            OpsRepositoryDto(
+                                id = 42L,
+                                name = "backend",
+                                owner = "sdfgsdfgd",
+                                fullName = "sdfgsdfgd/backend",
+                                language = "Kotlin",
+                                stars = 7,
+                                updatedAt = "2026-07-14T00:00:00Z",
+                                defaultBranch = "main",
+                                isPrivate = true,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ).jsonObject
+        val eventPayload = event.getValue("workspace_event").jsonObject
+        val repository = eventPayload.getValue("repositories").jsonArray.single().jsonObject
+        assertEquals("repositories", eventPayload.getValue("kind").jsonPrimitive.content)
+        assertEquals("ready", eventPayload.getValue("status").jsonPrimitive.content)
+        assertEquals("sdfgsdfgd/backend", repository.getValue("full_name").jsonPrimitive.content)
+        assertEquals("2026-07-14T00:00:00Z", repository.getValue("updated_at").jsonPrimitive.content)
+        assertEquals("main", repository.getValue("default_branch").jsonPrimitive.content)
+        assertEquals(true, repository.getValue("private").jsonPrimitive.boolean)
+        assertFalse("workspaceEvent" in event)
+        assertFalse("fullName" in repository)
+        assertFalse("updatedAt" in repository)
+        assertFalse("defaultBranch" in repository)
+        assertFalse("isPrivate" in repository)
+    }
+
+    @Test
+    fun sessionSocketDtosKeepOrderedWireNames() {
+        val command = json.parseToJsonElement(
+            json.encodeToString(
+                OpsSocketMessageDto(
+                    type = "session_command",
+                    sessionCommand = OpsSessionCommandDto(
+                        requestId = "turn-1",
+                        action = OpsSessionActionDto.RESUME_SESSION,
+                        workspaceId = "workspace-1",
+                        agent = OpsAgentDto.ARCANA,
+                        sessionId = "arcana-7",
+                        afterSequence = 41,
+                        model = "deepseek-expert",
+                        noPace = false,
+                        auto = true,
+                        indexSync = true,
+                        arcanaMode = OpsArcanaModeDto.ISSUES,
+                    ),
+                ),
+            ),
+        ).jsonObject
+        val commandPayload = command.getValue("session_command").jsonObject
+        assertEquals("resume_session", commandPayload.getValue("action").jsonPrimitive.content)
+        assertEquals("workspace-1", commandPayload.getValue("workspace_id").jsonPrimitive.content)
+        assertEquals("arcana", commandPayload.getValue("agent").jsonPrimitive.content)
+        assertEquals("arcana-7", commandPayload.getValue("session_id").jsonPrimitive.content)
+        assertEquals(41L, commandPayload.getValue("after_sequence").jsonPrimitive.long)
+        assertEquals("deepseek-expert", commandPayload.getValue("model").jsonPrimitive.content)
+        assertFalse(commandPayload.getValue("no_pace").jsonPrimitive.boolean)
+        assertEquals(true, commandPayload.getValue("auto").jsonPrimitive.boolean)
+        assertEquals(true, commandPayload.getValue("index_sync").jsonPrimitive.boolean)
+        assertEquals("issues", commandPayload.getValue("arcana_mode").jsonPrimitive.content)
+        assertFalse("sessionCommand" in command)
+        assertFalse("workspaceId" in commandPayload)
+        assertFalse("sessionId" in commandPayload)
+        assertFalse("afterSequence" in commandPayload)
+        assertFalse("indexSync" in commandPayload)
+        assertFalse("arcanaMode" in commandPayload)
+
+        val event = json.parseToJsonElement(
+            json.encodeToString(
+                OpsSocketMessageDto(
+                    type = "session_event",
+                    sessionEvent = OpsSessionEventDto(
+                        requestId = "turn-1",
+                        kind = OpsSessionEventKindDto.STRUCTURED,
+                        runtimeId = "runtime-1",
+                        workspaceId = "workspace-1",
+                        agent = OpsAgentDto.ARCANA,
+                        sequence = 42,
+                        timestampMs = 43,
+                        state = OpsSessionStateDto.RUNNING,
+                        channel = OpsSessionChannelDto.SYSTEM,
+                        structured = OpsStructuredEventDto(
+                            type = "agent_response",
+                            phase = "3_x",
+                            schema = "3_x",
+                            round = 2,
+                            payload = buildJsonObject { put("text", "folder summary") },
+                        ),
+                        replay = true,
+                    ),
+                ),
+            ),
+        ).jsonObject
+        val eventPayload = event.getValue("session_event").jsonObject
+        assertEquals("structured", eventPayload.getValue("kind").jsonPrimitive.content)
+        assertEquals("runtime-1", eventPayload.getValue("runtime_id").jsonPrimitive.content)
+        assertEquals(42L, eventPayload.getValue("sequence").jsonPrimitive.long)
+        assertEquals(43L, eventPayload.getValue("timestamp_ms").jsonPrimitive.long)
+        assertEquals("running", eventPayload.getValue("state").jsonPrimitive.content)
+        assertEquals("system", eventPayload.getValue("channel").jsonPrimitive.content)
+        val structured = eventPayload.getValue("structured").jsonObject
+        assertEquals("agent_response", structured.getValue("type").jsonPrimitive.content)
+        assertEquals("3_x", structured.getValue("phase").jsonPrimitive.content)
+        assertEquals("folder summary", structured.getValue("payload").jsonObject.getValue("text").jsonPrimitive.content)
+        assertEquals(true, eventPayload.getValue("replay").jsonPrimitive.boolean)
+        assertFalse("sessionEvent" in event)
+        assertFalse("runtimeId" in eventPayload)
+        assertFalse("workspaceId" in eventPayload)
+        assertFalse("exitCode" in eventPayload)
+
+        val summary = json.parseToJsonElement(json.encodeToString(OpsSessionSummaryDto(
+            sessionId = "arcana-7",
+            agent = OpsAgentDto.ARCANA,
+            title = "Finish the fixture",
+            updatedAtMs = 44,
+            workspaceId = "workspace-1",
+            repositoryId = 42,
+            workspaceName = "backend",
+            state = OpsSessionStateDto.AWAITING_ACCEPTANCE,
+            changesKnown = true,
+            hasChanges = true,
+        ))).jsonObject
+        assertEquals("workspace-1", summary.getValue("workspace_id").jsonPrimitive.content)
+        assertEquals(42L, summary.getValue("repository_id").jsonPrimitive.long)
+        assertEquals("backend", summary.getValue("workspace_name").jsonPrimitive.content)
+        assertEquals("awaiting_acceptance", summary.getValue("state").jsonPrimitive.content)
+        assertEquals(true, summary.getValue("changes_known").jsonPrimitive.boolean)
+        assertEquals(true, summary.getValue("has_changes").jsonPrimitive.boolean)
+        assertFalse("changesKnown" in summary)
+        assertFalse("hasChanges" in summary)
+    }
 
     @Test
     fun askRequestKeepsPublicWireNames() {

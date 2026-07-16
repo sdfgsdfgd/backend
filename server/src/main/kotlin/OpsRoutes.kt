@@ -168,6 +168,7 @@ internal fun Route.opsRoutes(
     resolveViewer: (suspend (ApplicationCall) -> OpsViewerDto)? = null,
     opsSocketHub: OpsSocketHub? = null,
     opsHttp: HttpClient? = null,
+    workspaceCommands: OpsWorkspaceCommandHandler? = null,
 ) {
     val http = opsHttp ?: HttpClient.newHttpClient()
     val socketHub = opsSocketHub ?: OpsSocketHub()
@@ -199,7 +200,7 @@ internal fun Route.opsRoutes(
         socketHub.clientCount,
     ))
 
-    socketHub.configure(::summary)
+    socketHub.configure(::summary, workspaceCommands ?: OpsWorkspaceService(http))
     opsGithubAuthRoutes(http, ::allowed)
 
     suspend fun ApplicationCall.respondJsonArtifact(file: File) {
@@ -248,7 +249,7 @@ internal fun Route.opsRoutes(
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
             return@webSocket
         }
-        socketHub.serve(this)
+        socketHub.serve(this, OpsSocketPrincipal(viewer(call), call.opsGithubBearerToken()))
     }
 
     get("/api/ops/host-snapshot") {

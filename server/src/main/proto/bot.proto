@@ -46,6 +46,9 @@ service Bot {
 
     // 5) Lightweight health probe that exercises Ask end-to-end
     rpc SelfTest (SelfTestRequest) returns (SelfTestReply);
+
+    // 6) Live provider-governor ranges for control-plane launch recipes
+    rpc GetPacing (PacingRequest) returns (PacingProfile);
 }
 
 message AskRequest {
@@ -60,6 +63,20 @@ message AskRequest {
     bool new_tab = 9;
     bool end_session = 10;
     bool no_pace = 11;
+    double pace_min_seconds = 12;
+    double pace_max_seconds = 13;
+}
+
+message PacingRequest {}
+
+message PacingProfile {
+    repeated PacingRange ranges = 1;
+}
+
+message PacingRange {
+    string provider = 1;
+    double min_seconds = 2;
+    double max_seconds = 3;
 }
 
 message AskReply {

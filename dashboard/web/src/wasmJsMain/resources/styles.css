@@ -31,6 +31,7 @@ body {
   --light-corona-low: 0.04;
   --light-corona-high: 0.22;
   --light-inner-shadow: rgba(27, 31, 38, 0.58);
+  --light-play-state: running;
   position: fixed;
   top: 0;
   left: 0;
@@ -62,6 +63,7 @@ body {
   transform-origin: center;
   will-change: opacity, transform, filter;
   animation: ops-light-bloom var(--light-duration) ease-in-out infinite alternate;
+  animation-play-state: var(--light-play-state);
 }
 
 .ops-status-light::after {
@@ -73,6 +75,7 @@ body {
   transform-origin: center;
   will-change: opacity, transform, filter;
   animation: ops-light-corona var(--light-duration) ease-in-out infinite alternate;
+  animation-play-state: var(--light-play-state);
 }
 
 .ops-status-light-core {

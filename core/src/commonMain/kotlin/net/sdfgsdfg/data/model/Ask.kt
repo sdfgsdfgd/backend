@@ -14,6 +14,8 @@ data class AskRequestDto(
     @SerialName("deepseek_search") val deepseekSearch: Boolean = false,
     @SerialName("one_time") val oneTime: Boolean = false,
     @SerialName("no_pace") val noPace: Boolean = false,
+    @SerialName("pace_min_seconds") val paceMinSeconds: Double? = null,
+    @SerialName("pace_max_seconds") val paceMaxSeconds: Double? = null,
     @SerialName("session_id") val sessionId: String? = null,
     @SerialName("new_tab") val newTab: Boolean = false,
     @SerialName("end_session") val endSession: Boolean = false,

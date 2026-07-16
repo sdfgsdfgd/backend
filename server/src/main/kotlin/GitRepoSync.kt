@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -20,8 +21,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
@@ -178,9 +181,14 @@ fun errorMessageFor(e: Throwable) = when {
 // -------------------------------------
 // 2) Repository Manager + clone/pull
 // -------------------------------------
-class RepositoryManager {
-    private val baseDir = File(REPO_BASE_DIR.replace("~", System.getProperty("user.home"))).apply { mkdirs() }
+class RepositoryManager(
+    private val baseDir: File = File(REPO_BASE_DIR.replace("~", System.getProperty("user.home"))),
+) {
+    init { baseDir.mkdirs() }
+
+    private val basePath = baseDir.toPath().toAbsolutePath().normalize()
     private val recentRepos = mutableListOf<String>()
+    private val repositoryLocks = ConcurrentHashMap<String, Mutex>()
 
     // single state mutex (never re-enter)
     private val repoMutex = Mutex()
@@ -188,7 +196,17 @@ class RepositoryManager {
     // global op queue: at most MAX_REPOS git ops in-flight; others wait
     private val opSemaphore = Semaphore(MAX_REPOS)
 
-    private fun getRepoPath(owner: String, name: String): File = File(baseDir, "${owner}_$name")
+    fun repositoryPath(owner: String, name: String): File {
+        require(owner.isSafeRepoSegment() && name.isSafeRepoSegment()) { "Invalid GitHub repository path" }
+        val path = basePath.resolve(repositoryDirectoryName(owner, name)).normalize()
+        require(path.startsWith(basePath)) { "Invalid GitHub repository path" }
+        return path.toFile()
+    }
+
+    internal suspend fun <T> withRepositoryLock(owner: String, name: String, block: suspend () -> T): T =
+        repositoryLocks.computeIfAbsent(repositoryDirectoryName(owner, name)) { Mutex() }.withLock { block() }
+
+    private fun getRepoPath(owner: String, name: String) = repositoryPath(owner, name)
 
     sealed class RepoState {
         data object Valid : RepoState()
@@ -246,11 +264,8 @@ class RepositoryManager {
                 if (!prepareRepoDirectory(owner, name)) throw Exception("Failed to prepare repository directory")
             }
 
-            val cloneUrl = accessToken?.takeIf { url.startsWith("https://") }
-                ?.let { url.replace("https://", "https://$it@") }
-                ?: url
-
-            val branchArg = branch?.let { "-b $it" } ?: ""
+            require(url.isSafeGithubCloneUrl()) { "Invalid GitHub clone URL" }
+            branch?.let { require(it.isSafeGitRef()) { "Invalid Git branch" } }
             val sizeLimitExceeded = atomic(false)
 
             // Monitor size from background
@@ -265,18 +280,17 @@ class RepositoryManager {
             }
 
             try {
-                withTimeout(300.seconds) {
-                    val exitCode = "git clone --progress $branchArg $cloneUrl ${repoDir.absolutePath}".shell(
-//                    val exitCode = """GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge=false -c filter.lfs.required=false clone --progress --no-checkout $branchArg $cloneUrl ${repoDir.absolutePath}""".shell(
-                        onLine = { line, _ ->
-                            parseLineForProgress(line, progressTracker)
-
-                            // Monitor size in real-time
-                            if (sizeLimitExceeded.value) throw Exception("Repository size limit exceeded. Operation aborted.")
-                        },
-                    )
-                    if (exitCode != 0) throw Exception("Git clone failed with exit code $exitCode")
+                val args = buildList {
+                    addAll(listOf("clone", "--progress"))
+                    branch?.let { addAll(listOf("--branch", it)) }
+                    add(url)
+                    add(repoDir.absolutePath)
                 }
+                val exitCode = runGit(args, accessToken, timeoutMs = 300.seconds.inWholeMilliseconds) { line ->
+                    parseLineForProgress(line, progressTracker)
+                    if (sizeLimitExceeded.value) throw Exception("Repository size limit exceeded. Operation aborted.")
+                }
+                if (exitCode != 0) throw Exception("Git clone failed with exit code $exitCode")
             } catch (e: Throwable) {
                 // Cleanup reserved directory on clone failure to avoid leaking a slot
                 runCatching { repoDir.deleteRecursively() }
@@ -293,17 +307,80 @@ class RepositoryManager {
         }
     }
 
-    suspend fun pullRepository(owner: String, name: String, branch: String?) = withContext(Dispatchers.IO) {
+    suspend fun pullRepository(owner: String, name: String, branch: String?, accessToken: String? = null) = withContext(Dispatchers.IO) {
         withOpPermit {
             val repoDir = getRepoPath(owner, name)
-            withTimeout(30.seconds) {
-                branch?.let { "cd ${repoDir.absolutePath} && git checkout $it".shell() }
-                "cd ${repoDir.absolutePath} && git pull".shell()
+            val canonicalOrigin = "https://github.com/$owner/$name.git"
+            if (runGit(listOf("remote", "set-url", "origin", canonicalOrigin), accessToken, repoDir, 30.seconds.inWholeMilliseconds) != 0) {
+                error("Git origin validation failed")
+            }
+            branch?.let {
+                require(it.isSafeGitRef()) { "Invalid Git branch" }
+                if (runGit(listOf("checkout", it), accessToken, repoDir, 30.seconds.inWholeMilliseconds) != 0) {
+                    error("Git checkout failed")
+                }
+            }
+            if (runGit(listOf("pull", "--ff-only"), accessToken, repoDir, 30.seconds.inWholeMilliseconds) != 0) {
+                error("Git pull failed")
             }
             repoMutex.withLock {
                 recentRepos.remove("${owner}_$name")
                 recentRepos.add("${owner}_$name")
             }
+        }
+    }
+
+    private suspend fun runGit(
+        args: List<String>,
+        accessToken: String?,
+        directory: File? = null,
+        timeoutMs: Long,
+        onLine: (String) -> Unit = {},
+    ): Int = withContext(Dispatchers.IO) {
+        val askPass = accessToken?.let {
+            Files.createTempFile("ops-git-askpass-", ".sh").also { path ->
+                Files.writeString(
+                    path,
+                    """#!/bin/sh
+case "${'$'}1" in
+  *Username*) printf '%s\n' 'x-access-token' ;;
+  *) printf '%s\n' "${'$'}OPS_GIT_TOKEN" ;;
+esac
+""",
+                )
+                require(path.toFile().setExecutable(true, true)) { "Failed to secure Git authentication helper" }
+            }
+        }
+        val builder = ProcessBuilder(listOf("git") + args)
+            .directory(directory)
+            .redirectErrorStream(true)
+            .apply {
+                environment()["GIT_TERMINAL_PROMPT"] = "0"
+                environment()["GIT_CONFIG_NOSYSTEM"] = "1"
+                environment()["GIT_CONFIG_GLOBAL"] = "/dev/null"
+                if (askPass != null) {
+                    environment()["GIT_ASKPASS"] = askPass.toString()
+                    environment()["OPS_GIT_TOKEN"] = requireNotNull(accessToken)
+                }
+            }
+        val process = try {
+            builder.start()
+        } catch (error: Throwable) {
+            askPass?.let { runCatching { Files.deleteIfExists(it) } }
+            throw error
+        }
+        try {
+            coroutineScope {
+                val reader = launch(Dispatchers.IO) {
+                    process.inputStream.bufferedReader().useLines { lines -> lines.forEach(onLine) }
+                }
+                val exitCode = withTimeout(timeoutMs) { withContext(Dispatchers.IO) { process.waitFor() } }
+                reader.join()
+                exitCode
+            }
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+            askPass?.let { runCatching { Files.deleteIfExists(it) } }
         }
     }
 
@@ -335,17 +412,36 @@ class RepositoryManager {
         val repoDir = getRepoPath(owner, name)
         if (!repoDir.exists()) return 0.0
 
-        val command = if (isOSX()) {
-            "du -sk ${repoDir.absolutePath} | cut -f1"
-        } else {
-            "du -sb ${repoDir.absolutePath} | cut -f1"
-        }
-        val sizeBytes = command.shell().toString().trim().toLongOrNull()?.let {
-            if (isOSX()) it * 1024L else it
-        } ?: 0L
+        val sizeBytes = runCatching {
+            Files.walk(repoDir.toPath()).use { files ->
+                files.filter { Files.isRegularFile(it) }
+                    .mapToLong { path -> runCatching { Files.size(path) }.getOrDefault(0L) }
+                    .sum()
+            }
+        }.getOrDefault(0L)
         return sizeBytes / (1024.0 * 1024.0 * 1024.0)
     }
 }
+
+internal fun String.isSafeRepoSegment() =
+    length <= 100 && this !in setOf(".", "..") && all { it.isLetterOrDigit() || it in "._-" }
+
+internal fun String.isSafeGitRef() =
+    length <= 200 && !startsWith('-') && ".." !in this && "@{" !in this && all { it.isLetterOrDigit() || it in "._/-" }
+
+internal fun String.isSafeGithubCloneUrl() =
+    runCatching { URI.create(this) }.getOrNull()?.let { it.scheme == "https" && it.host == "github.com" } == true
+
+internal fun repositoryDirectoryName(owner: String, name: String): String {
+    require(owner.isSafeRepoSegment() && name.isSafeRepoSegment()) { "Invalid GitHub repository path" }
+    val legacy = "${owner}_$name"
+    return if ('_' !in owner && '_' !in name) legacy else "$legacy-${stableWorkspaceHash("$owner/$name", 12)}"
+}
+
+internal fun stableWorkspaceHash(value: String, length: Int = 24) = MessageDigest.getInstance("SHA-256")
+    .digest(value.encodeToByteArray())
+    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    .take(length)
 
 private fun parseLineForProgress(line: String, progressTracker: AtomicInt) {
     val patterns = listOf(
@@ -375,16 +471,17 @@ object WorkspaceTracker {
     data class WorkspaceInfo(
         val owner: String,
         val name: String,
-        val workspaceId: String
+        val workspaceId: String,
+        val repositoryId: Long? = null,
     ) {
-        fun getPath(): String = System.getProperty("user.home") + "/Desktop/server_repos/${owner}_${name}"
+        fun getPath(): String = System.getProperty("user.home") + "/Desktop/server_repos/${repositoryDirectoryName(owner, name)}"
     }
 
     /**
      * Track a repository selection for a client
      */
-    fun trackWorkspace(clientId: String, owner: String, name: String, workspaceId: String) {
-        clientWorkspaces[clientId] = WorkspaceInfo(owner, name, workspaceId)
+    fun trackWorkspace(clientId: String, owner: String, name: String, workspaceId: String, repositoryId: Long? = null) {
+        clientWorkspaces[clientId] = WorkspaceInfo(owner, name, workspaceId, repositoryId)
     }
 
     /**

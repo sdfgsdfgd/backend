@@ -25,9 +25,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,9 +52,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
-import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import net.sdfgsdfg.dashboard.DashboardApp
+import net.sdfgsdfg.dashboard.DashboardWindowKeyRouter
 import net.sdfgsdfg.dashboard.OpsGithubAuthWindowState
 import net.sdfgsdfg.dashboard.closeOpsTransport
 import net.sdfgsdfg.dashboard.dismissOpsGithubAuthWindow
@@ -67,24 +70,34 @@ import kotlin.math.roundToInt
 fun main() = try {
     application(exitProcessOnExit = false) {
         val authState by opsGithubAuthWindowState.collectAsState()
+        val windowKeys = remember { DashboardWindowKeyRouter() }
+        val initialSize = remember { desktopInitialSize() }
+        val mainWindowState = rememberWindowState(
+            position = WindowPosition.Aligned(Alignment.Center),
+            size = initialSize,
+        )
         Window(
             onCloseRequest = ::exitApplication,
+            onPreviewKeyEvent = windowKeys::dispatch,
             title = "Trio Ops Cockpit",
-            state = WindowState(
-                position = WindowPosition.Aligned(Alignment.Center),
-                size = desktopInitialSize(),
-            ),
+            undecorated = true,
+            transparent = true,
+            resizable = true,
+            state = mainWindowState,
         ) {
-            DashboardApp()
+            WindowDraggableArea(Modifier.fillMaxWidth()) {
+                DashboardApp(windowKeys = windowKeys)
+            }
         }
         authState?.let { state ->
+            val authWindowState = rememberWindowState(
+                position = WindowPosition.Aligned(Alignment.Center),
+                size = DpSize(520.dp, 310.dp),
+            )
             Window(
                 onCloseRequest = ::dismissOpsGithubAuthWindow,
                 title = "GitHub Login",
-                state = WindowState(
-                    position = WindowPosition.Aligned(Alignment.Center),
-                    size = DpSize(520.dp, 310.dp),
-                ),
+                state = authWindowState,
                 transparent = true,
                 undecorated = true,
                 resizable = false,

@@ -25,10 +25,16 @@ private data class StatusLightBounds(
     val height: Float,
 )
 
+private class StatusLightPlacement(
+    var bounds: StatusLightBounds? = null,
+    var fullyVisible: Boolean? = null,
+)
+
 @Composable
 internal actual fun PlatformStatusDot(status: OpsStatusDto) {
     val id = remember { "ops-status-light-${statusLightSeed++}" }
     val density = LocalDensity.current.density
+    val placement = remember { StatusLightPlacement() }
 
     Canvas(
         modifier = Modifier
@@ -44,11 +50,12 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
                     width = bounds.width / density,
                     height = bounds.height / density,
                 )
-                syncStatusLightBounds(
-                    id,
-                    next,
-                    clipped.width >= bounds.width - 0.5f && clipped.height >= bounds.height - 0.5f,
-                )
+                val fullyVisible = clipped.width >= bounds.width - 0.5f && clipped.height >= bounds.height - 0.5f
+                if (placement.bounds != next || placement.fullyVisible != fullyVisible) {
+                    placement.bounds = next
+                    placement.fullyVisible = fullyVisible
+                    syncStatusLightBounds(id, next, fullyVisible)
+                }
             },
     ) {}
 
@@ -68,6 +75,7 @@ internal actual fun PlatformStatusDot(status: OpsStatusDto) {
 private fun syncStatusLightBounds(id: String, bounds: StatusLightBounds, fullyVisible: Boolean) {
     val element = statusLight(id)
     element.style.visibility = if (fullyVisible) "visible" else "hidden"
+    element.style.setProperty("--light-play-state", if (fullyVisible) "running" else "paused")
     if (!fullyVisible) return
     val slot = minOf(bounds.width, bounds.height)
     val size = slot * 1.9f

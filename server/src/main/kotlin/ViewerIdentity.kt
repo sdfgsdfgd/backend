@@ -2,6 +2,7 @@ package net.sdfgsdfg
 
 import io.ktor.server.application.ApplicationCall
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
+import net.sdfgsdfg.data.model.OPS_CAPABILITY_SESSIONS_RUN
 import net.sdfgsdfg.data.model.OpsViewerDto
 import java.net.InetAddress
 import java.net.http.HttpClient
@@ -31,7 +32,7 @@ internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSessio
     val ownerProof = ownerNetworkProof(client.clientIp)
     val proofs = listOfNotNull(ownerProof, githubSession?.let { "github:${it.login}" })
     val issueWrite = ownerProof != null
-    val capabilities = if (issueWrite) listOf(OPS_CAPABILITY_ISSUES_WRITE) else emptyList()
+    val capabilities = if (issueWrite) listOf(OPS_CAPABILITY_ISSUES_WRITE, OPS_CAPABILITY_SESSIONS_RUN) else emptyList()
     if (githubSession != null) {
         return OpsViewerDto(
             userId = githubSession.login,
@@ -69,6 +70,8 @@ internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSessio
 }
 
 internal fun OpsViewerDto.canWriteIssues() = issueWrite || OPS_CAPABILITY_ISSUES_WRITE in capabilities
+
+internal fun OpsViewerDto.canRunSessions() = OPS_CAPABILITY_SESSIONS_RUN in capabilities
 
 internal fun isOwnerNetworkIp(ip: String) = ownerNetworkProof(ip) != null
 

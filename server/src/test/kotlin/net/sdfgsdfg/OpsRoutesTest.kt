@@ -1,10 +1,13 @@
 package net.sdfgsdfg
 
 import io.ktor.client.call.body
+import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.request.url
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -18,6 +21,12 @@ import io.ktor.server.routing.routing
 import io.ktor.server.routing.route
 import io.ktor.server.testing.testApplication
 import io.ktor.server.websocket.WebSockets
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import io.ktor.websocket.send
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -25,14 +34,27 @@ import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
 import net.sdfgsdfg.data.model.IssueSourceSummaryDto
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
+import net.sdfgsdfg.data.model.OPS_CAPABILITY_SESSIONS_RUN
 import net.sdfgsdfg.data.model.OPS_ISSUES_PATH
 import net.sdfgsdfg.data.model.OPS_SUMMARY_PATH
 import net.sdfgsdfg.data.model.OPS_VIEWER_PATH
+import net.sdfgsdfg.data.model.OPS_WS_PATH
 import net.sdfgsdfg.data.model.OpsHostSnapshotDto
 import net.sdfgsdfg.data.model.OpsSignalDto
+import net.sdfgsdfg.data.model.OpsAgentDto
+import net.sdfgsdfg.data.model.OpsSessionActionDto
+import net.sdfgsdfg.data.model.OpsSessionCommandDto
+import net.sdfgsdfg.data.model.OpsSessionEventDto
+import net.sdfgsdfg.data.model.OpsSessionEventKindDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsStatusDto
+import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsViewerDto
+import net.sdfgsdfg.data.model.OpsWorkspaceActionDto
+import net.sdfgsdfg.data.model.OpsWorkspaceCommandDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventKindDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
@@ -61,7 +83,7 @@ class OpsRoutesTest {
         displayName = "kaan",
         role = "admin",
         proofs = listOf("test"),
-        capabilities = listOf(OPS_CAPABILITY_ISSUES_WRITE),
+        capabilities = listOf(OPS_CAPABILITY_ISSUES_WRITE, OPS_CAPABILITY_SESSIONS_RUN),
         issueWrite = true,
     )
     private val remoteClient = ClientInfo(
@@ -342,7 +364,7 @@ class OpsRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("kaan", viewer.userId)
         assertEquals(true, viewer.issueWrite)
-        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE), viewer.capabilities)
+        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE, OPS_CAPABILITY_SESSIONS_RUN), viewer.capabilities)
     }
 
     @Test
@@ -377,7 +399,7 @@ class OpsRoutesTest {
         assertEquals("Octo", viewer.displayName)
         assertEquals("admin", viewer.role)
         assertEquals(listOf("loopback", "github:octo"), viewer.proofs)
-        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE), viewer.capabilities)
+        assertEquals(listOf(OPS_CAPABILITY_ISSUES_WRITE, OPS_CAPABILITY_SESSIONS_RUN), viewer.capabilities)
         assertEquals(true, viewer.issueWrite)
     }
 
@@ -390,6 +412,212 @@ class OpsRoutesTest {
         assertEquals("admin", viewer.role)
         assertEquals(listOf("loopback"), viewer.proofs)
         assertEquals(true, viewer.issueWrite)
+    }
+
+    @Test
+    fun opsSocketBindsWorkspaceCommandsToViewerAndHandshakeToken() = testApplication {
+        var principal: OpsSocketPrincipal? = null
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                    workspaceCommands = OpsWorkspaceCommandHandler { bound, command, emit ->
+                        principal = bound
+                        emit(
+                            OpsWorkspaceEventDto(
+                                requestId = command.requestId,
+                                kind = OpsWorkspaceEventKindDto.REPOSITORIES,
+                                status = OpsWorkspaceEventStatusDto.READY,
+                            ),
+                        )
+                    },
+                )
+            }
+        }
+
+        val socketClient = createClient { install(ClientWebSockets) }
+        var event: OpsWorkspaceEventDto? = null
+        socketClient.webSocket(
+            request = {
+                url(OPS_WS_PATH)
+                header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+                header(HttpHeaders.Authorization, "Bearer socket-test-token")
+            },
+        ) {
+            send(
+                Frame.Text(
+                    json.encodeToString(
+                        OpsSocketMessageDto(
+                            type = "workspace_command",
+                            workspaceCommand = OpsWorkspaceCommandDto("repos-1", OpsWorkspaceActionDto.LIST_REPOSITORIES),
+                        ),
+                    ),
+                ),
+            )
+            withTimeout(5_000L) {
+                while (event == null) {
+                    val message = json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText())
+                    event = message.workspaceEvent
+                }
+            }
+        }
+
+        assertEquals("repos-1", event?.requestId)
+        assertEquals("kaan", principal?.viewer?.userId)
+        assertEquals("socket-test-token", principal?.githubToken)
+    }
+
+    @Test
+    fun opsSocketSendsReplayOnlyToItsAttachingClient() = testApplication {
+        val replay = OpsSessionEventDto(
+            kind = OpsSessionEventKindDto.STREAM,
+            runtimeId = "runtime-1",
+            workspaceId = "workspace-1",
+            agent = OpsAgentDto.ARCANA,
+            sequence = 1,
+            text = "old",
+            replay = true,
+        )
+        val live = replay.copy(sequence = 2, text = "live", replay = false)
+        val hub = OpsSocketHub(OpsSessionCommandHandler { _, _, emit -> emit(replay); emit(live) })
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                    opsSocketHub = hub,
+                )
+            }
+        }
+
+        suspend fun nextSession(incoming: ReceiveChannel<Frame>): OpsSessionEventDto = withTimeout(5_000L) {
+            while (true) {
+                json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText()).sessionEvent?.let { return@withTimeout it }
+            }
+            error("unreachable")
+        }
+
+        try {
+            val socketClient = createClient { install(ClientWebSockets) }
+            socketClient.webSocket({ url(OPS_WS_PATH); header(HttpHeaders.Host, "ops.sdfgsdfg.net") }) {
+                val first = this
+                socketClient.webSocket({ url(OPS_WS_PATH); header(HttpHeaders.Host, "ops.sdfgsdfg.net") }) {
+                    first.send(Frame.Text(json.encodeToString(OpsSocketMessageDto(
+                        type = "session_command",
+                        sessionCommand = OpsSessionCommandDto("attach-1", OpsSessionActionDto.ATTACH_SESSION, runtimeId = "runtime-1"),
+                    ))))
+
+                    assertEquals(listOf(1L, 2L), listOf(nextSession(first.incoming), nextSession(first.incoming)).map { it.sequence })
+                    assertEquals(2L, nextSession(incoming).sequence)
+                }
+            }
+        } finally {
+            hub.close()
+        }
+    }
+
+    @Test
+    fun opsSocketDeniesWorkspaceCommandsWithoutOwnerCapability() = testApplication {
+        var invoked = false
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { guestViewer },
+                    workspaceCommands = OpsWorkspaceCommandHandler { _, _, _ -> invoked = true },
+                )
+            }
+        }
+
+        val socketClient = createClient { install(ClientWebSockets) }
+        var event: OpsWorkspaceEventDto? = null
+        socketClient.webSocket(
+            request = {
+                url(OPS_WS_PATH)
+                header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+            },
+        ) {
+            send(
+                Frame.Text(
+                    json.encodeToString(
+                        OpsSocketMessageDto(
+                            type = "workspace_command",
+                            workspaceCommand = OpsWorkspaceCommandDto("repos-guest", OpsWorkspaceActionDto.LIST_REPOSITORIES),
+                        ),
+                    ),
+                ),
+            )
+            withTimeout(5_000L) {
+                while (event == null) {
+                    val message = json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText())
+                    event = message.workspaceEvent
+                }
+            }
+        }
+
+        assertEquals(OpsWorkspaceEventStatusDto.ERROR, event?.status)
+        assertEquals(false, invoked)
+    }
+
+    @Test
+    fun opsSocketDeniesSessionCommandsWithoutOwnerCapability() = testApplication {
+        var invoked = false
+        val hub = OpsSocketHub(OpsSessionCommandHandler { _, _, _ -> invoked = true })
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { guestViewer },
+                    opsSocketHub = hub,
+                )
+            }
+        }
+
+        var event: OpsSessionEventDto? = null
+        try {
+            createClient { install(ClientWebSockets) }.webSocket(
+                request = {
+                    url(OPS_WS_PATH)
+                    header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+                },
+            ) {
+                send(
+                    Frame.Text(
+                        json.encodeToString(
+                            OpsSocketMessageDto(
+                                type = "session_command",
+                                sessionCommand = OpsSessionCommandDto(
+                                    "sessions-guest",
+                                    OpsSessionActionDto.LIST_SESSIONS,
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                withTimeout(5_000L) {
+                    while (event == null) {
+                        event = json.decodeFromString<OpsSocketMessageDto>(
+                            (incoming.receive() as Frame.Text).readText(),
+                        ).sessionEvent
+                    }
+                }
+            }
+        } finally {
+            hub.close()
+        }
+
+        assertEquals(OpsSessionEventKindDto.ERROR, event?.kind)
+        assertEquals("Session access requires the owner session", event?.text)
+        assertEquals(false, invoked)
     }
 
     @Test

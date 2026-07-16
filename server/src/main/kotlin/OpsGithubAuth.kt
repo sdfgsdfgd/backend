@@ -199,12 +199,7 @@ internal fun ApplicationCall.opsGithubSession(
 ): OpsGithubSession? = verifyOpsGithubSession(request.cookies[opsGithubSessionCookie], secret, nowMs)
 
 internal suspend fun ApplicationCall.opsGithubBearerSession(http: HttpClient, nowMs: Long = System.currentTimeMillis()): OpsGithubSession? {
-    val header = request.headers[HttpHeaders.Authorization]?.trim() ?: return null
-    if (!header.startsWith("Bearer ", ignoreCase = true)) return null
-    val token = header.substringAfter(' ')
-        .trim()
-        .takeIf { it.isNotBlank() }
-        ?: return null
+    val token = opsGithubBearerToken() ?: return null
     synchronized(githubBearerCache) {
         githubBearerCache[token]?.takeIf { it.expiresAtMs > nowMs }?.let { return it.session }
     }
@@ -213,6 +208,12 @@ internal suspend fun ApplicationCall.opsGithubBearerSession(http: HttpClient, no
         githubBearerCache[token] = CachedGithubBearerSession(nowMs + bearerCacheMs, session)
     }
     return session
+}
+
+internal fun ApplicationCall.opsGithubBearerToken(): String? {
+    val header = request.headers[HttpHeaders.Authorization]?.trim() ?: return null
+    if (!header.startsWith("Bearer ", ignoreCase = true)) return null
+    return header.substringAfter(' ').trim().takeIf { it.isNotBlank() }
 }
 
 internal fun signOpsGithubSession(
@@ -289,7 +290,7 @@ private fun githubAuthorizeUrl(clientId: String, redirectUri: String, state: Str
     "https://github.com/login/oauth/authorize" +
         "?client_id=${url(clientId)}" +
         "&redirect_uri=${url(redirectUri)}" +
-        "&scope=${url("read:user")}" +
+        "&scope=${url("read:user repo")}" +
         "&state=${url(state)}"
 
 private suspend fun exchangeGithubCode(http: HttpClient, config: OpsGithubAuthConfig, code: String) = http.ioResult {
@@ -312,7 +313,7 @@ private suspend fun exchangeGithubCode(http: HttpClient, config: OpsGithubAuthCo
 }
 
 private suspend fun startGithubDevice(http: HttpClient, clientId: String) = http.ioResult {
-    val body = formBody("client_id" to clientId, "scope" to "read:user")
+    val body = formBody("client_id" to clientId, "scope" to "read:user repo")
     val request = HttpRequest.newBuilder(URI.create("https://github.com/login/device/code"))
         .timeout(Duration.ofSeconds(8))
         .header("Accept", "application/json")

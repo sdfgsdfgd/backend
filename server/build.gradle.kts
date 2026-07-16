@@ -1,4 +1,5 @@
 import com.google.protobuf.gradle.id
+import org.gradle.api.tasks.JavaExec
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -120,5 +121,19 @@ tasks.jacocoTestReport {
         xml.required.set(true)
         html.required.set(false)
         csv.required.set(false)
+    }
+}
+
+// A running JVM must never lazily load half of a classpath rebuilt by another Gradle task.
+tasks.named<JavaExec>("run") {
+    doFirst {
+        val root = rootProject.projectDir.toPath().normalize()
+        val snapshot = layout.buildDirectory.dir("run-snapshots/${System.nanoTime()}").get().asFile.apply { mkdirs() }
+        classpath = files(classpath.files.mapIndexed { index, source ->
+            if (!source.exists() || !source.toPath().normalize().startsWith(root)) source
+            else snapshot.resolve("$index-${source.name}").also { target ->
+                if (source.isDirectory) source.copyRecursively(target) else source.copyTo(target)
+            }
+        })
     }
 }

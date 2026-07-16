@@ -9,6 +9,7 @@ kotlinx-serialization-version   = "1.11.0"
 logback-version                 = "1.4.14"
 prometheus-version              = "1.6.13"
 kotlinx-coroutines              = "1.7.3"
+kotlinx-datetime               = "0.7.1"
 grpc-java-version               = "1.63.0"     # Apr 2024 core release
 grpc-kotlin-version             = "1.4.1"      # Jul 2024 Kotlin stub release
 protobuf-version                =  "3.25.3"    # Feb 2024 protobuf release
@@ -20,6 +21,7 @@ postgresql-version              = "42.7.3"
 
 [libraries]
 coroutines                              = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-datetime                        = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 ktor-server-core                        = { module = "io.ktor:ktor-server-core", version.ref = "ktor-version" }
 ktor-server-websockets                  = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor-version" }
 ktor-network-tls                        = { module = "io.ktor:ktor-network-tls", version.ref = "ktor-version" }

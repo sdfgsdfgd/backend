@@ -13,7 +13,7 @@ internal class BackendRuntime(
     val opsHttp: JavaHttpClient = JavaHttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
     val requestEvents: RequestEvents = RequestEvents(),
     val serverPy: ServerPyBridge = ServerPyBridge(),
-    val opsSocket: OpsSocketHub = OpsSocketHub(),
+    val opsSocket: OpsSocketHub = OpsSocketHub(OpsSessionService(pacing = serverPy::pacingProfile)),
 ) : AutoCloseable {
     private val closed = AtomicBoolean()
 

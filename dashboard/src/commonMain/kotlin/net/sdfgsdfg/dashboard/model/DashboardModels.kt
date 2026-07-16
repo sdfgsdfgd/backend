@@ -9,7 +9,7 @@ internal enum class DashboardTab(val label: String) {
     Home("Home"),
     Ci("CI Results"),
     Issues("Issues"),
-    Arcana("Arcana Sessions");
+    Arcana("X");
 
     companion object {
         fun fromStoredName(value: String) = if (value == "IssuesNew") Issues else entries.firstOrNull { it.name == value }

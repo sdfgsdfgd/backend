@@ -26,9 +26,16 @@ import kotlinx.serialization.json.Json
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
+import net.sdfgsdfg.data.model.OpsSessionCommandDto
+import net.sdfgsdfg.data.model.OpsSessionEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
+import net.sdfgsdfg.data.model.OpsWorkspaceActionDto
+import net.sdfgsdfg.data.model.OpsWorkspaceCommandDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventKindDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventStatusDto
 import net.sdfgsdfg.data.model.RepoIssuePatchDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.isFreshForIssuePatch
@@ -42,8 +49,14 @@ private const val issuePatchEventLimit = 6
 
 @OptIn(FlowPreview::class)
 /** Runtime-local fanout and transient run state; separate instances must never cross-contaminate. */
-internal class OpsSocketHub : AutoCloseable {
-    private data class Client(val session: DefaultWebSocketServerSession, val sendLock: Mutex = Mutex())
+internal class OpsSocketHub(
+    private val sessionHandler: OpsSessionCommandHandler = OpsSessionService(),
+) : AutoCloseable {
+    private data class Client(
+        val session: DefaultWebSocketServerSession,
+        val principal: OpsSocketPrincipal,
+        val sendLock: Mutex = Mutex(),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -58,9 +71,12 @@ internal class OpsSocketHub : AutoCloseable {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
+    private val workspaceJobs = ConcurrentHashMap<String, Job>()
+    private val sessionLocks = ConcurrentHashMap<String, Mutex>()
     private val closed = AtomicBoolean()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
+    private var workspaceHandler: OpsWorkspaceCommandHandler? = null
 
     init {
         scope.launch {
@@ -82,12 +98,13 @@ internal class OpsSocketHub : AutoCloseable {
     val clientCount: Int
         get() = clients.size
 
-    fun configure(provider: () -> OpsSummaryDto) {
+    fun configure(provider: () -> OpsSummaryDto, workspace: OpsWorkspaceCommandHandler? = null) {
         summaryProvider = provider
+        workspaceHandler = workspace
     }
 
-    suspend fun serve(session: DefaultWebSocketServerSession) {
-        val client = Client(session)
+    suspend fun serve(session: DefaultWebSocketServerSession, principal: OpsSocketPrincipal) {
+        val client = Client(session, principal)
         clients += client
         ensureLoop()
         sendSummary(client)
@@ -98,6 +115,10 @@ internal class OpsSocketHub : AutoCloseable {
                 when (val type = decoded?.type) {
                     "ping" -> client.send(OpsSocketMessageDto("pong", decoded.clientTimestamp, System.currentTimeMillis()))
                     "refresh" -> sendSummary(client)
+                    "workspace_command" -> decoded.workspaceCommand?.let { dispatchWorkspace(client, it) }
+                        ?: client.send(OpsSocketMessageDto("error", message = "Workspace command is missing"))
+                    "session_command" -> decoded.sessionCommand?.let { dispatchSession(client, it) }
+                        ?: client.send(OpsSocketMessageDto("error", message = "Session command is missing"))
                     null -> client.send(OpsSocketMessageDto("error", message = "Invalid ops socket message"))
                     else -> client.send(OpsSocketMessageDto("error", message = "Unknown ops socket message: $type"))
                 }
@@ -145,7 +166,11 @@ internal class OpsSocketHub : AutoCloseable {
         scope.cancel()
         clients.clear()
         activeRuns.clear()
+        workspaceJobs.clear()
+        sessionLocks.clear()
+        (sessionHandler as? AutoCloseable)?.close()
         summaryProvider = null
+        workspaceHandler = null
         loopJob = null
     }
 
@@ -197,12 +222,79 @@ internal class OpsSocketHub : AutoCloseable {
         }
     }
 
+    private suspend fun dispatchWorkspace(client: Client, command: OpsWorkspaceCommandDto) {
+        if (!client.principal.viewer.canRunSessions()) {
+            client.send(command.errorEvent("Workspace access requires the owner session").message())
+            return
+        }
+        val handler = workspaceHandler ?: run {
+            client.send(command.errorEvent("Workspace service is unavailable").message())
+            return
+        }
+        val key = "${client.principal.viewer.userId}:${if (command.action == OpsWorkspaceActionDto.SELECT_REPOSITORY) "sync" else "list"}"
+        workspaceJobs.remove(key)?.cancel()
+        val job = scope.launch {
+            handler.handle(client.principal, command) { event ->
+                runCatching { client.send(event.message()) }
+            }
+        }
+        workspaceJobs[key] = job
+        job.invokeOnCompletion { workspaceJobs.remove(key, job) }
+    }
+
+    private suspend fun dispatchSession(client: Client, command: OpsSessionCommandDto) {
+        if (!client.principal.viewer.canRunSessions()) {
+            client.send(command.errorEvent("Session access requires the owner session").message())
+            return
+        }
+        val viewerId = client.principal.viewer.userId
+        scope.launch {
+            sessionLocks.computeIfAbsent(viewerId) { Mutex() }.withLock {
+                sessionHandler.handle(client.principal, command) { event ->
+                    if (event.replay || event.sequence == null) client.send(event.message())
+                    else broadcastViewer(viewerId, event.message())
+                }
+            }
+        }
+    }
+
+    private suspend fun broadcastViewer(viewerId: String, message: OpsSocketMessageDto) {
+        clients.filter { it.principal.viewer.userId == viewerId }.forEach { client ->
+            runCatching { client.send(message) }.onFailure { clients -= client }
+        }
+    }
+
     private suspend fun currentSummary() = withContext(Dispatchers.IO) { summaryProvider?.invoke() }
 
     private suspend fun Client.send(message: OpsSocketMessageDto) = sendLock.withLock {
         session.send(json.encodeToString(message))
     }
 }
+
+private fun OpsWorkspaceCommandDto.errorEvent(message: String) = OpsWorkspaceEventDto(
+    requestId = requestId,
+    kind = if (action == OpsWorkspaceActionDto.LIST_REPOSITORIES) OpsWorkspaceEventKindDto.REPOSITORIES else OpsWorkspaceEventKindDto.SYNC,
+    status = OpsWorkspaceEventStatusDto.ERROR,
+    message = message,
+    repositoryId = repositoryId,
+)
+
+private fun OpsSessionCommandDto.errorEvent(message: String) = OpsSessionEventDto(
+    requestId = requestId,
+    kind = net.sdfgsdfg.data.model.OpsSessionEventKindDto.ERROR,
+    runtimeId = runtimeId,
+    sessionId = sessionId,
+    workspaceId = workspaceId,
+    agent = agent,
+    channel = net.sdfgsdfg.data.model.OpsSessionChannelDto.SYSTEM,
+    text = message,
+)
+
+private fun OpsWorkspaceEventDto.message() =
+    OpsSocketMessageDto("workspace_event", serverTimestamp = System.currentTimeMillis(), workspaceEvent = this)
+
+private fun OpsSessionEventDto.message() =
+    OpsSocketMessageDto("session_event", serverTimestamp = System.currentTimeMillis(), sessionEvent = this)
 
 private fun OpsSummaryDto.summaryMessage() =
     OpsSocketMessageDto("summary", serverTimestamp = System.currentTimeMillis(), summary = this)

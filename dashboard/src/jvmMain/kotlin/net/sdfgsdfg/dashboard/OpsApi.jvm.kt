@@ -26,11 +26,13 @@ import java.net.http.HttpResponse
 import java.net.http.WebSocket
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.prefs.Preferences
 
 private const val githubTokenPrefKey = "ops.github.token"
+private const val opsSocketSendTimeoutSeconds = 10L
 private val dashboardPrefs = Preferences.userRoot().node("net/sdfgsdfg/dashboard")
 // One selector/pool serves the desktop process; Compose owns sockets, main owns transport shutdown.
 private val opsHttp = HttpClient.newHttpClient()
@@ -198,13 +200,37 @@ internal actual fun writeDashboardPref(key: String, value: String?) {
 internal actual fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,
-): () -> Unit {
+): OpsSocketConnection {
     val active = AtomicBoolean(true)
-    var socket: WebSocket? = null
+    val socket = AtomicReference<WebSocket?>()
+    val sendLock = Any()
+    var sendTail: CompletionStage<*> = CompletableFuture.completedFuture(Unit)
 
-    fun send(type: String, clientTimestamp: Long? = null) {
-        socket?.takeUnless { it.isOutputClosed }?.sendText(dashboardJson.encodeToString(OpsSocketMessageDto(type, clientTimestamp)), true)
+    fun disconnect(current: WebSocket, abort: Boolean = false) {
+        if (abort) current.abort()
+        if (socket.compareAndSet(current, null) && active.get()) {
+            EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+        }
     }
+
+    fun send(message: OpsSocketMessageDto): Boolean {
+        val current = socket.get()?.takeUnless { it.isOutputClosed } ?: return false
+        val payload = runCatching { dashboardJson.encodeToString(message) }.getOrNull() ?: return false
+        val queued = synchronized(sendLock) {
+            sendTail = sendTail.handle { _, _ -> Unit }.thenCompose {
+                if (socket.get() === current && !current.isOutputClosed) {
+                    current.sendText(payload, true).toCompletableFuture()
+                        .orTimeout(opsSocketSendTimeoutSeconds, TimeUnit.SECONDS)
+                }
+                else CompletableFuture.failedFuture(IllegalStateException("Ops socket changed before send"))
+            }
+            sendTail
+        }
+        queued.whenComplete { _, error -> if (error != null) disconnect(current, abort = true) }
+        return true
+    }
+
+    fun send(type: String, clientTimestamp: Long? = null) = send(OpsSocketMessageDto(type, clientTimestamp))
 
     Thread({
         while (active.get()) {
@@ -220,7 +246,7 @@ internal actual fun connectOpsSocket(
                         private var text = ""
 
                         override fun onOpen(webSocket: WebSocket) {
-                            socket = webSocket
+                            socket.set(webSocket)
                             activeOpsApiBase = endpoint
                             EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED)) }
                             send("refresh")
@@ -246,34 +272,34 @@ internal actual fun connectOpsSocket(
                         }
 
                         override fun onError(webSocket: WebSocket, error: Throwable) {
-                            if (active.get()) EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                            disconnect(webSocket)
                         }
 
                         override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*> {
-                            if (active.get()) EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                            disconnect(webSocket)
                             return CompletableFuture.completedFuture(null)
                         }
                     }
-                    socket = builder.buildAsync(URI.create(wsUrl), listener).join()
-                    while (active.get() && socket?.isInputClosed == false && socket?.isOutputClosed == false) {
+                    socket.set(builder.buildAsync(URI.create(wsUrl), listener).join())
+                    while (active.get() && socket.get()?.isInputClosed == false && socket.get()?.isOutputClosed == false) {
                         send("ping", System.currentTimeMillis())
                         Thread.sleep(15_000)
                     }
                 }.onFailure {
-                    socket = null
+                    socket.getAndSet(null)?.abort()
                     if (active.get()) EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
                 }
             }
-            Thread.sleep(2_500)
+            runCatching { Thread.sleep(2_500) }
         }
     }, "ops-socket").apply {
         isDaemon = true
         start()
     }
 
-    return {
+    return OpsSocketConnection(::send) {
         active.set(false)
-        runCatching { socket?.sendClose(WebSocket.NORMAL_CLOSURE, "dashboard disposed") }
+        runCatching { socket.getAndSet(null)?.sendClose(WebSocket.NORMAL_CLOSURE, "dashboard disposed") }
     }
 }
 

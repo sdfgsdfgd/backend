@@ -2,8 +2,10 @@ package net.sdfgsdfg.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 const val OPS_CAPABILITY_ISSUES_WRITE = "issues:write"
+const val OPS_CAPABILITY_SESSIONS_RUN = "sessions:run"
 const val ARCANA_PYRAMID_RUN_LABEL = "q arcana full pyramid"
 
 val arcanaTestLayerKeys = listOf("unit", "integration", "e2e", "benchmarks")
@@ -33,7 +35,281 @@ data class OpsSocketMessageDto(
     val summary: OpsSummaryDto? = null,
     @SerialName("issue_patch") val issuePatch: OpsIssuePatchDto? = null,
     @SerialName("run_event") val runEvent: OpsRunEventDto? = null,
+    @SerialName("workspace_command") val workspaceCommand: OpsWorkspaceCommandDto? = null,
+    @SerialName("workspace_event") val workspaceEvent: OpsWorkspaceEventDto? = null,
+    @SerialName("session_command") val sessionCommand: OpsSessionCommandDto? = null,
+    @SerialName("session_event") val sessionEvent: OpsSessionEventDto? = null,
     val message: String? = null,
+)
+
+@Serializable
+data class OpsWorkspaceCommandDto(
+    @SerialName("request_id") val requestId: String,
+    val action: OpsWorkspaceActionDto,
+    @SerialName("repository_id") val repositoryId: Long? = null,
+)
+
+@Serializable
+enum class OpsWorkspaceActionDto {
+    @SerialName("list_repositories")
+    LIST_REPOSITORIES,
+
+    @SerialName("select_repository")
+    SELECT_REPOSITORY,
+}
+
+@Serializable
+data class OpsWorkspaceEventDto(
+    @SerialName("request_id") val requestId: String,
+    val kind: OpsWorkspaceEventKindDto,
+    val status: OpsWorkspaceEventStatusDto,
+    val message: String? = null,
+    val progress: Int? = null,
+    val repositories: List<OpsRepositoryDto> = emptyList(),
+    @SerialName("repository_id") val repositoryId: Long? = null,
+    @SerialName("workspace_id") val workspaceId: String? = null,
+)
+
+@Serializable
+enum class OpsWorkspaceEventKindDto {
+    @SerialName("repositories")
+    REPOSITORIES,
+
+    @SerialName("sync")
+    SYNC,
+}
+
+@Serializable
+enum class OpsWorkspaceEventStatusDto {
+    @SerialName("loading")
+    LOADING,
+
+    @SerialName("ready")
+    READY,
+
+    @SerialName("initializing")
+    INITIALIZING,
+
+    @SerialName("syncing")
+    SYNCING,
+
+    @SerialName("synchronized")
+    SYNCHRONIZED,
+
+    @SerialName("error")
+    ERROR,
+}
+
+@Serializable
+data class OpsRepositoryDto(
+    val id: Long,
+    val name: String,
+    val owner: String,
+    @SerialName("full_name") val fullName: String,
+    val description: String? = null,
+    val language: String? = null,
+    val stars: Int = 0,
+    @SerialName("updated_at") val updatedAt: String,
+    @SerialName("default_branch") val defaultBranch: String,
+    @SerialName("private") val isPrivate: Boolean = false,
+)
+
+@Serializable
+enum class OpsArcanaModeDto {
+    @SerialName("workspace")
+    WORKSPACE,
+
+    @SerialName("issues")
+    ISSUES,
+
+    @SerialName("general")
+    GENERAL,
+}
+
+@Serializable
+data class OpsSessionCommandDto(
+    @SerialName("request_id") val requestId: String,
+    val action: OpsSessionActionDto,
+    @SerialName("workspace_id") val workspaceId: String? = null,
+    val agent: OpsAgentDto? = null,
+    @SerialName("runtime_id") val runtimeId: String? = null,
+    @SerialName("session_id") val sessionId: String? = null,
+    val text: String? = null,
+    @SerialName("after_sequence") val afterSequence: Long? = null,
+    val model: String? = null,
+    @SerialName("no_pace") val noPace: Boolean? = null,
+    @SerialName("pace_min_seconds") val paceMinSeconds: Double? = null,
+    @SerialName("pace_max_seconds") val paceMaxSeconds: Double? = null,
+    val auto: Boolean? = null,
+    @SerialName("index_sync") val indexSync: Boolean? = null,
+    @SerialName("arcana_mode") val arcanaMode: OpsArcanaModeDto? = null,
+)
+
+@Serializable
+enum class OpsSessionActionDto {
+    @SerialName("list_sessions")
+    LIST_SESSIONS,
+
+    @SerialName("create_session")
+    CREATE_SESSION,
+
+    @SerialName("resume_session")
+    RESUME_SESSION,
+
+    @SerialName("attach_session")
+    ATTACH_SESSION,
+
+    @SerialName("input")
+    INPUT,
+
+    @SerialName("interrupt")
+    INTERRUPT,
+
+    @SerialName("stop")
+    STOP,
+
+    @SerialName("pacing_profile")
+    PACING_PROFILE,
+}
+
+@Serializable
+enum class OpsAgentDto {
+    @SerialName("arcana")
+    ARCANA,
+
+    @SerialName("codex")
+    CODEX,
+}
+
+@Serializable
+data class OpsSessionEventDto(
+    @SerialName("request_id") val requestId: String? = null,
+    val kind: OpsSessionEventKindDto,
+    @SerialName("runtime_id") val runtimeId: String? = null,
+    @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("workspace_id") val workspaceId: String? = null,
+    val agent: OpsAgentDto? = null,
+    val sequence: Long? = null,
+    @SerialName("timestamp_ms") val timestampMs: Long? = null,
+    val state: OpsSessionStateDto? = null,
+    val channel: OpsSessionChannelDto? = null,
+    val text: String? = null,
+    val structured: OpsStructuredEventDto? = null,
+    val sessions: List<OpsSessionSummaryDto> = emptyList(),
+    val pacing: OpsPacingProfileDto? = null,
+    val replay: Boolean = false,
+    @SerialName("exit_code") val exitCode: Int? = null,
+)
+
+@Serializable
+data class OpsStructuredEventDto(
+    val version: Int = 1,
+    val type: String,
+    val phase: String,
+    val schema: String? = null,
+    val round: Int? = null,
+    val payload: JsonObject,
+)
+
+@Serializable
+enum class OpsSessionEventKindDto {
+    @SerialName("sessions")
+    SESSIONS,
+
+    @SerialName("lifecycle")
+    LIFECYCLE,
+
+    @SerialName("stream")
+    STREAM,
+
+    @SerialName("structured")
+    STRUCTURED,
+
+    @SerialName("error")
+    ERROR,
+
+    @SerialName("pacing_profile")
+    PACING_PROFILE,
+}
+
+@Serializable
+data class OpsPacingProfileDto(
+    val ranges: List<OpsPacingRangeDto> = emptyList(),
+)
+
+@Serializable
+data class OpsPacingRangeDto(
+    val provider: String,
+    @SerialName("min_seconds") val minSeconds: Double,
+    @SerialName("max_seconds") val maxSeconds: Double,
+)
+
+@Serializable
+enum class OpsSessionStateDto {
+    @SerialName("starting")
+    STARTING,
+
+    @SerialName("ready")
+    READY,
+
+    @SerialName("running")
+    RUNNING,
+
+    @SerialName("ongoing")
+    ONGOING,
+
+    @SerialName("awaiting_acceptance")
+    AWAITING_ACCEPTANCE,
+
+    @SerialName("concluded")
+    CONCLUDED,
+
+    @SerialName("interrupted")
+    INTERRUPTED,
+
+    @SerialName("exited")
+    EXITED,
+
+    @SerialName("failed")
+    FAILED,
+
+    @SerialName("stopped")
+    STOPPED,
+}
+
+val OpsSessionStateDto.isActiveRuntime get() = this == OpsSessionStateDto.STARTING ||
+    this == OpsSessionStateDto.READY || this == OpsSessionStateDto.RUNNING ||
+    this == OpsSessionStateDto.AWAITING_ACCEPTANCE
+
+@Serializable
+enum class OpsSessionChannelDto {
+    @SerialName("system")
+    SYSTEM,
+
+    @SerialName("stdin")
+    STDIN,
+
+    @SerialName("stdout")
+    STDOUT,
+
+    @SerialName("stderr")
+    STDERR,
+}
+
+@Serializable
+data class OpsSessionSummaryDto(
+    @SerialName("session_id") val sessionId: String,
+    val agent: OpsAgentDto,
+    val title: String,
+    @SerialName("updated_at_ms") val updatedAtMs: Long,
+    @SerialName("workspace_id") val workspaceId: String? = null,
+    @SerialName("repository_id") val repositoryId: Long? = null,
+    @SerialName("workspace_name") val workspaceName: String? = null,
+    @SerialName("runtime_id") val runtimeId: String? = null,
+    val state: OpsSessionStateDto? = null,
+    val detail: String? = null,
+    @SerialName("changes_known") val changesKnown: Boolean = false,
+    @SerialName("has_changes") val hasChanges: Boolean = false,
 )
 
 @Serializable

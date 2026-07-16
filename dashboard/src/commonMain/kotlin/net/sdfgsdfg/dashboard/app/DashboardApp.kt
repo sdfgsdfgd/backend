@@ -1,6 +1,7 @@
 package net.sdfgsdfg.dashboard
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
@@ -31,18 +32,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
+import net.sdfgsdfg.data.model.OpsSessionCommandDto
+import net.sdfgsdfg.data.model.OpsSessionEventDto
+import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsViewerDto
+import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 
 private fun OpsSummaryDto.issueTraceShape() =
@@ -54,8 +66,16 @@ private fun String.runLifecycleLabel() = when {
     else -> this
 }
 
+class DashboardWindowKeyRouter {
+    internal var app: (KeyEvent) -> Boolean = { false }
+    internal var x: (KeyEvent) -> Boolean = { false }
+
+    fun dispatch(event: KeyEvent): Boolean = app(event)
+}
+
 @Composable
 fun DashboardApp(
+    windowKeys: DashboardWindowKeyRouter? = null,
     arrowShiftSignal: Int = 0,
     focusedArrowKeys: Boolean = true,
     // CMP-10297 workaround: raw WheelEvent deltas from wasmJsMain.
@@ -65,11 +85,16 @@ fun DashboardApp(
     var selectedTab by remember { mutableStateOf(readDashboardPref("ops.tab")?.let(DashboardTab::fromStoredName) ?: DashboardTab.Home) }
     var loadState by remember { mutableStateOf<OpsLoadState>(OpsLoadState.Loading) }
     var socketState by remember { mutableStateOf(OpsSocketState()) }
+    var socketConnection by remember { mutableStateOf<OpsSocketConnection?>(null) }
+    var workspaceEvent by remember { mutableStateOf<OpsWorkspaceEventDto?>(null) }
+    val sessionInbox = remember { Channel<OpsSessionEventDto>(Channel.UNLIMITED) }
+    val sessionLedger = remember { XSessionLedger() }
     var viewer by remember { mutableStateOf(OpsViewerDto()) }
     var activeRunEvents by remember { mutableStateOf(emptyList<OpsRunEventDto>()) }
     var issueEditorActive by remember { mutableStateOf(false) }
+    var freshXSignal by remember { mutableStateOf(0) }
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
-    val focusRequester = remember { FocusRequester() }
+    val fallbackFocusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
@@ -125,16 +150,24 @@ fun DashboardApp(
         )
     }
 
-    LaunchedEffect(Unit) {
-        runCatching { focusRequester.requestFocus() }
+    LaunchedEffect(windowKeys, focusedArrowKeys) {
+        if (windowKeys == null && focusedArrowKeys) runCatching { fallbackFocusRequester.requestFocus() }
     }
     LaunchedEffect(Unit) {
         refreshViewer()
     }
+    LaunchedEffect(sessionInbox) {
+        for (event in sessionInbox) {
+            sessionLedger.append(event)
+        }
+    }
     DisposableEffect(Unit) {
-        val close = connectOpsSocket(
+        mounted[0] = true
+        val connection = connectOpsSocket(
             onMessage = { message ->
                 if (!mounted[0]) return@connectOpsSocket
+                message.workspaceEvent?.let { workspaceEvent = it }
+                message.sessionEvent?.let { sessionInbox.trySend(it) }
                 message.runEvent?.let { event ->
                     val key = "${event.repoId}:${event.run.label.runLifecycleLabel()}"
                     activeRunEvents = (activeRunEvents.filterNot { "${it.repoId}:${it.run.label.runLifecycleLabel()}" == key } + event).takeLast(20)
@@ -148,9 +181,11 @@ fun DashboardApp(
             },
             onState = { if (mounted[0]) socketState = it },
         )
+        socketConnection = connection
         onDispose {
             mounted[0] = false
-            close()
+            socketConnection = null
+            connection.close()
         }
     }
     LaunchedEffect(socketState.status) {
@@ -171,10 +206,41 @@ fun DashboardApp(
     LaunchedEffect(selectedTab) {
         if (selectedTab != DashboardTab.Issues) issueEditorActive = false
     }
-    val surfaceModifier = Modifier
-        .fillMaxSize()
-        .focusRequester(focusRequester)
-        .focusable()
+    val windowKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
+        if (event.type != KeyEventType.KeyDown) {
+            false
+        } else if (event.key == Key.X && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
+            selectedTab = DashboardTab.Arcana
+            writeDashboardPref("ops.tab", selectedTab.name)
+            freshXSignal++
+            true
+        } else if (issueEditorActive) {
+            false
+        } else if (selectedTab == DashboardTab.Arcana) {
+            windowKeys?.x?.invoke(event) ?: false
+        } else if (focusedArrowKeys) {
+            when (event.key) {
+                Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                else -> false
+            }
+        } else {
+            false
+        }
+    }
+    DisposableEffect(windowKeys) {
+        val router = windowKeys
+        val route: (KeyEvent) -> Boolean = { windowKeyHandler.value(it) }
+        if (router != null) router.app = route
+        onDispose {
+            if (router?.app === route) router.app = { false }
+        }
+    }
+    val surfaceModifier = if (windowKeys == null && focusedArrowKeys) {
+        Modifier.fillMaxSize().focusRequester(fallbackFocusRequester).focusable()
+    } else {
+        Modifier.fillMaxSize()
+    }
 
     CompositionLocalProvider(LocalNativeWheelRegionChanged provides onNativeWheelRegionChanged) {
         MaterialTheme(
@@ -186,27 +252,28 @@ fun DashboardApp(
             ),
         ) {
             Surface(
-                modifier = if (focusedArrowKeys) {
-                    surfaceModifier.onPreviewKeyEvent {
-                        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        if (issueEditorActive) return@onPreviewKeyEvent false
-                        when (it.key) {
-                            Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
-                            Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
-                            else -> false
-                        }
-                    }
+                modifier = if (windowKeys == null && focusedArrowKeys) {
+                    surfaceModifier.onPreviewKeyEvent { windowKeyHandler.value(it) }
                 } else {
                     surfaceModifier
                 },
-                color = background,
+                color = Color.Transparent,
             ) {
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     val pageBottomGutter = maxHeight * 0.28f
                     val pageWidth = maxWidth
                     val pageHeight = maxHeight
-                    OpsWallpaper()
+                    Crossfade(
+                        targetState = selectedTab == DashboardTab.Arcana,
+                        animationSpec = tween(760),
+                        label = "dashboard-background-crossfade",
+                    ) { xSelected ->
+                        if (xSelected) XBackdrop() else OpsWallpaper()
+                    }
                     val listState = rememberLazyListState()
+                    LaunchedEffect(selectedTab, listState) {
+                        if (selectedTab == DashboardTab.Arcana) listState.scrollToItem(0)
+                    }
                     //region CMP-10297 scroll workaround
                     // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
                     // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
@@ -228,6 +295,7 @@ fun DashboardApp(
                     val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
                     LazyColumn(
                         state = listState,
+                        userScrollEnabled = selectedTab != DashboardTab.Arcana,
                         modifier = Modifier
                             .fillMaxSize(),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -271,7 +339,25 @@ fun DashboardApp(
                                             onEditorActiveChanged = { issueEditorActive = it },
                                         )
                                     }
-                                    DashboardTab.Arcana -> ArcanaSessionsTab()
+                                    DashboardTab.Arcana -> ArcanaSessionsTab(
+                                        windowKeys = windowKeys,
+                                        freshXSignal = freshXSignal,
+                                        viewer = viewer,
+                                        socketState = socketState,
+                                        pageHeight = pageHeight,
+                                        workspaceEvent = workspaceEvent,
+                                        sessionLedger = sessionLedger,
+                                        sendWorkspaceCommand = { command ->
+                                            socketConnection?.send(
+                                                OpsSocketMessageDto("workspace_command", workspaceCommand = command),
+                                            ) == true
+                                        },
+                                        sendSessionCommand = { command: OpsSessionCommandDto ->
+                                            socketConnection?.send(
+                                                OpsSocketMessageDto("session_command", sessionCommand = command),
+                                            ) == true
+                                        },
+                                    )
                                 }
                             }
                         }

@@ -34,11 +34,14 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
+import net.sdfgsdfg.data.model.OpsPacingProfileDto
+import net.sdfgsdfg.data.model.OpsPacingRangeDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestRequestDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
 import rpc.BotGrpcKt
 import rpc.BotOuterClass.AskRequest
+import rpc.BotOuterClass.PacingRequest
 import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
 import java.io.RandomAccessFile
@@ -112,6 +115,16 @@ internal class ServerPyBridge : AutoCloseable {
         val payload: String,
         val textChars: Int = 0,
     )
+
+    internal suspend fun pacingProfile(): OpsPacingProfileDto = botStub
+        .getPacing(PacingRequest.getDefaultInstance())
+        .let { profile ->
+            OpsPacingProfileDto(
+                profile.rangesList.map { range ->
+                    OpsPacingRangeDto(range.provider, range.minSeconds, range.maxSeconds)
+                },
+            )
+        }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -248,6 +261,7 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
             "[gRPC][$requestId][$rpcId] init POST /api/ask model=${body.model.orEmpty()} " +
                 "new_chat=${body.newChat} want_tts=${body.wantTts} deepseek=${body.deepseek} " +
                 "deepseek_search=${body.deepseekSearch} one_time=${body.oneTime} no_pace=${body.noPace} session_id=${body.sessionId.orEmpty()} " +
+                "pace=${body.paceMinSeconds ?: 0}–${body.paceMaxSeconds ?: 0}s " +
                 "new_tab=${body.newTab} end_session=${body.endSession} prompt_chars=${body.prompt.length} " +
                 "client=${client.clientIp} remote=${client.remoteIp} cf=${call.request.headers["CF-Connecting-IP"].orEmpty()} " +
                 "xff=${call.request.headers["X-Forwarded-For"].orEmpty()} ray=${call.request.headers["CF-Ray"].orEmpty()} " +
@@ -263,6 +277,8 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
             .setDeepseekSearch(body.deepseekSearch)
             .setOneTime(body.oneTime)
             .setNoPace(body.noPace)
+            .setPaceMinSeconds(body.paceMinSeconds ?: 0.0)
+            .setPaceMaxSeconds(body.paceMaxSeconds ?: 0.0)
             .setSessionId(body.sessionId.orEmpty())
             .setNewTab(body.newTab)
             .setEndSession(body.endSession)
