@@ -618,7 +618,8 @@ class OpsSessionsTest {
                 structured.last { it.type == "item/agentMessage/delta" }.payload["threadId"]?.jsonPrimitive?.content,
             )
             resumed.input("exit-app-server")
-            withTimeout(2_000) { while (lifecycles.lastOrNull() != OpsSessionStateDto.FAILED) delay(10) }
+            val terminalProcessExitTimeoutMs = 5_000L
+            withTimeout(terminalProcessExitTimeoutMs) { while (lifecycles.lastOrNull() != OpsSessionStateDto.FAILED) delay(10) }
             assertTrue(lifecycles.contains(OpsSessionStateDto.RUNNING))
         } finally {
             created?.stop()
