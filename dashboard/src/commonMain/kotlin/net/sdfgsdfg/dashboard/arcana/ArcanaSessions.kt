@@ -148,6 +148,8 @@ private enum class XAgent(val label: String, val wire: OpsAgentDto) {
 private enum class XArcanaModel(val label: String, val compact: String, val wire: String) {
     DEEPSEEK_EXPERT("DeepSeek Expert", "Expert", "deepseek-expert"),
     DEEPSEEK_INSTANT("DeepSeek Instant", "Instant", "deepseek-instant"),
+    GPT_56_THINKING_STANDARD("GPT 5.6 Thinking", "5.6 Think", "5.6-thinking-standard"),
+    GPT_56_THINKING_HEAVY("GPT 5.6 Thinking Heavy", "5.6 Heavy", "5.6-thinking-heavy"),
     GPT_56_PRO("GPT 5.6 Pro", "5.6 Pro", "5.6-pro");
 
     companion object {

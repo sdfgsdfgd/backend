@@ -452,7 +452,13 @@ internal interface OpsAgentAdapter {
 
 private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAdapter {
     private val json = Json { ignoreUnknownKeys = true }
-    private val models = setOf("5.6-pro", "deepseek-expert", "deepseek-instant")
+    private val models = setOf(
+        "5.6-pro",
+        "5.6-thinking-standard",
+        "5.6-thinking-heavy",
+        "deepseek-expert",
+        "deepseek-instant",
+    )
     private val home = File(System.getenv("ARCANA_HOME") ?: "${System.getProperty("user.home")}/Desktop/py/arcana")
     private val python get() = File(home, ".venv/bin/python").takeIf(File::canExecute)?.absolutePath ?: "python3"
     private val entry get() = File(home, "_0.py")
