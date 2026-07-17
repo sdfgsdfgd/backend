@@ -76,7 +76,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -89,16 +88,8 @@ import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** Direct visual port of frontend-compose's lantern input; continuous motion stays draw-scoped. */
-private data class XCaretSpec(
-    val color: Color = Color(0xAFB8FA10),
-    val glowSoft: Color = Color(0x808A6534),
-    val glowStrong: Color = Color(0xB80C0C05),
-    val glowHighlight: Color = Color(0x4DF5B504),
-    val widthDp: Float = 2f,
-    val blinkMillis: Int = 2_150,
-)
-
+private val xIslandShape = RoundedCornerShape(38)
+private val xPillShape = RoundedCornerShape(50)
 private val xWorkingCorona = Color(0xFF46125F)
 
 @Composable
@@ -177,8 +168,13 @@ internal fun XLuxuryInput(
         )
         val islandY = bleed + (groupHeight - islandSize.height) / 2
         val bubbleY = bleed + (groupHeight - bubbleSize.height) / 2
-        val shape = RoundedCornerShape(50)
-        val actionShape = if (actionLabel == null) CircleShape else shape
+        val islandGeometry = Modifier
+            .offset(bleed, islandY)
+            .size(islandSize)
+        val actionGeometry = Modifier
+            .offset(bleed + islandSize.width + splitOffset, bubbleY)
+            .size(bubbleSize)
+        val actionShape = if (actionLabel == null) CircleShape else xPillShape
         val workingBreath = if (working) {
             rememberInfiniteTransition(label = "x-working-breath").animateFloat(
                 initialValue = 0f,
@@ -200,9 +196,7 @@ internal fun XLuxuryInput(
         ) {
             workingBreath?.let { breath ->
                 Box(
-                    Modifier
-                        .offset(bleed, islandY)
-                        .size(islandSize)
+                    islandGeometry
                         .drawBehind {
                             val diffusion = breath.value
                             val radiusY = size.height / 2f + lerp(24f, 46f, diffusion).dp.toPx()
@@ -227,22 +221,17 @@ internal fun XLuxuryInput(
                 )
             }
             Box(
-                Modifier
-                    .offset(bleed, islandY)
-                    .size(islandSize)
-                    .background(Color.Black, shape),
+                islandGeometry
+                    .background(Color.Black, xIslandShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.055f), xIslandShape),
             )
             Box(
-                Modifier
-                    .offset(bleed + islandSize.width + splitOffset, bubbleY)
-                    .size(bubbleSize)
+                actionGeometry
                     .background(Color.Black, actionShape)
                     .blur(4.dp, BlurredEdgeTreatment.Unbounded),
             )
             Box(
-                Modifier
-                    .offset(bleed + islandSize.width + splitOffset, bubbleY)
-                    .size(bubbleSize)
+                actionGeometry
                     .background((actionColor.takeIf { actionLabel != null } ?: Color.Black).copy(alpha = if (enabled) 0.93f else 0.4f), actionShape)
                     .border(1.dp, (actionColor.takeIf { actionLabel != null } ?: Color.White).copy(alpha = if (enabled) 0.42f else 0.08f), actionShape)
                     .clickable(enabled = enabled, onClick = onSend),
@@ -263,8 +252,7 @@ internal fun XLuxuryInput(
                 placeholder = placeholder,
                 focusRequester = focusRequester,
                 textStyle = textStyle,
-                fieldOffset = DpOffset(bleed, islandY),
-                fieldSize = islandSize,
+                fieldModifier = islandGeometry,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -287,6 +275,16 @@ private fun XSendGlyph(tint: Color) {
     }
 }
 
+/** Direct visual port of frontend-compose's lantern caret; continuous motion stays draw-scoped. */
+private data class XCaretSpec(
+    val color: Color = Color(0xAFB8FA10),
+    val glowSoft: Color = Color(0x808A6534),
+    val glowStrong: Color = Color(0xB80C0C05),
+    val glowHighlight: Color = Color(0x4DF5B504),
+    val widthDp: Float = 2f,
+    val blinkMillis: Int = 2_150,
+)
+
 @Composable
 private fun XLuxuryCaretField(
     value: TextFieldValue,
@@ -294,8 +292,7 @@ private fun XLuxuryCaretField(
     placeholder: String,
     focusRequester: FocusRequester,
     textStyle: TextStyle,
-    fieldOffset: DpOffset,
-    fieldSize: DpSize,
+    fieldModifier: Modifier,
     modifier: Modifier,
     caretSpec: XCaretSpec = XCaretSpec(),
 ) {
@@ -387,11 +384,7 @@ private fun XLuxuryCaretField(
             .onGloballyPositioned { containerOrigin = it.positionInRoot() },
     ) {
         Box(
-            Modifier
-                .offset(fieldOffset.x, fieldOffset.y)
-                .size(fieldSize)
-                .background(Color(0x33000000), RoundedCornerShape(10.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.055f), RoundedCornerShape(50)),
+            fieldModifier,
         ) {
             BasicTextField(
                 value = value,
@@ -571,7 +564,6 @@ private fun XLuxuryCaretField(
             }
         }
 
-        val innerShape = RoundedCornerShape(50)
         Box(
             Modifier
                 .offset {
@@ -586,9 +578,9 @@ private fun XLuxuryCaretField(
                     val placeable = measurable.measure(Constraints.fixed(width, height))
                     layout(width, height) { placeable.place(0, 0) }
                 }
-                .clip(innerShape)
+                .clip(xPillShape)
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .innerShadow(innerShape) {
+                .innerShadow(xPillShape) {
                     val focus = focusFade.value
                     val envelope = ((if (focus > 0.01f) rawBlink.value else 1f) * focus).coerceIn(0f, 1f)
                     val progress = FastOutSlowInEasing.transform(
@@ -601,7 +593,7 @@ private fun XLuxuryCaretField(
                     blendMode = BlendMode.Multiply
                     offset = Offset.Zero
                 }
-                .innerShadow(innerShape) {
+                .innerShadow(xPillShape) {
                     val focus = focusFade.value
                     val envelope = ((if (focus > 0.01f) rawBlink.value else 1f) * focus).coerceIn(0f, 1f)
                     val progress = FastOutSlowInEasing.transform(
@@ -614,7 +606,7 @@ private fun XLuxuryCaretField(
                     blendMode = BlendMode.Multiply
                     offset = Offset.Zero
                 }
-                .innerShadow(innerShape) {
+                .innerShadow(xPillShape) {
                     val focus = focusFade.value
                     val progress = FastOutSlowInEasing.transform(
                         if (focus > 0.01f) rawGlow.value.coerceIn(0f, 1f) else 0f,
