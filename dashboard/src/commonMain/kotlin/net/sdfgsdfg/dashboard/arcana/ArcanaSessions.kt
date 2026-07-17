@@ -4,7 +4,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -21,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,6 +83,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -97,6 +101,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
@@ -206,6 +211,7 @@ private const val ARCANA_ACTIVITY_SCHEMA = "arcana.activity.v1"
 private const val X_REPOSITORY_PREF = "ops.x.repositoryId"
 private const val X_AGENT_PREF = "ops.x.agent"
 private const val X_NATIVE_SESSION_PREF = "ops.x.nativeSessionId"
+private const val X_STREAM_BLOCK_CHARS = 4_096
 private val xCodexVisibleItems = setOf(
     "userMessage", "agentMessage", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "plan",
     "webSearch", "imageView", "imageGeneration", "collabAgentToolCall", "subAgentActivity", "enteredReviewMode",
@@ -214,9 +220,13 @@ private val xCodexVisibleItems = setOf(
 internal data class XRenderedEvent(
     val event: OpsSessionEventDto,
     val text: AnnotatedString? = null,
+    val rawText: AnnotatedString? = text,
     val latestArcanaResponse: Boolean = false,
     val key: Any = event.xTransportKey(),
     val revision: Any = event.xTransportKey(),
+    val streamContinuation: Boolean = false,
+    val trimLeadingStreamNewlines: Boolean = false,
+    val trimTrailingStreamNewlines: Boolean = false,
 )
 private data class XAnsiState(var color: Color? = null, var bold: Boolean = false, var dim: Boolean = false, var carry: String = "")
 
@@ -1737,6 +1747,7 @@ private fun rememberXTranscriptProjection(ledger: XSessionLedger, runtimeId: Str
     return produceState(XTranscriptProjection.EMPTY, ledger, runtimeId) {
         var arcanaSource = emptyList<OpsSessionEventDto>()
         var arcanaProjection: XArcanaProjection? = null
+        var runtimeSource = emptyList<OpsSessionEventDto>()
         snapshotFlow { ledger.presentationRevision(runtimeId) }
             .conflate()
             .collect {
@@ -1756,7 +1767,15 @@ private fun rememberXTranscriptProjection(ledger: XSessionLedger, runtimeId: Str
                         ?: relevant.xArcanaProjection()
                     arcanaSource = relevant
                     arcanaProjection = arcana
-                    val projected = runtimeEvents.xTranscriptProjection(arcana)
+                    val appendedRuntime = runtimeEvents.takeIf {
+                        it.size >= runtimeSource.size && it.subList(0, runtimeSource.size) == runtimeSource
+                    }?.subList(runtimeSource.size, runtimeEvents.size)
+                    runtimeSource = runtimeEvents
+                    val incremental = appendedRuntime
+                        ?.takeIf { tail -> tail.isNotEmpty() && tail.all(OpsSessionEventDto::xPlainArcanaStdout) }
+                        ?.let { tail -> previous.appendArcanaStdout(tail, arcana) }
+                    val projected = incremental ?: runtimeEvents.xTranscriptProjection(arcana)
+                    if (incremental != null) return@withContext projected
                     val previousByKey = previous.events.associateBy(XRenderedEvent::key)
                     val sharedEvents = projected.events.map { rendered ->
                         previousByKey[rendered.key]?.takeIf { it == rendered } ?: rendered
@@ -1903,6 +1922,10 @@ private fun XSessionCard(
 @Composable
 private fun XTranscript(repo: XRepoPreview?, agent: XAgent, events: List<XRenderedEvent>) {
     val listState = rememberLazyListState()
+    val tailLandingPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val tailSpring = remember {
+        spring<Float>(stiffness = Spring.StiffnessLow, dampingRatio = 0.15f)
+    }
     var follow by remember { mutableStateOf(true) }
     var autoScrolling by remember { mutableStateOf(false) }
     var followedCount by remember { mutableStateOf(0) }
@@ -1927,18 +1950,41 @@ private fun XTranscript(repo: XRepoPreview?, agent: XAgent, events: List<XRender
     }
     LaunchedEffect(listState) {
         snapshotFlow { currentTail.value to currentFollow.value }
-            .conflate()
-            .collect { (_, shouldFollow) ->
-                if (!shouldFollow) return@collect
+            .collectLatest { (_, shouldFollow) ->
+                if (!shouldFollow) return@collectLatest
                 delay(90)
                 val (count, revision) = currentTail.value
-                if (count == 0 || !currentFollow.value) return@collect
-                if (followedCount == count && followedRevision == revision && !listState.canScrollForward) return@collect
-                autoScrolling = true
-                try {
-                    listState.animateScrollToItem(count - 1)
+                if (count == 0 || !currentFollow.value) return@collectLatest
+                if (followedCount == count && followedRevision == revision && !listState.canScrollForward) return@collectLatest
+                if (!listState.canScrollForward) {
                     followedCount = count
                     followedRevision = revision
+                    return@collectLatest
+                }
+                autoScrolling = true
+                try {
+                    if (listState.layoutInfo.visibleItemsInfo.none { it.index == count - 1 }) {
+                        listState.animateScrollToItem(count - 1)
+                    }
+                    fun remainingTailDistance() = listState.layoutInfo.visibleItemsInfo
+                        .firstOrNull { it.index == count - 1 }
+                        ?.let { tail -> (tail.offset + tail.size - listState.layoutInfo.viewportEndOffset).toFloat() }
+                    if (currentFollow.value && listState.canScrollForward) {
+                        val layout = listState.layoutInfo
+                        if (layout.viewportEndOffset > layout.viewportStartOffset) {
+                            remainingTailDistance()?.takeIf { it > tailLandingPx }?.let { distance ->
+                                listState.scrollBy(distance - tailLandingPx)
+                            }
+                            remainingTailDistance()?.takeIf { it > 0.5f }?.let { distance ->
+                                listState.animateScrollBy(distance.coerceAtMost(tailLandingPx), tailSpring)
+                            }
+                        }
+                    }
+                    if (!listState.canScrollForward) {
+                        val (settledCount, settledRevision) = currentTail.value
+                        followedCount = settledCount
+                        followedRevision = settledRevision
+                    }
                 } finally {
                     autoScrolling = false
                 }
@@ -2001,6 +2047,10 @@ private fun XSessionEvent(rendered: XRenderedEvent, modifier: Modifier = Modifie
     val event = rendered.event
     val structured = event.structured
     if (structured != null) {
+        if (structured.type == "phase") {
+            XPhaseBeacon(event, modifier)
+            return
+        }
         if (structured.type in setOf("input_request", "input_resolved", "input_timeout", "session_state")) {
             XProtocolEvent(event, modifier)
             return
@@ -2043,7 +2093,7 @@ private fun XSessionEvent(rendered: XRenderedEvent, modifier: Modifier = Modifie
             },
         )
     Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-        Text(label, color = color, fontSize = 8.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp))
+        Text(if (rendered.streamContinuation) "" else label, color = color, fontSize = 8.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp))
         Text(
             rendered.text ?: AnnotatedString(""),
             fontFamily = FontFamily.Monospace,
@@ -2053,6 +2103,44 @@ private fun XSessionEvent(rendered: XRenderedEvent, modifier: Modifier = Modifie
         )
         event.sequence?.let { Text("#$it", color = muted.copy(alpha = 0.45f), fontSize = 8.sp) }
             ?: if (replayGap) Text("gap", color = color.copy(alpha = 0.7f), fontSize = 8.sp) else Unit
+    }
+}
+
+@Composable
+private fun XPhaseBeacon(event: OpsSessionEventDto, modifier: Modifier = Modifier) {
+    val structured = event.structured ?: return
+    val (phase, title) = when (structured.phase.lowercase()) {
+        "phase1" -> "PHASE 01" to "DISCOVERY"
+        "phase2" -> "PHASE 02" to "COMPREHENSION"
+        "3_x" -> "PHASE 03" to "ARCANA MULTIROUND"
+        else -> structured.phase.uppercase() to "TRANSITION"
+    }
+    Column(
+        modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                phase,
+                color = amber.copy(alpha = 0.96f),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 15.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.75.sp,
+            )
+            Text(
+                title,
+                color = ritualPurpleGlow.copy(alpha = 0.82f),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.7.sp,
+            )
+        }
+        HorizontalDivider(
+            color = ritualPurpleGlow.copy(alpha = 0.3f),
+        )
     }
 }
 
@@ -2568,12 +2656,6 @@ private fun String.xTerminalSource(trim: Boolean = true): String {
     return if (trim) normalized.trim('\n') else normalized
 }
 
-private fun AnnotatedString.xTrimNewlines(): AnnotatedString {
-    val start = text.indexOfFirst { it != '\n' }.takeIf { it >= 0 } ?: return AnnotatedString("")
-    val end = text.indexOfLast { it != '\n' } + 1
-    return subSequence(start, end)
-}
-
 private fun List<OpsSessionEventDto>.xArcanaProjection(): XArcanaProjection {
     val owners = mutableMapOf<String, XArcanaOwners>()
     forEach { event ->
@@ -2745,6 +2827,117 @@ private fun OpsSessionEventDto.xAffectsArcanaProjection(): Boolean {
     }
 }
 
+private val OpsSessionEventDto.xPlainArcanaStdout get() =
+    agent == OpsAgentDto.ARCANA && structured == null && channel == OpsSessionChannelDto.STDOUT && '\r' !in text.orEmpty()
+
+private val XRenderedEvent.xArcanaStdout get() =
+    event.agent == OpsAgentDto.ARCANA && event.structured == null && event.channel == OpsSessionChannelDto.STDOUT
+
+private val XRenderedEvent.xStderrStream get() =
+    event.structured == null && event.kind == OpsSessionEventKindDto.STREAM && event.channel == OpsSessionChannelDto.STDERR
+
+private fun AnnotatedString.xTrimNewlines(trimLeading: Boolean = true, trimTrailing: Boolean = true): AnnotatedString {
+    val start = if (trimLeading) text.indexOfFirst { it != '\n' }.takeIf { it >= 0 } ?: return AnnotatedString("") else 0
+    val end = if (trimTrailing) text.indexOfLast { it != '\n' } + 1 else length
+    return subSequence(start, end.coerceAtLeast(start))
+}
+
+private fun XRenderedEvent.withStreamText(
+    event: OpsSessionEventDto = this.event,
+    rawText: AnnotatedString,
+    trimTrailing: Boolean = trimTrailingStreamNewlines,
+) = copy(
+    event = event,
+    text = rawText.xTrimNewlines(trimLeadingStreamNewlines, trimTrailing),
+    rawText = rawText,
+    revision = event.xTransportKey(),
+    trimTrailingStreamNewlines = trimTrailing,
+)
+
+private fun MutableList<XRenderedEvent>.appendArcanaStdout(event: OpsSessionEventDto, text: AnnotatedString) {
+    var offset = 0
+    while (offset < text.length) {
+        val previous = lastOrNull()
+        val continues = previous?.xArcanaStdout == true && previous.event.runtimeId == event.runtimeId
+        val previousRaw = previous?.rawText
+        if (continues && previousRaw != null && previousRaw.length < X_STREAM_BLOCK_CHARS) {
+            val count = minOf(X_STREAM_BLOCK_CHARS - previousRaw.length, text.length - offset)
+            val raw = AnnotatedString.Builder().apply {
+                append(previousRaw)
+                append(text.subSequence(offset, offset + count))
+            }.toAnnotatedString()
+            this[lastIndex] = previous.withStreamText(event, raw)
+            offset += count
+            continue
+        }
+        if (continues && previousRaw != null) {
+            this[lastIndex] = previous.withStreamText(rawText = previousRaw, trimTrailing = false)
+        }
+        val count = minOf(X_STREAM_BLOCK_CHARS, text.length - offset)
+        val raw = text.subSequence(offset, offset + count)
+        this += XRenderedEvent(
+            event = event,
+            text = raw.xTrimNewlines(trimLeading = !continues, trimTrailing = true),
+            rawText = raw,
+            key = if (offset == 0) event.xTransportKey() else "${event.xTransportKey()}:$offset",
+            revision = event.xTransportKey(),
+            streamContinuation = continues,
+            trimLeadingStreamNewlines = !continues,
+            trimTrailingStreamNewlines = true,
+        )
+        offset += count
+    }
+}
+
+private fun MutableList<XRenderedEvent>.appendStderrStream(event: OpsSessionEventDto, text: AnnotatedString) {
+    val previous = lastOrNull()
+    if (previous?.xStderrStream == true &&
+        previous.event.runtimeId == event.runtimeId &&
+        previous.event.agent == event.agent &&
+        previous.event.replay == event.replay
+    ) {
+        val raw = AnnotatedString.Builder().apply {
+            append(previous.rawText ?: previous.text ?: AnnotatedString(""))
+            append(text)
+        }.toAnnotatedString()
+        this[lastIndex] = previous.withStreamText(event, raw)
+    } else {
+        this += XRenderedEvent(event, text)
+    }
+}
+
+private fun MutableList<XRenderedEvent>.appendLegacyArcanaStdout(event: OpsSessionEventDto, text: AnnotatedString) {
+    val previous = lastOrNull()
+    if (previous?.xArcanaStdout == true && previous.event.runtimeId == event.runtimeId) {
+        val raw = AnnotatedString.Builder().apply {
+            append(previous.rawText ?: previous.text ?: AnnotatedString(""))
+            append(text)
+        }.toAnnotatedString()
+        this[lastIndex] = previous.withStreamText(event, raw)
+    } else {
+        this += XRenderedEvent(
+            event = event,
+            text = text.xTrimNewlines(),
+            rawText = text,
+            trimLeadingStreamNewlines = true,
+            trimTrailingStreamNewlines = true,
+        )
+    }
+}
+
+private fun XTranscriptProjection.appendArcanaStdout(
+    events: List<OpsSessionEventDto>,
+    arcana: XArcanaProjection,
+): XTranscriptProjection {
+    val rendered = this.events.toMutableList()
+    events.forEach { event ->
+        arcana.stdout[event.xTransportKey()]?.takeIf { it.text.isNotEmpty() }?.let { text ->
+            rendered.appendArcanaStdout(event, text)
+        }
+    }
+    return copy(events = rendered)
+}
+
 private fun List<OpsSessionEventDto>.xTranscriptProjection(
     arcana: XArcanaProjection = xArcanaProjection(),
 ): XTranscriptProjection {
@@ -2757,8 +2950,6 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
     val codexInputs = mutableMapOf<String, Int>()
     val codexDeltas = mutableMapOf<String, StringBuilder>()
     val codexDeltaRevisions = mutableMapOf<String, Any>()
-    val arcanaTextBuilders = mutableMapOf<Int, AnnotatedString.Builder>()
-    val arcanaTextEvents = mutableMapOf<Int, OpsSessionEventDto>()
     val failures = mutableSetOf<String>()
     var pendingCodexInput: String? = null
     val codexHasStructuredText = any { event ->
@@ -2838,6 +3029,9 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
                         )
                     }
                 }
+                "phase" -> if (structured.payload.field("state") != "completed") {
+                    rendered += XRenderedEvent(event)
+                }
                 else -> rendered += XRenderedEvent(event)
             }
             continue
@@ -2908,19 +3102,17 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
         val text = if (event.agent == OpsAgentDto.ARCANA && channel == OpsSessionChannelDto.STDOUT) {
             arcana.stdout[event.xTransportKey()] ?: AnnotatedString("")
         } else {
-            states.getOrPut(channel, ::XAnsiState).render(event.text.orEmpty().xTerminalSource(), event.replay)
+            states.getOrPut(channel, ::XAnsiState).render(
+                event.text.orEmpty().xTerminalSource(trim = channel != OpsSessionChannelDto.STDERR || event.kind != OpsSessionEventKindDto.STREAM),
+                event.replay,
+            )
         }
         if (text.text.isEmpty()) continue
-        val previous = rendered.lastOrNull()
-        if (event.agent == OpsAgentDto.ARCANA && channel == OpsSessionChannelDto.STDOUT &&
-            previous?.event?.agent == OpsAgentDto.ARCANA && previous.event.channel == channel &&
-            previous.event.runtimeId == event.runtimeId && previous.event.structured == null
-        ) {
-            val index = rendered.lastIndex
-            arcanaTextBuilders.getOrPut(index) {
-                AnnotatedString.Builder().apply { previous.text?.let { append(it) } }
-            }.append(text)
-            arcanaTextEvents[index] = event
+        if (event.agent == OpsAgentDto.ARCANA && channel == OpsSessionChannelDto.STDOUT) {
+            if (event.xPlainArcanaStdout) rendered.appendArcanaStdout(event, text)
+            else rendered.appendLegacyArcanaStdout(event, text)
+        } else if (channel == OpsSessionChannelDto.STDERR && event.kind == OpsSessionEventKindDto.STREAM) {
+            rendered.appendStderrStream(event, text)
         } else {
             rendered += XRenderedEvent(event, text)
         }
@@ -2934,18 +3126,11 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
             revision = revision,
         )
     }
-    arcanaTextEvents.forEach { (index, event) ->
-        rendered[index] = rendered[index].copy(
-            event = event,
-            text = arcanaTextBuilders.getValue(index).toAnnotatedString(),
-            revision = event.xTransportKey(),
-        )
-    }
     val latestArcanaResponse = rendered.indexOfLast { it.event.agent == OpsAgentDto.ARCANA && it.event.structured?.type == "agent_response" }
     return XTranscriptProjection(
         events = rendered.mapIndexed { index, event ->
             event.copy(
-                text = event.text?.xTrimNewlines(),
+                text = if (event.xArcanaStdout) event.text else event.text?.xTrimNewlines(),
                 latestArcanaResponse = index == latestArcanaResponse,
             )
         }.filterNot { it.text?.text?.isBlank() == true },

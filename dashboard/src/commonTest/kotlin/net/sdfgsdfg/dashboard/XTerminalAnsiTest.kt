@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class XTerminalAnsiTest {
     @Test
@@ -37,6 +38,41 @@ class XTerminalAnsiTest {
 
         assertEquals(first.xTransportKey(), rendered.key)
         assertEquals(second.xTransportKey(), rendered.revision)
+    }
+
+    @Test
+    fun boundsAPlainArcanaStreamWithoutChangingItsVisibleText() {
+        val first = event(1, "a".repeat(4_096), OpsAgentDto.ARCANA)
+        val second = event(2, "b".repeat(97), OpsAgentDto.ARCANA)
+
+        val rendered = listOf(first, second).xRenderedEvents()
+
+        assertEquals((first.text + second.text).orEmpty(), rendered.joinToString("") { it.text?.text.orEmpty() })
+        assertEquals(listOf(first.xTransportKey(), second.xTransportKey()), rendered.map(XRenderedEvent::key))
+        assertEquals(first.xTransportKey(), rendered.first().revision)
+        assertEquals(second.xTransportKey(), rendered.last().revision)
+        assertTrue(rendered.last().streamContinuation)
+    }
+
+    @Test
+    fun coalescesAdjacentStderrStreamsWithoutLosingTheirTransportRevision() {
+        val first = event(1, "Cloning into 'repo'...\n", channel = OpsSessionChannelDto.STDERR)
+        val second = event(2, "done.\n", channel = OpsSessionChannelDto.STDERR)
+
+        val rendered = listOf(first, second).xRenderedEvents().single()
+
+        assertEquals("Cloning into 'repo'...\ndone.", rendered.text?.text)
+        assertEquals(first.xTransportKey(), rendered.key)
+        assertEquals(second.xTransportKey(), rendered.revision)
+    }
+
+    @Test
+    fun keepsStderrBlocksSeparateAcrossAStreamBoundary() {
+        val first = event(1, "first\n", channel = OpsSessionChannelDto.STDERR)
+        val stdout = event(2, "middle\n")
+        val second = event(3, "last\n", channel = OpsSessionChannelDto.STDERR)
+
+        assertEquals(listOf("first", "middle", "last"), listOf(first, stdout, second).xRenderedEvents().map { it.text?.text })
     }
 
     @Test
@@ -189,12 +225,17 @@ class XTerminalAnsiTest {
         assertEquals(receipt, withTimeout(1_000) { pending.await() })
     }
 
-    private fun event(sequence: Long, text: String, agent: OpsAgentDto? = null) = OpsSessionEventDto(
+    private fun event(
+        sequence: Long,
+        text: String,
+        agent: OpsAgentDto? = null,
+        channel: OpsSessionChannelDto = OpsSessionChannelDto.STDOUT,
+    ) = OpsSessionEventDto(
         kind = OpsSessionEventKindDto.STREAM,
         runtimeId = "ritual",
         agent = agent,
         sequence = sequence,
-        channel = OpsSessionChannelDto.STDOUT,
+        channel = channel,
         text = text,
     )
 

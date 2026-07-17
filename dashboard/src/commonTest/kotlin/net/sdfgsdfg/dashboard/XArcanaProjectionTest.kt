@@ -127,6 +127,20 @@ class XArcanaProjectionTest {
         assertNull((active + state(5, "concluded").copy(state = OpsSessionStateDto.CONCLUDED)).xActiveArcanaActivity())
     }
 
+    @Test
+    fun phaseTransitionsRenderOneBeaconPerStageEntry() {
+        val rendered = listOf(
+            phase(1, "phase1", "started"),
+            phase(2, "phase1", "completed"),
+            phase(3, "phase2", "started"),
+            phase(4, "phase2", "completed"),
+            phase(5, "3_x", "started"),
+        ).xRenderedEvents()
+
+        assertEquals(listOf("phase1", "phase2", "3_x"), rendered.map { it.event.structured?.phase })
+        assertTrue(rendered.all { it.event.structured?.payload?.text("state") == "started" })
+    }
+
     private fun response(sequence: Long, command: JsonObject) = structured(
         sequence,
         "agent_response",
@@ -170,13 +184,28 @@ class XArcanaProjectionTest {
         schema = "arcana.activity.v1",
     )
 
-    private fun structured(sequence: Long, type: String, payload: JsonObject, round: Int? = null, schema: String = "3_x") = OpsSessionEventDto(
+    private fun phase(sequence: Long, phase: String, state: String) = structured(
+        sequence,
+        "phase",
+        buildJsonObject { put("state", JsonPrimitive(state)) },
+        schema = "arcana.phase.v1",
+        phase = phase,
+    )
+
+    private fun structured(
+        sequence: Long,
+        type: String,
+        payload: JsonObject,
+        round: Int? = null,
+        schema: String = "3_x",
+        phase: String = "3_x",
+    ) = OpsSessionEventDto(
         kind = OpsSessionEventKindDto.STRUCTURED,
         runtimeId = "runtime-1",
         agent = OpsAgentDto.ARCANA,
         sequence = sequence,
         channel = OpsSessionChannelDto.SYSTEM,
-        structured = OpsStructuredEventDto(type = type, phase = "3_x", schema = schema, round = round, payload = payload),
+        structured = OpsStructuredEventDto(type = type, phase = phase, schema = schema, round = round, payload = payload),
     )
 
     private fun command(name: String, vararg args: Pair<String, String>) = buildJsonObject {
