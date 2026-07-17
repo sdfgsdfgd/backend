@@ -5,6 +5,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
@@ -12,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class OpsWorkspaceTest {
     @Test
@@ -54,6 +56,25 @@ class OpsWorkspaceTest {
             assertEquals(first, repositoryCacheKey("viewer", "credential-one"))
             assertNotEquals(first, repositoryCacheKey("viewer", "credential-two"))
             assertFalse("credential-one" in first)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun leastRecentlyUsedRotationKeepsAReusedRepository() {
+        val root = createTempDirectory("ops-workspace").toFile()
+        try {
+            val repositories = RepositoryManager(root)
+            val stale = root.resolve("stale").apply(File::mkdirs)
+            val reused = root.resolve("reused").apply(File::mkdirs)
+            assertTrue(stale.setLastModified(1_000))
+            assertTrue(reused.setLastModified(2_000))
+
+            repositories.evictLeastRecentlyUsedRepository()
+
+            assertFalse(stale.exists())
+            assertTrue(reused.exists())
         } finally {
             root.deleteRecursively()
         }

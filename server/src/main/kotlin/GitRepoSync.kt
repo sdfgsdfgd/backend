@@ -23,7 +23,6 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.net.URI
 import java.nio.file.Files
-import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -31,7 +30,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 private const val REPO_BASE_DIR = "~/Desktop/server_repos"
-private const val MAX_REPOS = 10
+private const val MAX_STORED_REPOS = 20
+private const val MAX_CONCURRENT_GIT_OPS = 10
 private const val MAX_REPO_SIZE_GB = 10
 val activeGitOperations = ConcurrentHashMap<String, Job>()
 
@@ -187,14 +187,13 @@ class RepositoryManager(
     init { baseDir.mkdirs() }
 
     private val basePath = baseDir.toPath().toAbsolutePath().normalize()
-    private val recentRepos = mutableListOf<String>()
     private val repositoryLocks = ConcurrentHashMap<String, Mutex>()
 
     // single state mutex (never re-enter)
     private val repoMutex = Mutex()
 
-    // global op queue: at most MAX_REPOS git ops in-flight; others wait
-    private val opSemaphore = Semaphore(MAX_REPOS)
+    // Global Git-operation queue; storage retention is governed separately below.
+    private val opSemaphore = Semaphore(MAX_CONCURRENT_GIT_OPS)
 
     fun repositoryPath(owner: String, name: String): File {
         require(owner.isSafeRepoSegment() && name.isSafeRepoSegment()) { "Invalid GitHub repository path" }
@@ -260,7 +259,7 @@ class RepositoryManager(
             // Ensure capacity AND reserve the target directory under a single lock
             repoMutex.withLock {
                 val count = baseDir.listFiles()?.count { it.isDirectory } ?: 0
-                if (count >= MAX_REPOS) rotateOldestRepository()
+                if (count >= MAX_STORED_REPOS) evictLeastRecentlyUsedRepository()
                 if (!prepareRepoDirectory(owner, name)) throw Exception("Failed to prepare repository directory")
             }
 
@@ -299,11 +298,7 @@ class RepositoryManager(
                 monitorJob.cancel()
             }
 
-            // If successful, add to recents
-            repoMutex.withLock {
-                recentRepos.remove("${owner}_$name")
-                recentRepos.add("${owner}_$name")
-            }
+            touchRepository(repoDir)
         }
     }
 
@@ -323,10 +318,7 @@ class RepositoryManager(
             if (runGit(listOf("pull", "--ff-only"), accessToken, repoDir, 30.seconds.inWholeMilliseconds) != 0) {
                 error("Git pull failed")
             }
-            repoMutex.withLock {
-                recentRepos.remove("${owner}_$name")
-                recentRepos.add("${owner}_$name")
-            }
+            touchRepository(repoDir)
         }
     }
 
@@ -385,22 +377,14 @@ esac
     }
 
     private fun repoDirs(): List<File> = baseDir.listFiles()?.filter(File::isDirectory) ?: emptyList()
-    private fun birthMillis(p: File): Long? = runCatching {
-        Files.readAttributes(p.toPath(), BasicFileAttributes::class.java)
-            .creationTime().toMillis()
-    }.getOrNull()?.takeIf { it > 0L }
-
-    private fun addedAtMillis(dir: File): Long {
-        val git = File(dir, ".git")
-        // Prefer real birth time; fall back to .git birth; then .git mtime; then dir mtime.
-        return birthMillis(dir)
-            ?: birthMillis(git)
-            ?: (if (git.exists()) git.lastModified() else dir.lastModified())
+    private fun touchRepository(repoDir: File) {
+        if (!repoDir.setLastModified(System.currentTimeMillis())) {
+            log("Failed to mark repository as recently used: ${repoDir.absolutePath}", resolveLogDir())
+        }
     }
 
-    private fun rotateOldestRepository() {
-        val victim = repoDirs().minByOrNull { addedAtMillis(it) } ?: return
-        recentRepos.remove(victim.name)  // keep in‑mem index coherent if you still show it anywhere
+    internal fun evictLeastRecentlyUsedRepository() {
+        val victim = repoDirs().minByOrNull(File::lastModified) ?: return
         val deleted = victim.deleteRecursively()
 
         if (!deleted) {
