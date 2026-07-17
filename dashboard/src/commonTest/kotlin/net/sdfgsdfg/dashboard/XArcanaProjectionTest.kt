@@ -2,6 +2,7 @@ package net.sdfgsdfg.dashboard
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import net.sdfgsdfg.data.model.OpsAgentDto
 import net.sdfgsdfg.data.model.OpsSessionChannelDto
@@ -141,6 +142,52 @@ class XArcanaProjectionTest {
         assertTrue(rendered.all { it.event.structured?.payload?.text("state") == "started" })
     }
 
+    @Test
+    fun telemetryLifecyclesFoldByIdentityAndOnlyConsecutiveReceiptsShareARibbon() {
+        val rendered = listOf(
+            telemetry(1, "transport-a", "transport", "started", "debug", "model" to JsonPrimitive("provider-a")),
+            telemetry(2, "repair-b", "json_repair", "started", "debug", "schema" to JsonPrimitive("schema-b")),
+            telemetry(3, "repair-b", "json_repair", "completed", "normal", "stage" to JsonPrimitive("extract")),
+            telemetry(4, "transport-a", "transport", "completed", "normal", "response_bytes" to JsonPrimitive(731)),
+            stream(5, "semantic output"),
+            telemetry(6, "transport-c", "transport", "started", "normal", "model" to JsonPrimitive("provider-c")),
+        ).xRenderedEvents()
+
+        val ribbons = rendered.mapNotNull(XRenderedEvent::telemetry)
+        assertEquals(2, ribbons.size)
+        assertEquals(listOf("transport-a", "repair-b"), ribbons.first().map(XTelemetryReceipt::id))
+        assertTrue(ribbons.first().all { it.status == "completed" })
+        assertEquals(731, ribbons.first().first().responseBytes)
+        assertEquals("extract", ribbons.first().last().stage)
+        assertEquals(
+            listOf(XDiffLineKind.REMOVAL, XDiffLineKind.ADDITION),
+            ribbons.first().last().diffs.single().lines.map(XTelemetryDiffLine::kind),
+        )
+        assertEquals(listOf("transport-c"), ribbons.last().map(XTelemetryReceipt::id))
+        assertEquals("semantic output", rendered.single { it.telemetry == null }.text?.text)
+    }
+
+    @Test
+    fun commandLifecyclesFoldByIdentityAndKeepTerminalOnlyOutputLossless() {
+        val largeOutput = List(140) { index -> "result-$index-${"x".repeat(index % 17)}" }.joinToString("\n")
+        val rendered = listOf(
+            commandEvent(1, "command-a", "exec_sh", "started", "printf dynamic"),
+            commandEvent(2, "command-a", "exec_sh", "completed", "printf dynamic", largeOutput, exitCode = 0),
+            stream(3, "semantic output"),
+            commandEvent(4, "command-b", "custom_tool", "failed", output = "failure detail", exitCode = 7),
+        ).xRenderedEvents()
+
+        val commands = rendered.mapNotNull(XRenderedEvent::command)
+        assertEquals(listOf("command-a", "command-b"), commands.map(XCommandReceipt::id))
+        assertEquals(largeOutput, commands.first().output)
+        assertTrue(commands.first().output.length > 1_200)
+        assertEquals(0, commands.first().exitCode)
+        assertEquals("failed", commands.last().status)
+        assertEquals(7, commands.last().exitCode)
+        assertEquals("arcana-command:runtime-1:command-a", rendered.first().key)
+        assertEquals("semantic output", rendered.single { it.command == null }.text?.text)
+    }
+
     private fun response(sequence: Long, command: JsonObject) = structured(
         sequence,
         "agent_response",
@@ -190,6 +237,71 @@ class XArcanaProjectionTest {
         buildJsonObject { put("state", JsonPrimitive(state)) },
         schema = "arcana.phase.v1",
         phase = phase,
+    )
+
+    private fun telemetry(
+        sequence: Long,
+        id: String,
+        kind: String,
+        status: String,
+        visibility: String,
+        vararg fields: Pair<String, JsonPrimitive>,
+    ) = structured(
+        sequence,
+        "telemetry",
+        buildJsonObject {
+            put("id", JsonPrimitive(id))
+            put("kind", JsonPrimitive(kind))
+            put("status", JsonPrimitive(status))
+            put("severity", JsonPrimitive(if (status == "failed") "error" else "success"))
+            put("visibility", JsonPrimitive(visibility))
+            put("fields", buildJsonObject { fields.forEach { (name, value) -> put(name, value) } })
+            put("details", buildJsonArray { add(JsonPrimitive("$kind diagnostic")) })
+            put("diffs", buildJsonArray {
+                if (kind == "json_repair") add(buildJsonObject {
+                    put("label", JsonPrimitive("dynamic repair"))
+                    put("lines", buildJsonArray {
+                        add(buildJsonObject {
+                            put("kind", JsonPrimitive("removal"))
+                            put("text", JsonPrimitive("-before-$id"))
+                        })
+                        add(buildJsonObject {
+                            put("kind", JsonPrimitive("addition"))
+                            put("text", JsonPrimitive("+after-$id"))
+                        })
+                    })
+                })
+            })
+        },
+        schema = "arcana.telemetry.v1",
+        phase = if (kind == "transport") "rpc" else "json",
+    )
+
+    private fun commandEvent(
+        sequence: Long,
+        id: String,
+        name: String,
+        status: String,
+        invocation: String = "",
+        output: String = "",
+        exitCode: Int? = null,
+    ) = structured(
+        sequence,
+        "command",
+        buildJsonObject {
+            put("id", JsonPrimitive(id))
+            put("name", JsonPrimitive(name))
+            put("status", JsonPrimitive(status))
+            put("invocation", JsonPrimitive(invocation))
+            put("output", JsonPrimitive(output))
+            put("output_chars", JsonPrimitive(output.length))
+            put("output_lines", JsonPrimitive(output.lineSequence().count()))
+            put("stderr_lines", JsonPrimitive(0))
+            exitCode?.let { put("exit_code", JsonPrimitive(it)) }
+            put("truncated", JsonPrimitive(false))
+        },
+        schema = "arcana.command.v1",
+        phase = "command",
     )
 
     private fun structured(

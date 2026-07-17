@@ -6,6 +6,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -271,15 +272,13 @@ fun DashboardApp(
                         if (xSelected) XBackdrop() else OpsWallpaper()
                     }
                     val listState = rememberLazyListState()
-                    LaunchedEffect(selectedTab, listState) {
-                        if (selectedTab == DashboardTab.Arcana) listState.scrollToItem(0)
-                    }
                     //region CMP-10297 scroll workaround
                     // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
                     // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
                     // precision-trackpad fling deltas internally.
                     // https://youtrack.jetbrains.com/issue/CMP-10297
-                    LaunchedEffect(externalScrollDeltas, listState) {
+                    LaunchedEffect(externalScrollDeltas, listState, selectedTab) {
+                        if (selectedTab == DashboardTab.Arcana) return@LaunchedEffect
                         val deltas = externalScrollDeltas ?: return@LaunchedEffect
                         while (true) {
                             var pending = deltas.receiveCatching().getOrNull() ?: break
@@ -293,15 +292,11 @@ fun DashboardApp(
                     //endregion
                     val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
                     val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
-                    LazyColumn(
-                        state = listState,
-                        userScrollEnabled = selectedTab != DashboardTab.Arcana,
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        contentPadding = PaddingValues(bottom = pageBottomGutter),
-                    ) {
-                        item {
+                    if (selectedTab == DashboardTab.Arcana) {
+                        Column(
+                            Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
                             Header(
                                 selectedTab = selectedTab,
                                 onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
@@ -312,60 +307,83 @@ fun DashboardApp(
                             if (loadState is OpsLoadState.Loading) {
                                 TopLoadTrace()
                             }
-                        }
-                        item(key = "tab-content-top") {
+                            Spacer(Modifier.height(14.dp))
+                            ArcanaSessionsTab(
+                                windowKeys = windowKeys,
+                                freshXSignal = freshXSignal,
+                                viewer = viewer,
+                                socketState = socketState,
+                                workspaceEvent = workspaceEvent,
+                                sessionLedger = sessionLedger,
+                                sendWorkspaceCommand = { command ->
+                                    socketConnection?.send(
+                                        OpsSocketMessageDto("workspace_command", workspaceCommand = command),
+                                    ) == true
+                                },
+                                sendSessionCommand = { command: OpsSessionCommandDto ->
+                                    socketConnection?.send(
+                                        OpsSocketMessageDto("session_command", sessionCommand = command),
+                                    ) == true
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
                             Spacer(Modifier.height(14.dp))
                         }
-                        item(key = "tab-content") {
-                            Crossfade(
-                                targetState = selectedTab,
-                                modifier = Modifier.fillMaxWidth(),
-                                label = "dashboard-tab-crossfade",
-                            ) { tab ->
-                                when (tab) {
-                                    DashboardTab.Home -> HomeTab(loadState, pageWidth)
-                                    DashboardTab.Ci -> CiTab(loadState, pageWidth)
-                                    DashboardTab.Issues -> Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp),
-                                    ) {
-                                        Issues(
-                                            loadState = loadState,
-                                            pageWidth = pageWidth,
-                                            pageHeight = pageHeight,
-                                            canWriteIssues = viewer.issueWrite,
-                                            onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
-                                            onEditorActiveChanged = { issueEditorActive = it },
-                                        )
-                                    }
-                                    DashboardTab.Arcana -> ArcanaSessionsTab(
-                                        windowKeys = windowKeys,
-                                        freshXSignal = freshXSignal,
-                                        viewer = viewer,
-                                        socketState = socketState,
-                                        pageHeight = pageHeight,
-                                        workspaceEvent = workspaceEvent,
-                                        sessionLedger = sessionLedger,
-                                        sendWorkspaceCommand = { command ->
-                                            socketConnection?.send(
-                                                OpsSocketMessageDto("workspace_command", workspaceCommand = command),
-                                            ) == true
-                                        },
-                                        sendSessionCommand = { command: OpsSessionCommandDto ->
-                                            socketConnection?.send(
-                                                OpsSocketMessageDto("session_command", sessionCommand = command),
-                                            ) == true
-                                        },
-                                    )
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            contentPadding = PaddingValues(bottom = pageBottomGutter),
+                        ) {
+                            item {
+                                Header(
+                                    selectedTab = selectedTab,
+                                    onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
+                                    socketState = socketState,
+                                    viewer = viewer,
+                                    onViewerChanged = ::refreshViewer,
+                                )
+                                if (loadState is OpsLoadState.Loading) {
+                                    TopLoadTrace()
                                 }
                             }
-                        }
-                        if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
-                            ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
-                        }
-                        item(key = "tab-content-bottom") {
-                            Spacer(Modifier.height(14.dp))
+                            item(key = "tab-content-top") {
+                                Spacer(Modifier.height(14.dp))
+                            }
+                            item(key = "tab-content") {
+                                Crossfade(
+                                    targetState = selectedTab,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = "dashboard-tab-crossfade",
+                                ) { tab ->
+                                    when (tab) {
+                                        DashboardTab.Home -> HomeTab(loadState, pageWidth)
+                                        DashboardTab.Ci -> CiTab(loadState, pageWidth)
+                                        DashboardTab.Issues -> Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp),
+                                        ) {
+                                            Issues(
+                                                loadState = loadState,
+                                                pageWidth = pageWidth,
+                                                pageHeight = pageHeight,
+                                                canWriteIssues = viewer.issueWrite,
+                                                onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
+                                                onEditorActiveChanged = { issueEditorActive = it },
+                                            )
+                                        }
+                                        DashboardTab.Arcana -> Unit
+                                    }
+                                }
+                            }
+                            if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
+                                ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
+                            }
+                            item(key = "tab-content-bottom") {
+                                Spacer(Modifier.height(14.dp))
+                            }
                         }
                     }
                 }

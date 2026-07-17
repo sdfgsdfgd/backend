@@ -53,6 +53,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.Stable
@@ -90,7 +91,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,7 +116,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_SESSIONS_RUN
@@ -150,7 +149,7 @@ private enum class XAgent(val label: String, val wire: OpsAgentDto) {
     CODEX("Codex", OpsAgentDto.CODEX),
 }
 
-private enum class XArcanaModel(val label: String, val compact: String, val wire: String) {
+internal enum class XArcanaModel(val label: String, val compact: String, val wire: String) {
     DEEPSEEK_EXPERT("DeepSeek Expert", "Expert", "deepseek-expert"),
     DEEPSEEK_INSTANT("DeepSeek Instant", "Instant", "deepseek-instant"),
     GPT_56_THINKING_STANDARD("GPT 5.6 Thinking", "5.6 Think", "5.6-thinking-standard"),
@@ -172,6 +171,7 @@ private data class XArcanaLaunch(
     val paceMaxSeconds: Double?,
     val auto: Boolean,
     val indexSync: Boolean,
+    val debugTelemetry: Boolean,
     val mode: OpsArcanaModeDto,
 )
 
@@ -206,17 +206,20 @@ private data class XRepoPreview(
 
 private data class XInputRequestUi(val kind: String, val prompt: String, val allowEmpty: Boolean)
 private data class XInputUi(val placeholder: String, val action: String? = null, val actionColor: Color = Color.Transparent, val enabled: Boolean = true)
+@Immutable
 internal data class XArcanaActivity(val id: String, val label: String)
 private const val ARCANA_ACTIVITY_SCHEMA = "arcana.activity.v1"
 private const val X_REPOSITORY_PREF = "ops.x.repositoryId"
 private const val X_AGENT_PREF = "ops.x.agent"
 private const val X_NATIVE_SESSION_PREF = "ops.x.nativeSessionId"
-private const val X_STREAM_BLOCK_CHARS = 4_096
+private const val X_ARCANA_DEBUG_TELEMETRY_PREF = "ops.x.arcana.debugTelemetry"
+private const val X_COMMAND_OUTPUT_EXPANDED_PREF = "ops.x.commandOutputExpanded"
 private val xCodexVisibleItems = setOf(
     "userMessage", "agentMessage", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "plan",
     "webSearch", "imageView", "imageGeneration", "collabAgentToolCall", "subAgentActivity", "enteredReviewMode",
     "exitedReviewMode", "contextCompaction",
 )
+@Immutable
 internal data class XRenderedEvent(
     val event: OpsSessionEventDto,
     val text: AnnotatedString? = null,
@@ -227,6 +230,8 @@ internal data class XRenderedEvent(
     val streamContinuation: Boolean = false,
     val trimLeadingStreamNewlines: Boolean = false,
     val trimTrailingStreamNewlines: Boolean = false,
+    val telemetry: List<XTelemetryReceipt>? = null,
+    val command: XCommandReceipt? = null,
 )
 private data class XAnsiState(var color: Color? = null, var bold: Boolean = false, var dim: Boolean = false, var carry: String = "")
 
@@ -397,11 +402,11 @@ internal fun ArcanaSessionsTab(
     freshXSignal: Int,
     viewer: OpsViewerDto,
     socketState: OpsSocketState,
-    pageHeight: Dp,
     workspaceEvent: OpsWorkspaceEventDto?,
     sessionLedger: XSessionLedger,
     sendWorkspaceCommand: (OpsWorkspaceCommandDto) -> Boolean,
     sendSessionCommand: (OpsSessionCommandDto) -> Boolean,
+    modifier: Modifier = Modifier,
 ) {
     var phase by remember { mutableStateOf(XPhase.REPOSITORIES) }
     var handledFreshXSignal by remember { mutableStateOf(0) }
@@ -426,10 +431,20 @@ internal fun ArcanaSessionsTab(
                 readDashboardPref("ops.x.arcana.paceMaxSeconds")?.toDoubleOrNull(),
                 readDashboardPref("ops.x.arcana.auto")?.toBooleanStrictOrNull() ?: false,
                 readDashboardPref("ops.x.arcana.indexSync")?.toBooleanStrictOrNull() ?: false,
+                readDashboardPref(X_ARCANA_DEBUG_TELEMETRY_PREF)?.toBooleanStrictOrNull() ?: false,
                 OpsArcanaModeDto.entries.firstOrNull { it.name == readDashboardPref("ops.x.arcana.mode") }
                     ?: OpsArcanaModeDto.WORKSPACE,
             ),
         )
+    }
+    val commandOutputsExpanded = remember {
+        mutableStateOf(readDashboardPref(X_COMMAND_OUTPUT_EXPANDED_PREF)?.toBooleanStrictOrNull() ?: true)
+    }
+    val updateCommandOutputDefault = remember {
+        { expanded: Boolean ->
+            commandOutputsExpanded.value = expanded
+            writeDashboardPref(X_COMMAND_OUTPUT_EXPANDED_PREF, expanded.toString())
+        }
     }
     var repositoryStatus by remember { mutableStateOf(XSyncUiState()) }
     var workspaceStatus by remember { mutableStateOf(XSyncUiState()) }
@@ -547,6 +562,7 @@ internal fun ArcanaSessionsTab(
         writeDashboardPref("ops.x.arcana.paceMaxSeconds", value.paceMaxSeconds?.toString().orEmpty())
         writeDashboardPref("ops.x.arcana.auto", value.auto.toString())
         writeDashboardPref("ops.x.arcana.indexSync", value.indexSync.toString())
+        writeDashboardPref(X_ARCANA_DEBUG_TELEMETRY_PREF, value.debugTelemetry.toString())
         writeDashboardPref("ops.x.arcana.mode", value.mode.name)
     }
 
@@ -1011,13 +1027,11 @@ internal fun ArcanaSessionsTab(
         }
     }
 
-    val panelHeight = (pageHeight - 132.dp).coerceAtLeast(648.dp)
     val shape = RoundedCornerShape(18.dp)
     BoxWithConstraints(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .height(panelHeight)
             .clip(shape)
             .background(Color.Black.copy(alpha = 0.42f), shape)
             .background(
@@ -1086,6 +1100,9 @@ internal fun ArcanaSessionsTab(
                         runtimeId = runtimeId,
                         inputUi = inputUi,
                         arcanaSubmitting = arcanaSubmitting,
+                        debugTelemetry = arcana.debugTelemetry,
+                        commandOutputsExpanded = commandOutputsExpanded.value,
+                        onCommandOutputDefaultChanged = updateCommandOutputDefault,
                         onRepoSelected = { selectedRepoId = it },
                         onSessionSelected = ::resume,
                         onQueryChanged = { query = it },
@@ -1108,6 +1125,9 @@ internal fun ArcanaSessionsTab(
                         runtimeId = runtimeId,
                         inputUi = inputUi,
                         arcanaSubmitting = arcanaSubmitting,
+                        debugTelemetry = arcana.debugTelemetry,
+                        commandOutputsExpanded = commandOutputsExpanded.value,
+                        onCommandOutputDefaultChanged = updateCommandOutputDefault,
                         onRepoSelected = { selectedRepoId = it },
                         onSessionSelected = ::resume,
                         onQueryChanged = { query = it },
@@ -1405,6 +1425,20 @@ private fun XArcanaRecipe(
                 enabled = settings.mode != OpsArcanaModeDto.GENERAL,
                 modifier = Modifier.height(48.dp),
             )
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(
+                            "${if (settings.debugTelemetry) "◆" else "◇"}  Debug telemetry",
+                            color = if (settings.debugTelemetry) Color(0xFFB68BDA) else Color(0xFFC4B8CF),
+                            fontSize = 11.sp,
+                        )
+                        Text("raw RPC · packet trace · JSON repair", color = muted, fontSize = 8.sp)
+                    }
+                },
+                onClick = { onSettingsChanged(settings.copy(debugTelemetry = !settings.debugTelemetry)) },
+                modifier = Modifier.height(48.dp),
+            )
             HorizontalDivider(color = Color(0xFF7541A8).copy(alpha = 0.42f))
             OpsArcanaModeDto.entries.forEach { option ->
                 DropdownMenuItem(
@@ -1507,6 +1541,9 @@ private fun XWideBody(
     runtimeId: String?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
+    debugTelemetry: Boolean,
+    commandOutputsExpanded: Boolean,
+    onCommandOutputDefaultChanged: (Boolean) -> Unit,
     onRepoSelected: (Long) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
@@ -1537,6 +1574,9 @@ private fun XWideBody(
                 runtimeId = runtimeId,
                 inputUi = inputUi,
                 arcanaSubmitting = arcanaSubmitting,
+                debugTelemetry = debugTelemetry,
+                commandOutputsExpanded = commandOutputsExpanded,
+                onCommandOutputDefaultChanged = onCommandOutputDefaultChanged,
                 onSessionSelected = onSessionSelected,
                 onQueryChanged = onQueryChanged,
                 onArcanaActivityObserved = onArcanaActivityObserved,
@@ -1563,6 +1603,9 @@ private fun XCompactBody(
     runtimeId: String?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
+    debugTelemetry: Boolean,
+    commandOutputsExpanded: Boolean,
+    onCommandOutputDefaultChanged: (Boolean) -> Unit,
     onRepoSelected: (Long) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
@@ -1586,6 +1629,9 @@ private fun XCompactBody(
             runtimeId,
             inputUi,
             arcanaSubmitting,
+            debugTelemetry,
+            commandOutputsExpanded,
+            onCommandOutputDefaultChanged,
             onSessionSelected,
             onQueryChanged,
             onArcanaActivityObserved,
@@ -1672,6 +1718,9 @@ private fun XRightStage(
     runtimeId: String?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
+    debugTelemetry: Boolean,
+    commandOutputsExpanded: Boolean,
+    onCommandOutputDefaultChanged: (Boolean) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
     onArcanaActivityObserved: () -> Unit,
@@ -1718,7 +1767,14 @@ private fun XRightStage(
                 XPhase.REPOSITORIES -> XWelcome(viewer)
                 XPhase.WORKSPACE -> XSessionChooser(selectedRepo, selectedAgent, sessions, selectedSessionKey, sessionMessage, onSessionSelected)
                 XPhase.SESSION -> key(runtimeId) {
-                    XTranscript(selectedRepo, selectedAgent, projection.events)
+                    XTranscript(
+                        selectedRepo,
+                        selectedAgent,
+                        projection.events,
+                        debugTelemetry,
+                        commandOutputsExpanded,
+                        onCommandOutputDefaultChanged,
+                    )
                 }
             }
         }
@@ -1920,7 +1976,21 @@ private fun XSessionCard(
 }
 
 @Composable
-private fun XTranscript(repo: XRepoPreview?, agent: XAgent, events: List<XRenderedEvent>) {
+private fun XTranscript(
+    repo: XRepoPreview?,
+    agent: XAgent,
+    sourceEvents: List<XRenderedEvent>,
+    debugTelemetry: Boolean,
+    commandOutputsExpanded: Boolean,
+    onCommandOutputDefaultChanged: (Boolean) -> Unit,
+) {
+    val events = remember(sourceEvents, debugTelemetry) {
+        sourceEvents.mapNotNull { row ->
+            val receipts = row.telemetry ?: return@mapNotNull row
+            val visible = receipts.filter { debugTelemetry || it.visibility != "debug" || it.severity == "error" }
+            row.copy(telemetry = visible, revision = visible.map(XTelemetryReceipt::revision)).takeIf { visible.isNotEmpty() }
+        }
+    }
     val listState = rememberLazyListState()
     val tailLandingPx = with(LocalDensity.current) { 56.dp.toPx() }
     val tailSpring = remember {
@@ -2003,21 +2073,28 @@ private fun XTranscript(repo: XRepoPreview?, agent: XAgent, events: List<XRender
                 .border(BorderStroke(1.dp, Color(0xFF7544A8).copy(alpha = 0.34f)), RoundedCornerShape(12.dp))
                 .padding(8.dp),
         ) {
-            SelectionContainer {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    itemsIndexed(events, key = { _, rendered -> rendered.key }) { _, rendered ->
-                        XSessionEvent(
-                            rendered,
-                            Modifier.animateItem(
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                itemsIndexed(events, key = { _, rendered -> rendered.key }) { _, rendered ->
+                    SelectionContainer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateItem(
                                 fadeInSpec = tween(360, easing = FastOutSlowInEasing),
                                 fadeOutSpec = tween(120),
-                                placementSpec = tween(460, easing = FastOutSlowInEasing),
+                                placementSpec = null,
                             ),
+                    ) {
+                        XSessionEvent(
+                            rendered,
+                            debugTelemetry,
+                            commandOutputsExpanded,
+                            onCommandOutputDefaultChanged,
+                            Modifier,
                         )
                     }
                 }
@@ -2043,7 +2120,21 @@ private fun XTranscript(repo: XRepoPreview?, agent: XAgent, events: List<XRender
 }
 
 @Composable
-private fun XSessionEvent(rendered: XRenderedEvent, modifier: Modifier = Modifier) {
+private fun XSessionEvent(
+    rendered: XRenderedEvent,
+    debugTelemetry: Boolean,
+    commandOutputsExpanded: Boolean,
+    onCommandOutputDefaultChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    rendered.telemetry?.let {
+        XTelemetryRibbon(it, debugTelemetry, modifier)
+        return
+    }
+    rendered.command?.let {
+        XCommandBlock(it, commandOutputsExpanded, onCommandOutputDefaultChanged, modifier)
+        return
+    }
     val event = rendered.event
     val structured = event.structured
     if (structured != null) {
@@ -2453,12 +2544,12 @@ private fun XMemory(memory: String, latest: Boolean, key: Any) {
             .fillMaxWidth()
             .clip(shape)
             .background(ritualPurple.copy(alpha = 0.09f))
-            .border(1.dp, ritualPurpleGlow.copy(alpha = 0.2f), shape),
+            .border(1.dp, ritualPurpleGlow.copy(alpha = 0.2f), shape)
+            .xRitualDisclosure(key, expanded, "MeMoRia. $summary", 8.dp) { expanded = !expanded },
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
@@ -2473,13 +2564,16 @@ private fun XMemory(memory: String, latest: Boolean, key: Any) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (expanded) "COLLAPSE" else "EXPAND", color = amber.copy(alpha = 0.72f), fontFamily = FontFamily.Monospace, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             }
             if (!expanded && !focus.isNullOrBlank()) {
                 Text(focus, color = text.copy(alpha = 0.68f), fontFamily = FontFamily.Monospace, fontSize = 9.sp, lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        AnimatedVisibility(expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = xDisclosureEnter,
+            exit = xDisclosureExit,
+        ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(bottom = 7.dp)) {
                 HorizontalDivider(color = ritualPurpleGlow.copy(alpha = 0.14f))
                 Text(
@@ -2946,6 +3040,8 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
     var runtimeActive = true
     val states = mutableMapOf<OpsSessionChannelDto, XAnsiState>()
     val rendered = mutableListOf<XRenderedEvent>()
+    val telemetryItems = mutableMapOf<String, Int>()
+    val commandItems = mutableMapOf<String, Int>()
     val codexItems = mutableMapOf<String, Int>()
     val codexInputs = mutableMapOf<String, Int>()
     val codexDeltas = mutableMapOf<String, StringBuilder>()
@@ -3011,6 +3107,36 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
         }
         if (event.agent == OpsAgentDto.ARCANA && structured != null) {
             val runtime = event.runtimeId ?: "-"
+            val receipt = event.xTelemetryReceipt()
+            if (receipt != null) {
+                val identity = "$runtime:${receipt.kind}:${receipt.id}"
+                val row = XRenderedEvent(
+                    event = event,
+                    key = "arcana-telemetry:$identity",
+                    revision = receipt.revision,
+                    telemetry = listOf(receipt),
+                )
+                telemetryItems[identity]?.let { rendered[it] = row } ?: run {
+                    telemetryItems[identity] = rendered.size
+                    rendered += row
+                }
+                continue
+            }
+            val command = event.xCommandReceipt()
+            if (command != null) {
+                val identity = "$runtime:${command.id}"
+                val row = XRenderedEvent(
+                    event = event,
+                    key = "arcana-command:$identity",
+                    revision = command.revision,
+                    command = command,
+                )
+                commandItems[identity]?.let { rendered[it] = row } ?: run {
+                    commandItems[identity] = rendered.size
+                    rendered += row
+                }
+                continue
+            }
             when (structured.type) {
                 "agent_response" -> {
                     val identity = structured.round?.toString() ?: event.sequence?.toString() ?: event.xTransportKey()
@@ -3126,9 +3252,24 @@ private fun List<OpsSessionEventDto>.xTranscriptProjection(
             revision = revision,
         )
     }
-    val latestArcanaResponse = rendered.indexOfLast { it.event.agent == OpsAgentDto.ARCANA && it.event.structured?.type == "agent_response" }
+    val grouped = buildList<XRenderedEvent> {
+        rendered.forEach { row ->
+            val receipts = row.telemetry
+            val previous = lastOrNull()
+            if (receipts != null && previous?.telemetry != null) {
+                val merged = previous.telemetry + receipts
+                this[lastIndex] = previous.copy(
+                    telemetry = merged,
+                    revision = merged.map(XTelemetryReceipt::revision),
+                )
+            } else {
+                add(row)
+            }
+        }
+    }
+    val latestArcanaResponse = grouped.indexOfLast { it.event.agent == OpsAgentDto.ARCANA && it.event.structured?.type == "agent_response" }
     return XTranscriptProjection(
-        events = rendered.mapIndexed { index, event ->
+        events = grouped.mapIndexed { index, event ->
             event.copy(
                 text = if (event.xArcanaStdout) event.text else event.text?.xTrimNewlines(),
                 latestArcanaResponse = index == latestArcanaResponse,
