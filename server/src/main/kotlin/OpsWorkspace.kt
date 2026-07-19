@@ -24,12 +24,17 @@ import net.sdfgsdfg.data.model.OpsWorkspaceCommandDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventKindDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventStatusDto
+import net.sdfgsdfg.data.model.canRunSessions
+import java.io.File
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+
+internal const val LOCAL_ARCANA_REPOSITORY_ID = -1L
 
 internal data class OpsSocketPrincipal(
     val viewer: OpsViewerDto,
@@ -47,9 +52,14 @@ internal fun interface OpsWorkspaceCommandHandler {
 internal class OpsWorkspaceService(
     private val http: HttpClient,
     private val repositories: RepositoryManager = RepositoryManager(),
+    private val localArcana: File = arcanaRepo,
 ) : OpsWorkspaceCommandHandler {
-    private data class GithubRepository(val value: OpsRepositoryDto, val cloneUrl: String)
-    private data class CachedRepositories(val expiresAtMs: Long, val values: List<GithubRepository>)
+    private data class WorkspaceRepository(
+        val value: OpsRepositoryDto,
+        val cloneUrl: String? = null,
+        val localPath: File? = null,
+    )
+    private data class CachedRepositories(val expiresAtMs: Long, val values: List<WorkspaceRepository>)
 
     private val json = Json { ignoreUnknownKeys = true }
     private val cache = ConcurrentHashMap<String, CachedRepositories>()
@@ -70,7 +80,7 @@ internal class OpsWorkspaceService(
         command: OpsWorkspaceCommandDto,
         emit: suspend (OpsWorkspaceEventDto) -> Unit,
     ) {
-        emit(command.event(OpsWorkspaceEventKindDto.REPOSITORIES, OpsWorkspaceEventStatusDto.LOADING, "Loading GitHub repositories…"))
+        emit(command.event(OpsWorkspaceEventKindDto.REPOSITORIES, OpsWorkspaceEventStatusDto.LOADING, "Loading repositories…"))
         runCatching { repositories(principal) }
             .onSuccess { values ->
                 emit(
@@ -78,7 +88,7 @@ internal class OpsWorkspaceService(
                         kind = OpsWorkspaceEventKindDto.REPOSITORIES,
                         status = OpsWorkspaceEventStatusDto.READY,
                         message = "${values.size} repositories ready",
-                        repositories = values.map(GithubRepository::value),
+                        repositories = values.map(WorkspaceRepository::value),
                     ),
                 )
             }
@@ -96,13 +106,16 @@ internal class OpsWorkspaceService(
             emit(command.event(OpsWorkspaceEventKindDto.SYNC, OpsWorkspaceEventStatusDto.ERROR, "Repository id is missing"))
             return
         }
-        val repository = runCatching { repositories(principal).firstOrNull { it.value.id == repositoryId } }
-            .getOrElse { error ->
-                emit(command.event(OpsWorkspaceEventKindDto.SYNC, OpsWorkspaceEventStatusDto.ERROR, error.safeMessage(), repositoryId = repositoryId))
-                return
-            }
+        // The trusted local checkout is an admin capability, not a remote-authenticated repository.
+        val local = localArcana.takeIf { principal.viewer.canRunSessions() }?.let(::localRepository)
+        val repository = local?.takeIf { it.value.id == repositoryId }
+            ?: runCatching { repositories(principal).firstOrNull { it.value.id == repositoryId } }
+                .getOrElse { error ->
+                    emit(command.event(OpsWorkspaceEventKindDto.SYNC, OpsWorkspaceEventStatusDto.ERROR, error.safeMessage(), repositoryId = repositoryId))
+                    return
+                }
             ?: run {
-                emit(command.event(OpsWorkspaceEventKindDto.SYNC, OpsWorkspaceEventStatusDto.ERROR, "Repository is not available to this GitHub user", repositoryId = repositoryId))
+                emit(command.event(OpsWorkspaceEventKindDto.SYNC, OpsWorkspaceEventStatusDto.ERROR, "Repository is not available to this viewer", repositoryId = repositoryId))
                 return
             }
         val value = repository.value
@@ -119,6 +132,17 @@ internal class OpsWorkspaceService(
         )
 
         runCatching {
+            val localPath = repository.localPath?.canonicalFile
+            if (localPath != null) {
+                require(localPath.isDirectory && localPath.resolve(".git").exists()) {
+                    "Local Arcana repository is missing at ${localPath.path}"
+                }
+                emit(command.syncing(value.id, workspaceId, 50, "Opening local checkout…"))
+                WorkspaceTracker.trackWorkspace(
+                    principal.viewer.userId, value.owner, value.name, workspaceId, value.id, localPath,
+                )
+                return@runCatching
+            }
             repositories.withRepositoryLock(value.owner, value.name) {
                 when (repositories.checkRepoState(value.owner, value.name)) {
                     RepositoryManager.RepoState.Valid -> {
@@ -141,7 +165,7 @@ internal class OpsWorkspaceService(
                             repositories.cloneRepository(
                                 owner = value.owner,
                                 name = value.name,
-                                url = repository.cloneUrl,
+                                url = requireNotNull(repository.cloneUrl),
                                 branch = value.defaultBranch,
                                 accessToken = principal.githubToken,
                                 progressTracker = progress,
@@ -158,7 +182,7 @@ internal class OpsWorkspaceService(
                 command.event(
                     OpsWorkspaceEventKindDto.SYNC,
                     OpsWorkspaceEventStatusDto.SYNCHRONIZED,
-                    "${value.name} synchronized ✨",
+                    if (repository.localPath == null) "${value.name} synchronized ✨" else "${value.name} ready ✨",
                     progress = 100,
                     repositoryId = value.id,
                     workspaceId = workspaceId,
@@ -177,12 +201,17 @@ internal class OpsWorkspaceService(
         }
     }
 
-    private suspend fun repositories(principal: OpsSocketPrincipal): List<GithubRepository> {
-        val token = principal.githubToken ?: error("Reconnect GitHub to load repositories")
+    private suspend fun repositories(principal: OpsSocketPrincipal): List<WorkspaceRepository> {
+        // Admin identity contributes Arcana before the optional remote repository source.
+        val local = localArcana.takeIf { principal.viewer.canRunSessions() }?.let(::localRepository)
+        val token = principal.githubToken ?: return listOfNotNull(local).ifEmpty {
+            error("Reconnect GitHub to load repositories")
+        }
         val now = System.currentTimeMillis()
         val cacheKey = repositoryCacheKey(principal.viewer.userId, token)
-        cache[cacheKey]?.takeIf { it.expiresAtMs > now }?.let { return it.values }
-        return fetchRepositories(token).also { cache[cacheKey] = CachedRepositories(now + 60_000L, it) }
+        val github = cache[cacheKey]?.takeIf { it.expiresAtMs > now }?.values
+            ?: fetchRepositories(token).also { cache[cacheKey] = CachedRepositories(now + 60_000L, it) }
+        return listOfNotNull(local) + github
     }
 
     private suspend fun fetchRepositories(token: String) = withContext(Dispatchers.IO) {
@@ -211,14 +240,14 @@ internal class OpsWorkspaceService(
         }.distinctBy { it.value.id }
     }
 
-    private fun githubRepository(element: kotlinx.serialization.json.JsonElement): GithubRepository? {
+    private fun githubRepository(element: kotlinx.serialization.json.JsonElement): WorkspaceRepository? {
         val value = element as? JsonObject ?: return null
         val id = value.number("id") ?: return null
         val name = value.text("name")?.takeIf(String::isSafeRepoSegment) ?: return null
         val owner = value["owner"]?.jsonObject?.text("login")?.takeIf(String::isSafeRepoSegment) ?: return null
         val fullName = value.text("full_name")?.takeIf { it == "$owner/$name" } ?: return null
         val cloneUrl = value.text("clone_url")?.takeIf(String::isSafeGithubCloneUrl) ?: return null
-        return GithubRepository(
+        return WorkspaceRepository(
             value = OpsRepositoryDto(
                 id = id,
                 name = name,
@@ -234,6 +263,21 @@ internal class OpsWorkspaceService(
             cloneUrl = cloneUrl,
         )
     }
+
+    private fun localRepository(path: File) = WorkspaceRepository(
+        value = OpsRepositoryDto(
+            id = LOCAL_ARCANA_REPOSITORY_ID,
+            name = "arcana",
+            owner = "local",
+            fullName = "local/arcana",
+            description = "Local codebase comprehension and session engine",
+            language = "Python",
+            updatedAt = Instant.ofEpochMilli(path.lastModified().coerceAtLeast(0L)).toString(),
+            defaultBranch = "main",
+            isPrivate = true,
+        ),
+        localPath = path,
+    )
 }
 
 private fun OpsWorkspaceCommandDto.event(
@@ -263,5 +307,6 @@ private fun Throwable.safeMessage() = when {
     message?.contains("size limit", ignoreCase = true) == true -> "Repository exceeds the 10 GB workspace limit"
     message?.startsWith("GitHub repository lookup failed") == true -> message!!
     message?.startsWith("Reconnect GitHub") == true -> message!!
+    message?.startsWith("Local Arcana repository") == true -> message!!
     else -> "Repository synchronization failed"
 }

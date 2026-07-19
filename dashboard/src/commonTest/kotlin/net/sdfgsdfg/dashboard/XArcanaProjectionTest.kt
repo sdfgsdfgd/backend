@@ -188,6 +188,16 @@ class XArcanaProjectionTest {
         assertEquals("semantic output", rendered.single { it.command == null }.text?.text)
     }
 
+    @Test
+    fun conversationalFieldsAreLosslessUnlessACompactLimitIsExplicit() {
+        val full = "start-${"x".repeat(1_200)}-end"
+        val payload = buildJsonObject { put("text", JsonPrimitive(full)) }
+
+        assertEquals(full, payload.field("text"))
+        assertEquals(full, payload["text"].display())
+        assertEquals(full.take(1_200) + "…", payload["text"].display(1_200))
+    }
+
     private fun response(sequence: Long, command: JsonObject) = structured(
         sequence,
         "agent_response",

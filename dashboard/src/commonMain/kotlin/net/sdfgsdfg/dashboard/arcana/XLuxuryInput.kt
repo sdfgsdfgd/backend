@@ -21,8 +21,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,13 +28,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +61,15 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.positionInRoot
@@ -71,11 +78,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -88,9 +95,18 @@ import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private val xIslandShape = RoundedCornerShape(38)
 private val xPillShape = RoundedCornerShape(50)
 private val xWorkingCorona = Color(0xFF46125F)
+
+internal fun TextFieldValue.xInsertNewline(): TextFieldValue {
+    val start = min(selection.start, selection.end).coerceIn(0, text.length)
+    val end = max(selection.start, selection.end).coerceIn(start, text.length)
+    return copy(
+        text = text.replaceRange(start, end, "\n"),
+        selection = TextRange(start + 1),
+        composition = null,
+    )
+}
 
 @Composable
 internal fun XLuxuryInput(
@@ -103,6 +119,8 @@ internal fun XLuxuryInput(
     actionColor: Color = Color.Transparent,
     enabled: Boolean = true,
     working: Boolean = false,
+    mode: XComposerMode = XComposerMode.IDLE,
+    onAudioToggle: () -> Unit = {},
     onSend: () -> Unit,
 ) {
     BoxWithConstraints(modifier.graphicsLayer { clip = false }) {
@@ -115,10 +133,11 @@ internal fun XLuxuryInput(
                 textAlign = TextAlign.Start,
             )
         }
-        val targetActionWidth = when (actionLabel) {
-            null -> 64.dp
-            "Quit" -> 88.dp
-            "Continue" -> 116.dp
+        val targetActionWidth = when {
+            mode == XComposerMode.AUDIO -> 84.dp
+            actionLabel == null -> 64.dp
+            actionLabel == "Quit" -> 88.dp
+            actionLabel == "Continue" -> 116.dp
             else -> 150.dp
         }
         val actionWidth by animateDpAsState(
@@ -160,7 +179,7 @@ internal fun XLuxuryInput(
 
         val bleed = 36.dp
         val bubbleSize = DpSize(actionWidth, 48.dp)
-        val splitOffset = 18.dp
+        val splitOffset = 0.dp
         val groupHeight = maxOf(islandSize.height, bubbleSize.height)
         val shellSize = DpSize(
             islandSize.width + bubbleSize.width + splitOffset + bleed * 2,
@@ -171,10 +190,39 @@ internal fun XLuxuryInput(
         val islandGeometry = Modifier
             .offset(bleed, islandY)
             .size(islandSize)
+        val liquidMotion = rememberXLiquidMotion(mode)
+        val fluidAction = actionLabel == null || mode == XComposerMode.AUDIO
+        val merging = mode == XComposerMode.IDLE
+        val liquidDeformation = remember(liquidMotion, fluidAction, merging) {
+            derivedStateOf {
+                xLiquidDeformation(
+                    separation = liquidMotion.travel.value,
+                    topology = liquidMotion.topology.value,
+                    fluidAction = fluidAction,
+                    merging = merging,
+                )
+            }
+        }
         val actionGeometry = Modifier
-            .offset(bleed + islandSize.width + splitOffset, bubbleY)
+            .offset {
+                IntOffset(
+                    x = xLiquidActionLeft(
+                        bodyLeft = bleed.roundToPx().toFloat(),
+                        bodyWidth = islandSize.width.roundToPx().toFloat(),
+                        actionWidth = bubbleSize.width.roundToPx().toFloat(),
+                        splitGap = splitOffset.roundToPx().toFloat(),
+                        separation = liquidMotion.travel.value,
+                    ).roundToInt(),
+                    y = bubbleY.roundToPx(),
+                )
+            }
             .size(bubbleSize)
-        val actionShape = if (actionLabel == null) CircleShape else xPillShape
+        val actionEnabled = enabled || mode == XComposerMode.AUDIO
+        val liquidActionColor = when {
+            mode == XComposerMode.AUDIO -> Color(0xFF3A1452)
+            actionLabel != null -> actionColor
+            else -> Color.Black
+        }
         val workingBreath = if (working) {
             rememberInfiniteTransition(label = "x-working-breath").animateFloat(
                 initialValue = 0f,
@@ -220,30 +268,51 @@ internal fun XLuxuryInput(
                         },
                 )
             }
-            Box(
-                islandGeometry
-                    .background(Color.Black, xIslandShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.055f), xIslandShape),
+            XLiquidSurface(
+                motion = liquidMotion,
+                deformation = liquidDeformation,
+                fluidAction = fluidAction,
+                bodyLeft = bleed,
+                bodyTop = islandY,
+                bodySize = islandSize,
+                actionTop = bubbleY,
+                actionSize = bubbleSize,
+                splitGap = splitOffset,
+                actionMassScale = if (actionLabel == null && mode != XComposerMode.AUDIO) 0.90f else 1f,
+                actionColor = liquidActionColor,
+                actionTint = if (actionLabel != null || mode == XComposerMode.AUDIO) 1f else 0f,
+                enabled = actionEnabled,
+                merging = merging,
+                modifier = Modifier.fillMaxSize(),
             )
             Box(
                 actionGeometry
-                    .background(Color.Black, actionShape)
-                    .blur(4.dp, BlurredEdgeTreatment.Unbounded),
-            )
-            Box(
-                actionGeometry
-                    .background((actionColor.takeIf { actionLabel != null } ?: Color.Black).copy(alpha = if (enabled) 0.93f else 0.4f), actionShape)
-                    .border(1.dp, (actionColor.takeIf { actionLabel != null } ?: Color.White).copy(alpha = if (enabled) 0.42f else 0.08f), actionShape)
-                    .clickable(enabled = enabled, onClick = onSend),
+                    .graphicsLayer {
+                        val deformation = liquidDeformation.value
+                        alpha = if (actionLabel != null) 1f else xLiquidActionContentAlpha(liquidMotion.travel.value)
+                        scaleX = deformation.scaleX
+                        scaleY = deformation.scaleY
+                    }
+                    .clickable(enabled = actionEnabled && (actionLabel != null || mode != XComposerMode.IDLE)) {
+                        if (mode == XComposerMode.AUDIO) onAudioToggle() else onSend()
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 AnimatedContent(
-                    targetState = actionLabel,
+                    targetState = mode to actionLabel,
                     transitionSpec = { fadeIn(tween(260, easing = FastOutSlowInEasing)) togetherWith fadeOut(tween(170)) },
                     label = "x-action-label",
-                ) { label ->
-                    if (label == null) XSendGlyph(Color.White.copy(alpha = if (enabled) 0.82f else 0.24f))
-                    else Text(label, color = Color(0xFFEAD59A).copy(alpha = if (enabled) 0.96f else 0.38f), fontSize = 11.sp)
+                ) { (contentMode, label) ->
+                    when {
+                        contentMode == XComposerMode.AUDIO -> Text(
+                            "AUDIO",
+                            color = Color(0xFFD3A5E8),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                        )
+                        label == null -> XSendGlyph(Color.White.copy(alpha = if (enabled) 0.82f else 0.24f))
+                        else -> Text(label, color = Color(0xFFEAD59A).copy(alpha = if (enabled) 0.96f else 0.38f), fontSize = 11.sp)
+                    }
                 }
             }
             XLuxuryCaretField(
@@ -404,6 +473,16 @@ private fun XLuxuryCaretField(
                 },
                 modifier = Modifier
                     .focusRequester(focusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.J &&
+                            event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed
+                        ) {
+                            onValueChange(value.xInsertNewline())
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .fillMaxSize()
                     .padding(horizontal = 24.dp, vertical = 8.dp)
                     .onFocusChanged { focused = it.isFocused },

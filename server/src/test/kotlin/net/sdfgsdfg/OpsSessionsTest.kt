@@ -567,6 +567,7 @@ class OpsSessionsTest {
         val output = Collections.synchronizedList(mutableListOf<String>())
         val structured = Collections.synchronizedList(mutableListOf<OpsStructuredEventDto>())
         val lifecycles = Collections.synchronizedList(mutableListOf<OpsSessionStateDto>())
+        val resumedLifecycles = Collections.synchronizedList(mutableListOf<OpsSessionStateDto>())
         val launch = OpsAgentLaunch(
             workspace = workspace,
             resumeSessionId = null,
@@ -606,21 +607,26 @@ class OpsSessionsTest {
                 launch.copy(resumeSessionId = "thread-resume", initialInput = ""),
                 { _, text -> output += text },
                 structured::add,
-                { state, _, _, _ -> lifecycles += state },
+                { state, _, _, _ ->
+                    lifecycles += state
+                    resumedLifecycles += state
+                },
             )
             withTimeout(2_000) { while (structured.none { it.type == "thread/read-proved" }) delay(10) }
             val history = structured.firstOrNull { it.type == "item/completed" && it.payload["history"]?.jsonPrimitive?.boolean == true }
             assertEquals("Known prior response", history?.payload?.get("item")?.jsonObject?.get("text")?.jsonPrimitive?.content)
+            val readyCount = resumedLifecycles.count { it == OpsSessionStateDto.READY }
             resumed.input("continue durable thread")
             withTimeout(2_000) { while (output.none { it == "resumed" }) delay(10) }
+            withTimeout(2_000) { while (resumedLifecycles.count { it == OpsSessionStateDto.READY } == readyCount) delay(10) }
             assertEquals(
                 "thread-resume",
                 structured.last { it.type == "item/agentMessage/delta" }.payload["threadId"]?.jsonPrimitive?.content,
             )
             resumed.input("exit-app-server")
             val terminalProcessExitTimeoutMs = 5_000L
-            withTimeout(terminalProcessExitTimeoutMs) { while (lifecycles.lastOrNull() != OpsSessionStateDto.FAILED) delay(10) }
-            assertTrue(lifecycles.contains(OpsSessionStateDto.RUNNING))
+            withTimeout(terminalProcessExitTimeoutMs) { while (resumedLifecycles.lastOrNull() != OpsSessionStateDto.FAILED) delay(10) }
+            assertTrue(resumedLifecycles.contains(OpsSessionStateDto.RUNNING))
         } finally {
             created?.stop()
             scope.cancel()

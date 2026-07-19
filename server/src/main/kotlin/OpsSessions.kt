@@ -459,7 +459,7 @@ private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAd
         "deepseek-expert",
         "deepseek-instant",
     )
-    private val home = File(System.getenv("ARCANA_HOME") ?: "${System.getProperty("user.home")}/Desktop/py/arcana")
+    private val home = arcanaRepo
     private val python get() = File(home, ".venv/bin/python").takeIf(File::canExecute)?.absolutePath ?: "python3"
     private val entry get() = File(home, "_0.py")
 
@@ -738,7 +738,9 @@ internal class CodexAgentProcess(
     private val structured: suspend (OpsStructuredEventDto) -> Unit,
     private val lifecycle: suspend (OpsSessionStateDto, String?, String?, Int?) -> Unit,
 ) : OpsAgentProcess {
-    private val activeTurn = AtomicReference<String?>()
+    private val turnCommandLock = Mutex()
+    private val startingTurn = Any()
+    private val activeTurn = AtomicReference<Any?>()
     private val pendingRequest = AtomicReference<CodexServerRequest?>()
     private val pendingTimeout = AtomicReference<Job?>()
 
@@ -775,22 +777,35 @@ internal class CodexAgentProcess(
             return
         }
         val input = buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", text) }) }
-        val active = activeTurn.get()
-        val result = client.request(
-            if (active == null) "turn/start" else "turn/steer",
-            buildJsonObject {
-                put("threadId", threadId)
-                put("input", input)
-                active?.let { put("expectedTurnId", it) }
-            },
-        )
-        if (active == null) result["turn"]?.jsonObject?.text("id")?.let(activeTurn::set)
+        turnCommandLock.withLock {
+            val active = activeTurn.get() as? String
+            if (active == null) check(activeTurn.compareAndSet(null, startingTurn))
+            try {
+                val result = client.request(
+                    if (active == null) "turn/start" else "turn/steer",
+                    buildJsonObject {
+                        put("threadId", threadId)
+                        put("input", input)
+                        active?.let { put("expectedTurnId", it) }
+                    },
+                )
+                if (active == null) {
+                    val id = result["turn"]?.jsonObject?.text("id")
+                    activeTurn.compareAndSet(startingTurn, id)
+                }
+            } catch (error: Throwable) {
+                if (active == null) activeTurn.compareAndSet(startingTurn, null)
+                throw error
+            }
+        }
     }
 
     override suspend fun interrupt() {
-        val turn = activeTurn.get() ?: return
-        client.request("turn/interrupt", buildJsonObject { put("threadId", threadId); put("turnId", turn) })
-        activeTurn.compareAndSet(turn, null)
+        turnCommandLock.withLock {
+            val turn = activeTurn.get() as? String ?: return
+            client.request("turn/interrupt", buildJsonObject { put("threadId", threadId); put("turnId", turn) })
+            activeTurn.compareAndSet(turn, null)
+        }
         lifecycle(OpsSessionStateDto.READY, threadId, "Codex turn interrupted", null)
     }
 
@@ -806,12 +821,14 @@ internal class CodexAgentProcess(
         when (method) {
             "turn/started" -> {
                 val id = params["turn"]?.jsonObject?.text("id")
-                if (id != null) activeTurn.set(id)
+                if (id != null) activeTurn.compareAndSet(startingTurn, id)
                 lifecycle(OpsSessionStateDto.RUNNING, threadId, "Codex turn started", null)
             }
             "turn/completed" -> {
                 val turn = params["turn"] as? JsonObject
-                activeTurn.set(null)
+                val id = turn?.text("id")
+                val active = activeTurn.get()
+                if (active == id) activeTurn.compareAndSet(active, null)
                 val status = turn?.text("status")
                 lifecycle(if (status == "failed") OpsSessionStateDto.FAILED else OpsSessionStateDto.READY, threadId, status?.let { "Codex turn $it" }, null)
             }

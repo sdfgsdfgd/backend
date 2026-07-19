@@ -446,7 +446,7 @@ private fun parseLineForProgress(line: String, progressTracker: AtomicInt) {
 
 /**
  * Simple tracker for client workspaces.
- * Keeps track of which repository is currently selected for each client.
+ * Keeps the selected managed clone or trusted local checkout for each client.
  */
 object WorkspaceTracker {
     // Map of clientId -> workspace info
@@ -457,15 +457,24 @@ object WorkspaceTracker {
         val name: String,
         val workspaceId: String,
         val repositoryId: Long? = null,
+        val explicitPath: String? = null,
     ) {
-        fun getPath(): String = System.getProperty("user.home") + "/Desktop/server_repos/${repositoryDirectoryName(owner, name)}"
+        fun getPath(): String = explicitPath
+            ?: System.getProperty("user.home") + "/Desktop/server_repos/${repositoryDirectoryName(owner, name)}"
     }
 
     /**
      * Track a repository selection for a client
      */
-    fun trackWorkspace(clientId: String, owner: String, name: String, workspaceId: String, repositoryId: Long? = null) {
-        clientWorkspaces[clientId] = WorkspaceInfo(owner, name, workspaceId, repositoryId)
+    fun trackWorkspace(
+        clientId: String,
+        owner: String,
+        name: String,
+        workspaceId: String,
+        repositoryId: Long? = null,
+        path: File? = null,
+    ) {
+        clientWorkspaces[clientId] = WorkspaceInfo(owner, name, workspaceId, repositoryId, path?.canonicalPath)
     }
 
     /**

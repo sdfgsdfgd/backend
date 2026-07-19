@@ -24,12 +24,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -69,10 +73,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -83,6 +90,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -92,6 +100,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -406,11 +415,13 @@ internal fun ArcanaSessionsTab(
     sessionLedger: XSessionLedger,
     sendWorkspaceCommand: (OpsWorkspaceCommandDto) -> Boolean,
     sendSessionCommand: (OpsSessionCommandDto) -> Boolean,
+    header: @Composable (@Composable RowScope.() -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var phase by remember { mutableStateOf(XPhase.REPOSITORIES) }
     var handledFreshXSignal by remember { mutableStateOf(0) }
     var query by remember { mutableStateOf(TextFieldValue("")) }
+    var audioActive by remember { mutableStateOf(false) }
     var repositories by remember { mutableStateOf(emptyList<XRepoPreview>()) }
     var cursorRepositoryId by remember { mutableStateOf(readDashboardPref(X_REPOSITORY_PREF)?.toLongOrNull()) }
     var selectedRepoId by remember { mutableStateOf(cursorRepositoryId) }
@@ -473,6 +484,7 @@ internal fun ArcanaSessionsTab(
         if (phase != XPhase.REPOSITORIES) repositories
         else repositories.filter { repo -> query.text.isBlank() || query.text.isSubsequenceOf("${repo.name} ${repo.description} ${repo.language}") }
     }
+    val composerMode = remember(query.text, audioActive) { xComposerMode(query.text, audioActive) }
     val selectedRepo = repositories.firstOrNull { it.id == selectedRepoId }
     val currentSelectedRepo by rememberUpdatedState(selectedRepo)
     val currentSendWorkspaceCommand by rememberUpdatedState(sendWorkspaceCommand)
@@ -579,8 +591,14 @@ internal fun ArcanaSessionsTab(
         return XDelivery.TIMED_OUT
     }
 
+    fun clearComposer() {
+        query = TextFieldValue("")
+        audioActive = false
+    }
+
     fun resume(summary: OpsSessionSummaryDto) {
         arcanaSubmitting = false
+        audioActive = false
         val targetAgent = XAgent.entries.first { it.wire == summary.agent }
         selectedAgent = targetAgent
         writeDashboardPref(X_AGENT_PREF, targetAgent.name)
@@ -651,7 +669,7 @@ internal fun ArcanaSessionsTab(
         if (socketState.status != OpsSocketStatus.CONNECTED || OPS_CAPABILITY_SESSIONS_RUN !in viewer.capabilities) return@LaunchedEffect
         val requestId = "repositories-${Clock.System.now().toEpochMilliseconds()}"
         repositoryRequestId = requestId
-        if (repositories.isEmpty()) repositoryStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, "Loading GitHub repositories…")
+        if (repositories.isEmpty()) repositoryStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, "Loading repositories…")
         if (!sendWorkspaceCommand(OpsWorkspaceCommandDto(requestId, OpsWorkspaceActionDto.LIST_REPOSITORIES))) {
             repositoryStatus = XSyncUiState(XSyncStage.ERROR, 0, "Ops socket is not ready")
         }
@@ -663,7 +681,7 @@ internal fun ArcanaSessionsTab(
             OpsWorkspaceEventKindDto.REPOSITORIES -> {
                 if (event.requestId != repositoryRequestId) return@LaunchedEffect
                 when (event.status) {
-                    OpsWorkspaceEventStatusDto.LOADING -> repositoryStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, event.message ?: "Loading GitHub repositories…")
+                    OpsWorkspaceEventStatusDto.LOADING -> repositoryStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, event.message ?: "Loading repositories…")
                     OpsWorkspaceEventStatusDto.READY -> {
                         repositories = event.repositories.map(OpsRepositoryDto::toXPreview)
                         repositoryStatus = XSyncUiState(
@@ -873,7 +891,7 @@ internal fun ArcanaSessionsTab(
         val requestId = "sync-${repo.id}-${Clock.System.now().toEpochMilliseconds()}"
         syncRequestId = requestId
         phase = XPhase.WORKSPACE
-        query = TextFieldValue("")
+        clearComposer()
         workspaceId = null
         workspaceRebindAttempted = false
         if (sessionScope != (repo.id to selectedAgent)) {
@@ -924,7 +942,7 @@ internal fun ArcanaSessionsTab(
                     arcanaMode = arcana.mode.takeIf { selectedAgent == XAgent.ARCANA },
                 )
                 startRetry = 0
-                query = TextFieldValue("")
+                clearComposer()
             }
             XPhase.SESSION -> runtimeId?.let { runtime ->
                 if (!inputUi.enabled) return
@@ -944,12 +962,13 @@ internal fun ArcanaSessionsTab(
                     return
                 }
                 arcanaSubmitting = selectedAgent == XAgent.ARCANA
-                query = TextFieldValue("")
+                clearComposer()
             }
         }
     }
     fun back() {
         arcanaSubmitting = false
+        audioActive = false
         when (phase) {
             XPhase.REPOSITORIES -> Unit
             XPhase.WORKSPACE -> phase = XPhase.REPOSITORIES
@@ -961,7 +980,7 @@ internal fun ArcanaSessionsTab(
     }
     fun resetToRepositories() {
         arcanaSubmitting = false
-        query = TextFieldValue("")
+        clearComposer()
         selectedRepoId = null
         selectedSessionKey = runtimeId
         phase = XPhase.REPOSITORIES
@@ -1012,6 +1031,10 @@ internal fun ArcanaSessionsTab(
                     resetToRepositories()
                     true
                 } else false
+                Key.Spacebar -> if (event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
+                    audioActive = !audioActive
+                    true
+                } else false
                 Key.Escape -> if (!modified && phase != XPhase.REPOSITORIES) { back(); true } else false
                 Key.Enter, Key.NumPadEnter -> if (!modified) { send(); true } else false
                 else -> false
@@ -1027,34 +1050,17 @@ internal fun ArcanaSessionsTab(
         }
     }
 
-    val shape = RoundedCornerShape(18.dp)
-    BoxWithConstraints(
+    Column(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp)
-            .clip(shape)
-            .background(Color.Black.copy(alpha = 0.42f), shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xB8070C12),
-                        Color(0x74000000),
-                        Color(0x36151D2A),
-                        Color.Transparent,
-                    ),
-                ),
-                shape,
-            )
-            .border(BorderStroke(1.dp, cyan.copy(alpha = 0.32f)), shape)
+            .fillMaxSize()
             .let { base ->
                 if (windowKeys == null) base.onPreviewKeyEvent { currentXKeyHandler.value(it) }.focusable() else base
             },
     ) {
-        val wide = maxWidth >= 980.dp
-        Column(Modifier.fillMaxSize()) {
+        header {
             XSessionTopBar(
                 status = topStatus,
-                socketState = socketState,
+                repositoryCount = repositories.size,
                 repo = selectedRepo?.takeIf { phase != XPhase.REPOSITORIES },
                 phase = phase,
                 selectedAgent = selectedAgent,
@@ -1073,9 +1079,32 @@ internal fun ArcanaSessionsTab(
                 pacingProfile = pacingProfile,
                 onArcanaChanged = ::updateArcana,
                 runtimeState = runtimeState,
-                onSessionAction = { control(it) },
                 onBack = ::back,
             )
+        }
+        val shape = RoundedCornerShape(18.dp)
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                .clip(shape)
+                .background(Color.Black.copy(alpha = 0.42f), shape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xB8070C12),
+                            Color(0x74000000),
+                            Color(0x36151D2A),
+                            Color.Transparent,
+                        ),
+                    ),
+                    shape,
+                )
+                .border(BorderStroke(1.dp, cyan.copy(alpha = 0.32f)), shape),
+        ) {
+            val wide = maxWidth >= 980.dp
+            Column(Modifier.fillMaxSize()) {
             AnimatedVisibility(
                 visible = activeSessions.isNotEmpty(),
                 enter = fadeIn(tween(520)) + expandVertically(tween(620, easing = FastOutSlowInEasing)),
@@ -1092,20 +1121,24 @@ internal fun ArcanaSessionsTab(
                         selectedRepo = selectedRepo,
                         selectedAgent = selectedAgent,
                         query = query,
+                        composerMode = composerMode,
                         viewer = viewer,
                         sessions = sessions,
                         selectedSessionKey = selectedSessionKey,
                         sessionMessage = sessionMessage,
                         sessionLedger = sessionLedger,
                         runtimeId = runtimeId,
+                        runtimeState = runtimeState,
                         inputUi = inputUi,
                         arcanaSubmitting = arcanaSubmitting,
                         debugTelemetry = arcana.debugTelemetry,
                         commandOutputsExpanded = commandOutputsExpanded.value,
                         onCommandOutputDefaultChanged = updateCommandOutputDefault,
+                        onSessionAction = { control(it) },
                         onRepoSelected = { selectedRepoId = it },
                         onSessionSelected = ::resume,
                         onQueryChanged = { query = it },
+                        onAudioToggle = { audioActive = !audioActive },
                         onArcanaActivityObserved = { arcanaSubmitting = false },
                         onSend = ::send,
                     )
@@ -1117,23 +1150,28 @@ internal fun ArcanaSessionsTab(
                         selectedRepo = selectedRepo,
                         selectedAgent = selectedAgent,
                         query = query,
+                        composerMode = composerMode,
                         viewer = viewer,
                         sessions = sessions,
                         selectedSessionKey = selectedSessionKey,
                         sessionMessage = sessionMessage,
                         sessionLedger = sessionLedger,
                         runtimeId = runtimeId,
+                        runtimeState = runtimeState,
                         inputUi = inputUi,
                         arcanaSubmitting = arcanaSubmitting,
                         debugTelemetry = arcana.debugTelemetry,
                         commandOutputsExpanded = commandOutputsExpanded.value,
                         onCommandOutputDefaultChanged = updateCommandOutputDefault,
+                        onSessionAction = { control(it) },
                         onRepoSelected = { selectedRepoId = it },
                         onSessionSelected = ::resume,
                         onQueryChanged = { query = it },
+                        onAudioToggle = { audioActive = !audioActive },
                         onArcanaActivityObserved = { arcanaSubmitting = false },
                         onSend = ::send,
                     )
+                }
                 }
             }
         }
@@ -1195,7 +1233,7 @@ private fun XGlobalActiveRail(
 @Composable
 private fun XSessionTopBar(
     status: XSyncUiState,
-    socketState: OpsSocketState,
+    repositoryCount: Int,
     repo: XRepoPreview?,
     phase: XPhase,
     selectedAgent: XAgent,
@@ -1204,90 +1242,69 @@ private fun XSessionTopBar(
     pacingProfile: OpsPacingProfileDto?,
     onArcanaChanged: (XArcanaLaunch) -> Unit,
     runtimeState: OpsSessionStateDto?,
-    onSessionAction: (OpsSessionActionDto) -> Unit,
     onBack: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
-    BoxWithConstraints(
-        Modifier
-            .fillMaxWidth()
-            .height(88.dp)
-            .background(Color.Black.copy(alpha = 0.72f), shape)
+    val statusTone = when (status.stage) {
+        XSyncStage.ERROR -> Color(0xFFFF526C)
+        XSyncStage.INITIALIZING, XSyncStage.SYNCING -> Color(0xFFFFC857)
+        XSyncStage.SYNCHRONIZED -> Color(0xFF28E878)
+        XSyncStage.IDLE -> Color(0xFF79CFFF)
+    }
+    val statusLabel = when (phase) {
+        XPhase.REPOSITORIES -> when (status.stage) {
+            XSyncStage.ERROR -> "retry"
+            XSyncStage.SYNCHRONIZED -> "$repositoryCount ready"
+            XSyncStage.IDLE -> "ready"
+            else -> "syncing"
+        }
+        XPhase.WORKSPACE -> repo?.name ?: when (status.stage) {
+            XSyncStage.ERROR -> "retry"
+            XSyncStage.SYNCHRONIZED -> "ready"
+            else -> "syncing"
+        }
+        XPhase.SESSION -> runtimeState?.xLabel() ?: "session"
+    }
+    Row(
+        Modifier.fillMaxSize(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        XAgentToggle(selectedAgent, phase != XPhase.SESSION, onAgentSelected)
+        if (selectedAgent == XAgent.ARCANA) {
+            Box(Modifier.width(1.dp).height(26.dp).background(Color.White.copy(alpha = 0.16f)))
+            XArcanaRecipe(arcana, pacingProfile, phase != XPhase.SESSION, onArcanaChanged)
+        }
+        Spacer(Modifier.weight(1f))
+        if (phase != XPhase.REPOSITORIES) {
+            Text(
+                "←",
+                color = cyan.copy(alpha = 0.82f),
+                fontSize = 15.sp,
+                modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 3.dp, vertical = 7.dp),
+            )
+        }
+        XHeaderStatus(statusLabel, statusTone)
+    }
+}
+
+@Composable
+private fun XHeaderStatus(label: String, tone: Color) {
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .widthIn(min = 76.dp, max = 118.dp)
+            .height(36.dp)
+            .dropShadow(shape, Shadow(radius = 7.dp, offset = DpOffset(0.dp, 2.dp), color = tone, alpha = 0.18f))
             .background(
-                Brush.verticalGradient(
-                    listOf(Color.White.copy(alpha = 0.16f), Color.Transparent, Color.Black.copy(alpha = 0.56f)),
-                ),
+                Brush.verticalGradient(listOf(tone.copy(alpha = 0.20f), Color(0xC4071110), Color(0xE004090B))),
                 shape,
             )
-            .border(BorderStroke(1.dp, Color(0xFF8FB5DA).copy(alpha = 0.26f)), shape)
+            .innerShadow(shape, Shadow(radius = 7.dp, offset = DpOffset(0.dp, 2.dp), color = Color.Black, alpha = 0.42f))
+            .border(BorderStroke(1.dp, tone.copy(alpha = 0.58f)), shape)
+            .padding(horizontal = 11.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        val compact = maxWidth < 1_120.dp
-        Row(
-            Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            XGlowComparison(
-                connected = socketState.status == OpsSocketStatus.CONNECTED,
-                latencyMs = socketState.latencyMs,
-                modifier = Modifier.width(210.dp),
-            )
-            XAgentToggle(selectedAgent, phase != XPhase.SESSION, onAgentSelected)
-            if (selectedAgent == XAgent.ARCANA) {
-                XArcanaRecipe(
-                    arcana,
-                    pacingProfile,
-                    phase != XPhase.SESSION,
-                    onArcanaChanged,
-                )
-            }
-            if (!compact) XWorkspaceStatus(status, Modifier.weight(1f).widthIn(min = 180.dp, max = 660.dp))
-            Column(Modifier.widthIn(min = 210.dp, max = 260.dp), horizontalAlignment = Alignment.End) {
-                if (phase != XPhase.REPOSITORIES) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            if (phase == XPhase.SESSION) "← sessions" else "← repositories",
-                            color = cyan.copy(alpha = 0.78f),
-                            fontSize = 11.sp,
-                            modifier = Modifier.clickable(onClick = onBack).padding(vertical = 3.dp),
-                        )
-                        if (phase == XPhase.SESSION) {
-                            val canInterrupt = runtimeState == OpsSessionStateDto.RUNNING
-                            val canStop = runtimeState?.isActiveRuntime == true
-                            Text(
-                                "interrupt",
-                                color = cyan.copy(alpha = if (canInterrupt) 0.78f else 0.24f),
-                                fontSize = 9.sp,
-                                modifier = Modifier
-                                    .padding(start = 8.dp)
-                                    .clickable(enabled = canInterrupt) { onSessionAction(OpsSessionActionDto.INTERRUPT) }
-                                    .padding(horizontal = 5.dp, vertical = 3.dp),
-                            )
-                            Text(
-                                "stop",
-                                color = Color(0xFFFF6B7A).copy(alpha = if (canStop) 0.82f else 0.24f),
-                                fontSize = 9.sp,
-                                modifier = Modifier
-                                    .clickable(enabled = canStop) { onSessionAction(OpsSessionActionDto.STOP) }
-                                    .padding(horizontal = 5.dp, vertical = 3.dp),
-                            )
-                        }
-                    }
-                }
-                Text(repo?.name ?: "workspace multiplex", color = text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (compact) status.message else phase.name.lowercase(),
-                    color = muted,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        Text(label, color = tone.copy(alpha = 0.94f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1311,26 +1328,25 @@ private fun XArcanaRecipe(
     Box {
         Row(
             Modifier
-                .width(200.dp)
-                .height(42.dp)
+                .width(204.dp)
+                .height(38.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xB6252A31), Color(0xC70A0F15), Color(0xDC080A0E)),
+                    ),
+                    shape,
+                )
+                .innerShadow(shape, Shadow(radius = 7.dp, offset = DpOffset((-1).dp, (-1).dp), color = Color.White, alpha = 0.12f))
+                .innerShadow(shape, Shadow(radius = 9.dp, offset = DpOffset(1.dp, 3.dp), color = Color.Black, alpha = 0.44f))
+                .border(1.dp, Color(0xFFFFD986).copy(alpha = 0.24f), shape)
                 .clip(shape)
-                .background(Color(0xD608090D))
-                .border(1.dp, Color(0xFF8755C9).copy(alpha = 0.38f), shape)
                 .clickable(enabled = enabled) { expanded = true }
                 .padding(horizontal = 13.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column {
-                Text("${settings.model.compact} · ${settings.mode.label.lowercase()}", color = Color(0xFFE2C77E), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    "${if (settings.auto) "auto" else "manual"} · ${if (settings.noPace) "no pace" else minimum?.let { "${it.xPaceDuration()}–${maximum?.xPaceDuration()}" } ?: "pace loading"} · ${if (settings.indexSync) "sync" else "no sync"}",
-                    color = muted,
-                    fontSize = 8.sp,
-                    letterSpacing = 0.3.sp,
-                )
-            }
-            Text("⌄", color = Color(0xFFB68BDA), fontSize = 13.sp)
+            Text("${settings.model.compact} · ${settings.mode.label.lowercase()}", color = Color(0xFFF0D486), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text("⌄", color = Color(0xFFDCE8EF).copy(alpha = 0.88f), fontSize = 13.sp)
         }
         DropdownMenu(
             expanded = expanded,
@@ -1491,11 +1507,16 @@ private fun XAgentToggle(selected: XAgent, enabled: Boolean, onSelected: (XAgent
     val shape = RoundedCornerShape(50)
     Row(
         Modifier
-            .width(148.dp)
-            .height(42.dp)
+            .width(186.dp)
+            .height(38.dp)
+            .background(
+                Brush.verticalGradient(listOf(Color(0xB61C2630), Color(0xD3070D14), Color(0xE1080A0E))),
+                shape,
+            )
+            .innerShadow(shape, Shadow(radius = 7.dp, offset = DpOffset((-1).dp, (-1).dp), color = Color.White, alpha = 0.12f))
+            .innerShadow(shape, Shadow(radius = 9.dp, offset = DpOffset(1.dp, 3.dp), color = Color.Black, alpha = 0.46f))
+            .border(1.dp, Color(0xFFB6D8EC).copy(alpha = 0.24f), shape)
             .clip(shape)
-            .background(Color(0xD608090D))
-            .border(1.dp, Color(0xFF8755C9).copy(alpha = 0.48f), shape)
             .padding(3.dp),
     ) {
         XAgent.entries.forEach { agent ->
@@ -1504,18 +1525,28 @@ private fun XAgentToggle(selected: XAgent, enabled: Boolean, onSelected: (XAgent
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(shape)
                     .background(
                         if (active) Brush.horizontalGradient(
-                            listOf(Color(0xFF4D267A).copy(alpha = 0.88f), Color(0xFFB18A35).copy(alpha = 0.34f)),
+                            listOf(Color(0xFFFFE9A5).copy(alpha = 0.92f), Color(0xFFE6B94F).copy(alpha = 0.88f), Color(0xFF9B7130).copy(alpha = 0.74f)),
                         ) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)),
+                        shape,
                     )
+                    .then(
+                        if (active) {
+                            Modifier
+                                .innerShadow(shape, Shadow(radius = 7.dp, offset = DpOffset(0.dp, 2.dp), color = Color(0xFF6D4B14), alpha = 0.42f))
+                                .border(1.dp, Color(0xFFFFF1BE).copy(alpha = 0.68f), shape)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clip(shape)
                     .clickable(enabled = enabled) { onSelected(agent) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     agent.label,
-                    color = if (active) Color(0xFFE7C77D) else muted,
+                    color = if (active) Color(0xFF152236) else Color(0xFFB8C4D2).copy(alpha = 0.74f),
                     fontSize = 10.sp,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                     letterSpacing = 0.6.sp,
@@ -1533,20 +1564,24 @@ private fun XWideBody(
     selectedRepo: XRepoPreview?,
     selectedAgent: XAgent,
     query: TextFieldValue,
+    composerMode: XComposerMode,
     viewer: OpsViewerDto,
     sessions: List<OpsSessionSummaryDto>,
     selectedSessionKey: String?,
     sessionMessage: String,
     sessionLedger: XSessionLedger,
     runtimeId: String?,
+    runtimeState: OpsSessionStateDto?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
     debugTelemetry: Boolean,
     commandOutputsExpanded: Boolean,
     onCommandOutputDefaultChanged: (Boolean) -> Unit,
+    onSessionAction: (OpsSessionActionDto) -> Unit,
     onRepoSelected: (Long) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
+    onAudioToggle: () -> Unit,
     onArcanaActivityObserved: () -> Unit,
     onSend: () -> Unit,
 ) {
@@ -1566,19 +1601,23 @@ private fun XWideBody(
                 selectedRepo = selectedRepo,
                 selectedAgent = selectedAgent,
                 query = query,
+                composerMode = composerMode,
                 viewer = viewer,
                 sessions = sessions,
                 selectedSessionKey = selectedSessionKey,
                 sessionMessage = sessionMessage,
                 sessionLedger = sessionLedger,
                 runtimeId = runtimeId,
+                runtimeState = runtimeState,
                 inputUi = inputUi,
                 arcanaSubmitting = arcanaSubmitting,
                 debugTelemetry = debugTelemetry,
                 commandOutputsExpanded = commandOutputsExpanded,
                 onCommandOutputDefaultChanged = onCommandOutputDefaultChanged,
+                onSessionAction = onSessionAction,
                 onSessionSelected = onSessionSelected,
                 onQueryChanged = onQueryChanged,
+                onAudioToggle = onAudioToggle,
                 onArcanaActivityObserved = onArcanaActivityObserved,
                 onSend = onSend,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -1595,20 +1634,24 @@ private fun XCompactBody(
     selectedRepo: XRepoPreview?,
     selectedAgent: XAgent,
     query: TextFieldValue,
+    composerMode: XComposerMode,
     viewer: OpsViewerDto,
     sessions: List<OpsSessionSummaryDto>,
     selectedSessionKey: String?,
     sessionMessage: String,
     sessionLedger: XSessionLedger,
     runtimeId: String?,
+    runtimeState: OpsSessionStateDto?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
     debugTelemetry: Boolean,
     commandOutputsExpanded: Boolean,
     onCommandOutputDefaultChanged: (Boolean) -> Unit,
+    onSessionAction: (OpsSessionActionDto) -> Unit,
     onRepoSelected: (Long) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
+    onAudioToggle: () -> Unit,
     onArcanaActivityObserved: () -> Unit,
     onSend: () -> Unit,
 ) {
@@ -1621,19 +1664,23 @@ private fun XCompactBody(
             selectedRepo,
             selectedAgent,
             query,
+            composerMode,
             viewer,
             sessions,
             selectedSessionKey,
             sessionMessage,
             sessionLedger,
             runtimeId,
+            runtimeState,
             inputUi,
             arcanaSubmitting,
             debugTelemetry,
             commandOutputsExpanded,
             onCommandOutputDefaultChanged,
+            onSessionAction,
             onSessionSelected,
             onQueryChanged,
+            onAudioToggle,
             onArcanaActivityObserved,
             onSend,
             Modifier.fillMaxWidth().weight(1f, fill = true),
@@ -1710,19 +1757,23 @@ private fun XRightStage(
     selectedRepo: XRepoPreview?,
     selectedAgent: XAgent,
     query: TextFieldValue,
+    composerMode: XComposerMode,
     viewer: OpsViewerDto,
     sessions: List<OpsSessionSummaryDto>,
     selectedSessionKey: String?,
     sessionMessage: String,
     sessionLedger: XSessionLedger,
     runtimeId: String?,
+    runtimeState: OpsSessionStateDto?,
     inputUi: XInputUi,
     arcanaSubmitting: Boolean,
     debugTelemetry: Boolean,
     commandOutputsExpanded: Boolean,
     onCommandOutputDefaultChanged: (Boolean) -> Unit,
+    onSessionAction: (OpsSessionActionDto) -> Unit,
     onSessionSelected: (OpsSessionSummaryDto) -> Unit,
     onQueryChanged: (TextFieldValue) -> Unit,
+    onAudioToggle: () -> Unit,
     onArcanaActivityObserved: () -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1773,6 +1824,8 @@ private fun XRightStage(
                         projection.events,
                         debugTelemetry,
                         commandOutputsExpanded,
+                        runtimeState,
+                        onSessionAction,
                         onCommandOutputDefaultChanged,
                     )
                 }
@@ -1787,12 +1840,13 @@ private fun XRightStage(
             actionColor = inputUi.actionColor,
             enabled = inputUi.enabled,
             working = working,
+            mode = composerMode,
+            onAudioToggle = onAudioToggle,
             onSend = onSend,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset { IntOffset(0, (inputTravel * inputBias.value).roundToPx()) }
-                .widthIn(max = 760.dp)
-                .fillMaxWidth()
+                .fillMaxWidth(0.8f)
                 .height(inputLaneHeight),
         )
     }
@@ -1976,12 +2030,91 @@ private fun XSessionCard(
 }
 
 @Composable
+private fun XSessionControl(
+    mark: String,
+    label: String,
+    tone: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val light by animateFloatAsState(
+        targetValue = when {
+            !enabled -> 0.14f
+            hovered -> 1f
+            else -> 0.46f
+        },
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "x-session-control-light",
+    )
+    val shape = RoundedCornerShape(7.dp)
+    Row(
+        modifier = Modifier
+            .height(27.dp)
+            .dropShadow(
+                shape,
+                Shadow(
+                    radius = if (hovered && enabled) 7.dp else 3.dp,
+                    offset = DpOffset(0.dp, 2.dp),
+                    color = tone,
+                    alpha = 0.18f * light,
+                ),
+            )
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.055f * light),
+                        tone.copy(alpha = 0.10f * light),
+                        Color(0xF005080C),
+                    ),
+                ),
+                shape,
+            )
+            .innerShadow(shape, Shadow(radius = 5.dp, offset = DpOffset(0.dp, 2.dp), color = Color.Black, alpha = 0.72f))
+            .innerShadow(shape, Shadow(radius = 1.dp, offset = DpOffset(0.dp, (-1).dp), color = tone, alpha = 0.24f * light))
+            .border(
+                BorderStroke(
+                    1.dp,
+                    Brush.verticalGradient(
+                        listOf(tone.copy(alpha = 0.42f * light), Color.Black.copy(alpha = 0.82f)),
+                    ),
+                ),
+                shape,
+            )
+            .clip(shape)
+            .hoverable(interaction)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(mark, color = tone.copy(alpha = 0.24f + 0.68f * light), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text(
+            label.uppercase(),
+            color = Color(0xFFDCE7ED).copy(alpha = 0.18f + 0.64f * light),
+            fontSize = 7.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+        )
+    }
+}
+
+@Composable
 private fun XTranscript(
     repo: XRepoPreview?,
     agent: XAgent,
     sourceEvents: List<XRenderedEvent>,
     debugTelemetry: Boolean,
     commandOutputsExpanded: Boolean,
+    runtimeState: OpsSessionStateDto?,
+    onSessionAction: (OpsSessionActionDto) -> Unit,
     onCommandOutputDefaultChanged: (Boolean) -> Unit,
 ) {
     val events = remember(sourceEvents, debugTelemetry) {
@@ -2063,7 +2196,30 @@ private fun XTranscript(
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             XSkeuoText(agent.label, 27.sp, maxLines = 1)
-            Text(repo?.name.orEmpty(), color = cyan.copy(alpha = 0.75f), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(
+                    repo?.name.orEmpty(),
+                    color = cyan.copy(alpha = 0.52f),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 180.dp),
+                )
+                Box(Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.10f)))
+                XSessionControl(
+                    mark = "Ⅱ",
+                    label = "interrupt",
+                    tone = Color(0xFF69C9F2),
+                    enabled = runtimeState == OpsSessionStateDto.RUNNING,
+                ) { onSessionAction(OpsSessionActionDto.INTERRUPT) }
+                XSessionControl(
+                    mark = "■",
+                    label = "stop",
+                    tone = Color(0xFFC44058),
+                    enabled = runtimeState?.isActiveRuntime == true,
+                ) { onSessionAction(OpsSessionActionDto.STOP) }
+            }
         }
         Box(
             Modifier
@@ -2629,7 +2785,7 @@ private fun XRitualRow(label: String, value: String, color: Color, family: FontF
     }
 }
 
-private fun JsonObject.field(name: String) = this[name].display()
+internal fun JsonObject.field(name: String) = this[name].display()
 
 private fun JsonObject.xCodexText() = (this["content"] as? JsonArray).orEmpty().mapNotNull { content ->
     (content as? JsonObject)?.field("text")?.takeIf(String::isNotBlank)
@@ -2639,10 +2795,10 @@ private fun OpsSessionEventDto.xWithCodexItem(item: JsonObject) = copy(
     structured = structured?.let { it.copy(payload = JsonObject(it.payload + ("item" to item))) },
 )
 
-private fun JsonElement?.display(limit: Int = 1_200): String {
+internal fun JsonElement?.display(limit: Int? = null): String {
     if (this == null || this is JsonNull) return ""
     val value = runCatching { jsonPrimitive.contentOrNull }.getOrNull() ?: toString()
-    return if (value.length <= limit) value else value.take(limit) + "…"
+    return if (limit == null || value.length <= limit) value else value.take(limit) + "…"
 }
 
 private fun Long.xSessionTime(): String {

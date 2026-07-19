@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsSessionCommandDto
@@ -56,6 +57,7 @@ import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
 import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
+import net.sdfgsdfg.data.model.canRunSessions
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
 
 private fun OpsSummaryDto.issueTraceShape() =
@@ -91,6 +93,7 @@ fun DashboardApp(
     val sessionInbox = remember { Channel<OpsSessionEventDto>(Channel.UNLIMITED) }
     val sessionLedger = remember { XSessionLedger() }
     var viewer by remember { mutableStateOf(OpsViewerDto()) }
+    var viewerResolved by remember { mutableStateOf(false) }
     var activeRunEvents by remember { mutableStateOf(emptyList<OpsRunEventDto>()) }
     var issueEditorActive by remember { mutableStateOf(false) }
     var freshXSignal by remember { mutableStateOf(0) }
@@ -99,12 +102,28 @@ fun DashboardApp(
     val mounted = remember { booleanArrayOf(true) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
+    val canRunSessions = viewerResolved && viewer.canRunSessions()
+    val availableTabs = remember(canRunSessions) {
+        DashboardTab.entries.filter { it != DashboardTab.Arcana || canRunSessions }
+    }
+    val visibleTab = selectedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
+    val tabMotion = rememberLiquidTabMotionState(visibleTab)
+    var presentedTab by remember { mutableStateOf(visibleTab) }
+    val renderedTab = presentedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
 
     fun refreshViewer() {
         loadOpsViewer(
-            onLoaded = { if (mounted[0]) viewer = it },
+            onLoaded = {
+                if (mounted[0]) {
+                    viewer = it
+                    viewerResolved = true
+                }
+            },
             onFailed = {
-                if (mounted[0]) viewer = OpsViewerDto()
+                if (mounted[0]) {
+                    viewer = OpsViewerDto()
+                    viewerResolved = true
+                }
                 issueFrameTrace("viewer-load-failed") { it.ifBlank { "Failed to load ops viewer" } }
             },
         )
@@ -201,28 +220,81 @@ fun DashboardApp(
     }
     LaunchedEffect(arrowShiftSignal) {
         val shift = arrowShiftSignal - handledArrowShiftSignal
-        if (shift != 0 && !issueEditorActive) selectedTab = selectedTab.shift(shift).also { writeDashboardPref("ops.tab", it.name) }
+        if (shift != 0 && !issueEditorActive) selectedTab = visibleTab.shift(shift, availableTabs).also { writeDashboardPref("ops.tab", it.name) }
         handledArrowShiftSignal = arrowShiftSignal
     }
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != DashboardTab.Issues) issueEditorActive = false
+    LaunchedEffect(viewerResolved, canRunSessions) {
+        if (viewerResolved && !canRunSessions) {
+            if (selectedTab == DashboardTab.Arcana) {
+                selectedTab = DashboardTab.Home
+                writeDashboardPref("ops.tab", DashboardTab.Home.name)
+            }
+            if (presentedTab == DashboardTab.Arcana) presentedTab = DashboardTab.Home
+            tabMotion.forceSnap(DashboardTab.Home)
+        }
+    }
+    LaunchedEffect(visibleTab, viewerResolved, canRunSessions) {
+        if (visibleTab != DashboardTab.Issues) issueEditorActive = false
+        if (viewerResolved && !canRunSessions) {
+            if (presentedTab == DashboardTab.Arcana) presentedTab = DashboardTab.Home
+            tabMotion.forceSnap(DashboardTab.Home)
+            return@LaunchedEffect
+        }
+        while (!tabMotion.ready) withFrameNanos { }
+        if (presentedTab == visibleTab) {
+            val flight = launch { tabMotion.moveTo(visibleTab) }
+            tabMotion.setXExpanded(visibleTab == DashboardTab.Arcana)
+            flight.join()
+            return@LaunchedEffect
+        }
+        when {
+            presentedTab == DashboardTab.Arcana -> {
+                val collapse = launch { tabMotion.setXExpanded(false) }
+                delay(70)
+                val flight = launch { tabMotion.moveTo(visibleTab) }
+                while (
+                    tabMotion.xExpansion.value > 0.015f ||
+                    tabMotion.distanceTo(DashboardTab.Arcana) < 18.dp
+                ) withFrameNanos { }
+                presentedTab = visibleTab
+                collapse.join()
+                flight.join()
+            }
+            visibleTab == DashboardTab.Arcana -> {
+                tabMotion.setXExpanded(false, immediate = true)
+                val flight = launch { tabMotion.moveTo(DashboardTab.Arcana) }
+                while (
+                    tabMotion.phase < 0.82f ||
+                    tabMotion.distanceTo(DashboardTab.Arcana) > 6.dp
+                ) withFrameNanos { }
+                presentedTab = DashboardTab.Arcana
+                tabMotion.setXExpanded(true)
+                flight.join()
+            }
+            else -> {
+                val flight = launch { tabMotion.moveTo(visibleTab) }
+                while (tabMotion.phase < 0.38f) withFrameNanos { }
+                presentedTab = visibleTab
+                flight.join()
+            }
+        }
     }
     val windowKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
         if (event.type != KeyEventType.KeyDown) {
             false
-        } else if (event.key == Key.X && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
+        } else if (canRunSessions && event.key == Key.X && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
             selectedTab = DashboardTab.Arcana
             writeDashboardPref("ops.tab", selectedTab.name)
             freshXSignal++
             true
         } else if (issueEditorActive) {
             false
-        } else if (selectedTab == DashboardTab.Arcana) {
+        } else if (renderedTab == DashboardTab.Arcana) {
             windowKeys?.x?.invoke(event) ?: false
         } else if (focusedArrowKeys) {
             when (event.key) {
-                Key.DirectionLeft -> { selectedTab = selectedTab.shift(-1); writeDashboardPref("ops.tab", selectedTab.name); true }
-                Key.DirectionRight -> { selectedTab = selectedTab.shift(1); writeDashboardPref("ops.tab", selectedTab.name); true }
+                Key.DirectionLeft -> { selectedTab = visibleTab.shift(-1, availableTabs); writeDashboardPref("ops.tab", selectedTab.name); true }
+                Key.DirectionRight -> { selectedTab = visibleTab.shift(1, availableTabs); writeDashboardPref("ops.tab", selectedTab.name); true }
                 else -> false
             }
         } else {
@@ -265,7 +337,7 @@ fun DashboardApp(
                     val pageWidth = maxWidth
                     val pageHeight = maxHeight
                     Crossfade(
-                        targetState = selectedTab == DashboardTab.Arcana,
+                        targetState = renderedTab == DashboardTab.Arcana,
                         animationSpec = tween(760),
                         label = "dashboard-background-crossfade",
                     ) { xSelected ->
@@ -277,8 +349,8 @@ fun DashboardApp(
                     // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
                     // precision-trackpad fling deltas internally.
                     // https://youtrack.jetbrains.com/issue/CMP-10297
-                    LaunchedEffect(externalScrollDeltas, listState, selectedTab) {
-                        if (selectedTab == DashboardTab.Arcana) return@LaunchedEffect
+                    LaunchedEffect(externalScrollDeltas, listState, renderedTab) {
+                        if (renderedTab == DashboardTab.Arcana) return@LaunchedEffect
                         val deltas = externalScrollDeltas ?: return@LaunchedEffect
                         while (true) {
                             var pending = deltas.receiveCatching().getOrNull() ?: break
@@ -292,43 +364,38 @@ fun DashboardApp(
                     //endregion
                     val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
                     val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
-                    if (selectedTab == DashboardTab.Arcana) {
-                        Column(
-                            Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Header(
-                                selectedTab = selectedTab,
-                                onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
-                                socketState = socketState,
-                                viewer = viewer,
-                                onViewerChanged = ::refreshViewer,
-                            )
-                            if (loadState is OpsLoadState.Loading) {
-                                TopLoadTrace()
-                            }
-                            Spacer(Modifier.height(14.dp))
-                            ArcanaSessionsTab(
-                                windowKeys = windowKeys,
-                                freshXSignal = freshXSignal,
-                                viewer = viewer,
-                                socketState = socketState,
-                                workspaceEvent = workspaceEvent,
-                                sessionLedger = sessionLedger,
-                                sendWorkspaceCommand = { command ->
-                                    socketConnection?.send(
-                                        OpsSocketMessageDto("workspace_command", workspaceCommand = command),
-                                    ) == true
-                                },
-                                sendSessionCommand = { command: OpsSessionCommandDto ->
-                                    socketConnection?.send(
-                                        OpsSocketMessageDto("session_command", sessionCommand = command),
-                                    ) == true
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.height(14.dp))
-                        }
+                    if (renderedTab == DashboardTab.Arcana) {
+                        ArcanaSessionsTab(
+                            windowKeys = windowKeys,
+                            freshXSignal = freshXSignal,
+                            viewer = viewer,
+                            socketState = socketState,
+                            workspaceEvent = workspaceEvent,
+                            sessionLedger = sessionLedger,
+                            sendWorkspaceCommand = { command ->
+                                socketConnection?.send(
+                                    OpsSocketMessageDto("workspace_command", workspaceCommand = command),
+                                ) == true
+                            },
+                            sendSessionCommand = { command: OpsSessionCommandDto ->
+                                socketConnection?.send(
+                                    OpsSocketMessageDto("session_command", sessionCommand = command),
+                                ) == true
+                            },
+                            header = { context ->
+                                Header(
+                                    selectedTab = visibleTab,
+                                    tabs = availableTabs,
+                                    onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
+                                    socketState = socketState,
+                                    viewer = viewer,
+                                    onViewerChanged = ::refreshViewer,
+                                    tabMotion = tabMotion,
+                                    xContext = context,
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     } else {
                         LazyColumn(
                             state = listState,
@@ -338,11 +405,13 @@ fun DashboardApp(
                         ) {
                             item {
                                 Header(
-                                    selectedTab = selectedTab,
+                                    selectedTab = visibleTab,
+                                    tabs = availableTabs,
                                     onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
                                     socketState = socketState,
                                     viewer = viewer,
                                     onViewerChanged = ::refreshViewer,
+                                    tabMotion = tabMotion,
                                 )
                                 if (loadState is OpsLoadState.Loading) {
                                     TopLoadTrace()
@@ -353,7 +422,7 @@ fun DashboardApp(
                             }
                             item(key = "tab-content") {
                                 Crossfade(
-                                    targetState = selectedTab,
+                                    targetState = renderedTab,
                                     modifier = Modifier.fillMaxWidth(),
                                     label = "dashboard-tab-crossfade",
                                 ) { tab ->
@@ -378,7 +447,7 @@ fun DashboardApp(
                                     }
                                 }
                             }
-                            if (selectedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
+                            if (renderedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
                                 ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
                             }
                             item(key = "tab-content-bottom") {

@@ -38,6 +38,7 @@ import net.sdfgsdfg.data.model.OpsWorkspaceEventKindDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventStatusDto
 import net.sdfgsdfg.data.model.RepoIssuePatchDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.data.model.canRunSessions
 import net.sdfgsdfg.data.model.isFreshForIssuePatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet

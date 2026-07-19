@@ -8,6 +8,8 @@ const val OPS_CAPABILITY_ISSUES_WRITE = "issues:write"
 const val OPS_CAPABILITY_SESSIONS_RUN = "sessions:run"
 const val ARCANA_PYRAMID_RUN_LABEL = "q arcana full pyramid"
 
+fun OpsViewerDto.canRunSessions() = OPS_CAPABILITY_SESSIONS_RUN in capabilities
+
 val arcanaTestLayerKeys = listOf("unit", "integration", "e2e", "benchmarks")
 
 fun arcanaLayerDisplayName(layer: String) = when (layer) {

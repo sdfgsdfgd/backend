@@ -4,6 +4,7 @@ import io.ktor.server.application.ApplicationCall
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_ISSUES_WRITE
 import net.sdfgsdfg.data.model.OPS_CAPABILITY_SESSIONS_RUN
 import net.sdfgsdfg.data.model.OpsViewerDto
+import net.sdfgsdfg.data.model.canRunSessions
 import java.net.InetAddress
 import java.net.http.HttpClient
 import java.nio.file.Files
@@ -70,8 +71,6 @@ internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSessio
 }
 
 internal fun OpsViewerDto.canWriteIssues() = issueWrite || OPS_CAPABILITY_ISSUES_WRITE in capabilities
-
-internal fun OpsViewerDto.canRunSessions() = OPS_CAPABILITY_SESSIONS_RUN in capabilities
 
 internal fun isOwnerNetworkIp(ip: String) = ownerNetworkProof(ip) != null
 
