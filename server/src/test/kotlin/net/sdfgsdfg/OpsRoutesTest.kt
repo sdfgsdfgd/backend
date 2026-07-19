@@ -24,6 +24,8 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.serialization.encodeToString
@@ -60,6 +62,7 @@ import net.sdfgsdfg.data.model.SelfTestResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -515,6 +518,73 @@ class OpsRoutesTest {
                     assertEquals(listOf(1L, 2L), listOf(nextSession(first.incoming), nextSession(first.incoming)).map { it.sequence })
                     assertEquals(2L, nextSession(incoming).sequence)
                 }
+            }
+        } finally {
+            hub.close()
+        }
+    }
+
+    @Test
+    fun disconnectedSessionCommandCannotPoisonViewerCommands() = testApplication {
+        val staleStarted = CompletableDeferred<Unit>()
+        val staleCancelled = CompletableDeferred<Unit>()
+        val staleInvocations = AtomicInteger()
+        val hub = OpsSocketHub(OpsSessionCommandHandler { _, command, emit ->
+            if (command.requestId == "stale-start") {
+                staleInvocations.incrementAndGet()
+                staleStarted.complete(Unit)
+                try {
+                    awaitCancellation()
+                } finally {
+                    staleCancelled.complete(Unit)
+                }
+            } else {
+                emit(OpsSessionEventDto(requestId = command.requestId, kind = OpsSessionEventKindDto.SESSIONS))
+            }
+        })
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                    opsSocketHub = hub,
+                )
+            }
+        }
+
+        fun message(command: OpsSessionCommandDto) = Frame.Text(json.encodeToString(OpsSocketMessageDto(
+            type = "session_command",
+            sessionCommand = command,
+        )))
+        suspend fun nextSession(incoming: ReceiveChannel<Frame>): OpsSessionEventDto = withTimeout(5_000L) {
+            while (true) {
+                json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText()).sessionEvent?.let { return@withTimeout it }
+            }
+            error("unreachable")
+        }
+
+        try {
+            val socketClient = createClient { install(ClientWebSockets) }
+            socketClient.webSocket({ url(OPS_WS_PATH); header(HttpHeaders.Host, "ops.sdfgsdfg.net") }) {
+                val stale = message(OpsSessionCommandDto("stale-start", OpsSessionActionDto.CREATE_SESSION))
+                repeat(3) { send(stale) }
+                withTimeout(5_000L) { staleStarted.await() }
+                send(message(OpsSessionCommandDto("dedupe-barrier", OpsSessionActionDto.LIST_SESSIONS)))
+                assertEquals("dedupe-barrier", nextSession(incoming).requestId)
+                assertEquals(1, staleInvocations.get())
+
+                socketClient.webSocket({ url(OPS_WS_PATH); header(HttpHeaders.Host, "ops.sdfgsdfg.net") }) {
+                    send(message(OpsSessionCommandDto("live-list", OpsSessionActionDto.LIST_SESSIONS)))
+                    assertEquals("live-list", nextSession(incoming).requestId)
+                }
+            }
+            withTimeout(5_000L) { staleCancelled.await() }
+
+            socketClient.webSocket({ url(OPS_WS_PATH); header(HttpHeaders.Host, "ops.sdfgsdfg.net") }) {
+                send(message(OpsSessionCommandDto("fresh-start", OpsSessionActionDto.CREATE_SESSION)))
+                assertEquals("fresh-start", nextSession(incoming).requestId)
             }
         } finally {
             hub.close()

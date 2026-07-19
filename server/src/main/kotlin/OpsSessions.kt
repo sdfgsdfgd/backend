@@ -280,7 +280,13 @@ internal class OpsSessionService(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        runCatching { runBlocking { withTimeout(5_000) { runtimes.values.forEach { runCatching { it.process?.stop() } } } } }
+        runCatching {
+            runBlocking {
+                withTimeout(40_000) {
+                    runtimes.values.mapNotNull { it.process }.map { launch { runCatching { it.stop() } } }.joinAll()
+                }
+            }
+        }
         scope.cancel()
         runtimes.clear()
     }
@@ -576,8 +582,11 @@ private class StreamProcess(
         withContext(Dispatchers.IO) {
             runCatching { writer.close() }
             runCatching { ProcessBuilder("kill", "-INT", process.pid().toString()).start().waitFor() }
-            if (!process.waitFor(3, TimeUnit.SECONDS)) process.destroy()
-            if (process.isAlive) process.destroyForcibly()
+            // Arcana's sandbox supervisor needs a bounded drain window to rescue its durable DB before deployment stops the service cgroup.
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                process.destroy()
+                if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly()
+            }
         }
     }
 }

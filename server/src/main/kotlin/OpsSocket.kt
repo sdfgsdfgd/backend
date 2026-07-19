@@ -5,6 +5,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -20,12 +21,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import net.sdfgsdfg.data.model.IssueSummaryDto
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
+import net.sdfgsdfg.data.model.OpsSessionActionDto
 import net.sdfgsdfg.data.model.OpsSessionCommandDto
 import net.sdfgsdfg.data.model.OpsSessionEventDto
 import net.sdfgsdfg.data.model.OpsStatusDto
@@ -46,17 +49,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val opsSocketRefreshMs = 45_000L
 private const val opsSocketBroadcastDebounceMs = 120L
+private const val opsSocketSendTimeoutMs = 3_000L
 private const val issuePatchEventLimit = 6
+private val opsSessionStartActions = setOf(OpsSessionActionDto.CREATE_SESSION, OpsSessionActionDto.RESUME_SESSION)
 
 @OptIn(FlowPreview::class)
 /** Runtime-local fanout and transient run state; separate instances must never cross-contaminate. */
 internal class OpsSocketHub(
     private val sessionHandler: OpsSessionCommandHandler = OpsSessionService(),
 ) : AutoCloseable {
-    private data class Client(
+    private class Client(
         val session: DefaultWebSocketServerSession,
         val principal: OpsSocketPrincipal,
+        val scope: CoroutineScope,
         val sendLock: Mutex = Mutex(),
+        val sessionJobs: ConcurrentHashMap<String, Job> = ConcurrentHashMap(),
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -73,7 +80,7 @@ internal class OpsSocketHub(
     )
     private val activeRuns = ConcurrentHashMap<String, OpsRunEventDto>()
     private val workspaceJobs = ConcurrentHashMap<String, Job>()
-    private val sessionLocks = ConcurrentHashMap<String, Mutex>()
+    private val sessionStartLocks = ConcurrentHashMap<String, Mutex>()
     private val closed = AtomicBoolean()
     private var loopJob: Job? = null
     private var summaryProvider: (() -> OpsSummaryDto)? = null
@@ -105,7 +112,7 @@ internal class OpsSocketHub(
     }
 
     suspend fun serve(session: DefaultWebSocketServerSession, principal: OpsSocketPrincipal) {
-        val client = Client(session, principal)
+        val client = Client(session, principal, CoroutineScope(SupervisorJob(scope.coroutineContext[Job]) + Dispatchers.Default))
         clients += client
         ensureLoop()
         sendSummary(client)
@@ -125,7 +132,7 @@ internal class OpsSocketHub(
                 }
             }
         } finally {
-            clients -= client
+            disconnect(client)
             stopLoopIfIdle()
         }
     }
@@ -164,11 +171,12 @@ internal class OpsSocketHub(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        clients.forEach { disconnect(it, closeSession = true) }
         scope.cancel()
         clients.clear()
         activeRuns.clear()
         workspaceJobs.clear()
-        sessionLocks.clear()
+        sessionStartLocks.clear()
         (sessionHandler as? AutoCloseable)?.close()
         summaryProvider = null
         workspaceHandler = null
@@ -212,14 +220,14 @@ internal class OpsSocketHub(
 
     private suspend fun broadcastNow(message: OpsSocketMessageDto) {
         clients.forEach { client ->
-            runCatching { client.send(message) }.onFailure { clients -= client }
+            runCatching { client.send(message) }.onFailure { disconnect(client) }
         }
         stopLoopIfIdle()
     }
 
     private suspend fun sendSummary(client: Client) {
         currentSummary()?.let {
-            runCatching { client.send(it.summaryMessage()) }.onFailure { clients -= client }
+            runCatching { client.send(it.summaryMessage()) }.onFailure { disconnect(client) }
         }
     }
 
@@ -249,26 +257,51 @@ internal class OpsSocketHub(
             return
         }
         val viewerId = client.principal.viewer.userId
-        scope.launch {
-            sessionLocks.computeIfAbsent(viewerId) { Mutex() }.withLock {
+        val job = client.scope.launch(start = CoroutineStart.LAZY) {
+            val handle: suspend () -> Unit = {
                 sessionHandler.handle(client.principal, command) { event ->
                     if (event.replay || event.sequence == null) client.send(event.message())
                     else broadcastViewer(viewerId, event.message())
                 }
             }
+            if (command.action in opsSessionStartActions) {
+                sessionStartLocks.computeIfAbsent(viewerId) { Mutex() }.withLock { handle() }
+            } else {
+                handle()
+            }
+        }
+        if (client.sessionJobs.putIfAbsent(command.requestId, job) == null) {
+            job.invokeOnCompletion { client.sessionJobs.remove(command.requestId, job) }
+            job.start()
+        } else {
+            job.cancel()
         }
     }
 
     private suspend fun broadcastViewer(viewerId: String, message: OpsSocketMessageDto) {
         clients.filter { it.principal.viewer.userId == viewerId }.forEach { client ->
-            runCatching { client.send(message) }.onFailure { clients -= client }
+            runCatching { client.send(message) }.onFailure { disconnect(client) }
         }
     }
 
     private suspend fun currentSummary() = withContext(Dispatchers.IO) { summaryProvider?.invoke() }
 
-    private suspend fun Client.send(message: OpsSocketMessageDto) = sendLock.withLock {
-        session.send(json.encodeToString(message))
+    private fun disconnect(client: Client, closeSession: Boolean = false) {
+        clients -= client
+        client.scope.cancel()
+        client.sessionJobs.clear()
+        if (closeSession) client.session.cancel()
+    }
+
+    private suspend fun Client.send(message: OpsSocketMessageDto) {
+        try {
+            withTimeout(opsSocketSendTimeoutMs) {
+                sendLock.withLock { session.send(json.encodeToString(message)) }
+            }
+        } catch (failure: Throwable) {
+            disconnect(this, closeSession = true)
+            throw failure
+        }
     }
 }
 
