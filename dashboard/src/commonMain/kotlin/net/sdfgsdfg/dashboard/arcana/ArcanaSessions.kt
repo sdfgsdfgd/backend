@@ -1795,8 +1795,8 @@ private fun XRightStage(
         label = "x-input-position",
     )
     BoxWithConstraints(modifier) {
-        val inputLaneHeight = 176.dp
-        val inputTravel = (maxHeight - inputLaneHeight).coerceAtLeast(0.dp)
+        val inputRestingLaneHeight = 176.dp
+        val inputTravel = (maxHeight - inputRestingLaneHeight).coerceAtLeast(0.dp)
         AnimatedContent(
             targetState = phase,
             transitionSpec = {
@@ -1812,7 +1812,7 @@ private fun XRightStage(
             label = "x-phase-transition",
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = if (phase == XPhase.SESSION) 0.dp else inputLaneHeight),
+                .padding(bottom = if (phase == XPhase.SESSION) 0.dp else inputRestingLaneHeight),
         ) { current ->
             when (current) {
                 XPhase.REPOSITORIES -> XWelcome(viewer)
@@ -1844,10 +1844,10 @@ private fun XRightStage(
             onAudioToggle = onAudioToggle,
             onSend = onSend,
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset { IntOffset(0, (inputTravel * inputBias.value).roundToPx()) }
-                .fillMaxWidth(0.8f)
-                .height(inputLaneHeight),
+                .align(Alignment.BottomCenter)
+                .offset { IntOffset(0, (-inputTravel * (1f - inputBias.value)).roundToPx()) }
+                .fillMaxWidth()
+                .heightIn(max = maxHeight),
         )
     }
 }

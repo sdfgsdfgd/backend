@@ -33,7 +33,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -125,6 +124,7 @@ internal fun XLuxuryInput(
 ) {
     BoxWithConstraints(modifier.graphicsLayer { clip = false }) {
         val density = LocalDensity.current
+        val bleed = 36.dp
         val textStyle = remember {
             TextStyle(
                 color = Color(0xCC8A6534),
@@ -145,39 +145,49 @@ internal fun XLuxuryInput(
             spring(stiffness = Spring.StiffnessLow, dampingRatio = 0.7f),
             label = "x-action-width",
         )
-        val measureCap = (maxWidth - targetActionWidth - 90.dp).coerceAtLeast(120.dp)
+        val maxIslandWidth = minOf(maxWidth * 0.9f, maxWidth - targetActionWidth - bleed * 2).coerceAtLeast(220.dp)
+        val maxIslandHeight = minOf(maxHeight * 0.9f, maxHeight - bleed * 2).coerceAtLeast(48.dp)
+        val maxHorizontalTextInset = maxOf(24.dp, maxIslandWidth * 0.05f)
+        val measureCap = (maxIslandWidth - maxHorizontalTextInset * 2).coerceAtLeast(120.dp)
         val textMeasurer = rememberTextMeasurer()
-        val measured = remember(value.text, placeholder, textStyle, measureCap, density) {
+        val measured = remember(value.text, textStyle, measureCap, density) {
             textMeasurer.measure(
-                text = AnnotatedString(value.text.ifEmpty { placeholder }),
+                text = AnnotatedString(value.text),
                 style = textStyle,
                 constraints = Constraints(maxWidth = with(density) { measureCap.roundToPx() }),
             )
         }
-        val maxIslandWidth = (maxWidth - targetActionWidth - 90.dp).coerceAtLeast(220.dp)
-        val targetSize = DpSize(
-            width = with(density) { measured.size.width.toDp() }.plus(96.dp).coerceIn(220.dp, maxIslandWidth),
-            height = with(density) { measured.size.height.toDp() }.plus(30.dp).coerceIn(48.dp, 104.dp),
-        )
-        var retainedContentSize by remember { mutableStateOf(targetSize) }
-        SideEffect {
-            if (value.text.isNotEmpty() && retainedContentSize != targetSize) retainedContentSize = targetSize
+        val measuredSize = with(density) {
+            DpSize(measured.size.width.toDp(), measured.size.height.toDp())
         }
-        val islandTargetSize = if (working && value.text.isEmpty()) retainedContentSize else targetSize
-        val islandSize by animateValueAsState(
-            targetValue = islandTargetSize,
-            typeConverter = TwoWayConverter(
+        val targetSize = DpSize(
+            width = maxOf(measuredSize.width + 96.dp, measuredSize.width / 0.9f).coerceIn(220.dp, maxIslandWidth),
+            height = maxOf(measuredSize.height + 30.dp, measuredSize.height / 0.9f).coerceIn(48.dp, maxIslandHeight),
+        )
+        val islandSizeConverter = remember {
+            TwoWayConverter<DpSize, AnimationVector2D>(
                 convertToVector = { AnimationVector2D(it.width.value, it.height.value) },
                 convertFromVector = { DpSize(it.v1.dp, it.v2.dp) },
-            ),
-            animationSpec = spring(
-                stiffness = Spring.StiffnessVeryLow,
-                dampingRatio = 0.45f,
-            ),
+            )
+        }
+        val islandSizeSpring = remember {
+            spring(
+                stiffness = Spring.StiffnessVeryLow * 0.7f,
+                dampingRatio = 0.4f,
+                visibilityThreshold = DpSize(0.4.dp, 0.4.dp),
+            )
+        }
+        val islandSize by animateValueAsState(
+            targetValue = targetSize,
+            typeConverter = islandSizeConverter,
+            animationSpec = islandSizeSpring,
             label = "x-island-size",
         )
+        val textInset = DpSize(
+            width = maxOf(24.dp, islandSize.width * 0.05f),
+            height = maxOf(8.dp, islandSize.height * 0.05f),
+        )
 
-        val bleed = 36.dp
         val bubbleSize = DpSize(actionWidth, 48.dp)
         val splitOffset = 0.dp
         val groupHeight = maxOf(islandSize.height, bubbleSize.height)
@@ -193,6 +203,7 @@ internal fun XLuxuryInput(
         val liquidMotion = rememberXLiquidMotion(mode)
         val fluidAction = actionLabel == null || mode == XComposerMode.AUDIO
         val merging = mode == XComposerMode.IDLE
+        XLiquidSoundEffect(separated = fluidAction && !merging)
         val liquidDeformation = remember(liquidMotion, fluidAction, merging) {
             derivedStateOf {
                 xLiquidDeformation(
@@ -275,6 +286,7 @@ internal fun XLuxuryInput(
                 bodyLeft = bleed,
                 bodyTop = islandY,
                 bodySize = islandSize,
+                bodyTargetSize = targetSize,
                 actionTop = bubbleY,
                 actionSize = bubbleSize,
                 splitGap = splitOffset,
@@ -321,6 +333,7 @@ internal fun XLuxuryInput(
                 placeholder = placeholder,
                 focusRequester = focusRequester,
                 textStyle = textStyle,
+                textInset = textInset,
                 fieldModifier = islandGeometry,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -361,6 +374,7 @@ private fun XLuxuryCaretField(
     placeholder: String,
     focusRequester: FocusRequester,
     textStyle: TextStyle,
+    textInset: DpSize,
     fieldModifier: Modifier,
     modifier: Modifier,
     caretSpec: XCaretSpec = XCaretSpec(),
@@ -484,7 +498,7 @@ private fun XLuxuryCaretField(
                         }
                     }
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 8.dp)
+                    .padding(horizontal = textInset.width, vertical = textInset.height)
                     .onFocusChanged { focused = it.isFocused },
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
@@ -495,7 +509,6 @@ private fun XLuxuryCaretField(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 16.sp,
                                 maxLines = 1,
-                                modifier = Modifier.padding(horizontal = 24.dp),
                             )
                         }
                         Box(

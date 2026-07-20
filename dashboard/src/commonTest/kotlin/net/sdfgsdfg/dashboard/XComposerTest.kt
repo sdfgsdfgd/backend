@@ -20,6 +20,14 @@ class XComposerTest {
     }
 
     @Test
+    fun soundFollowsOnlyActualLiquidTopologyEdges() {
+        assertEquals(XLiquidSoundCue.SEPARATE, xLiquidSoundCue(wasSeparated = false, isSeparated = true))
+        assertEquals(XLiquidSoundCue.UNIFY, xLiquidSoundCue(wasSeparated = true, isSeparated = false))
+        assertEquals(null, xLiquidSoundCue(wasSeparated = false, isSeparated = false))
+        assertEquals(null, xLiquidSoundCue(wasSeparated = true, isSeparated = true))
+    }
+
+    @Test
     fun ctrlJInsertionReplacesTheSelectionAndMovesTheCaretOnce() {
         assertEquals(
             TextFieldValue("before\nafter", TextRange(7)),

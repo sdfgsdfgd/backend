@@ -82,6 +82,11 @@ internal fun xLiquidProfileExponent(
     return lerp(resting, 2.2f, elongation * pressure * 0.42f)
 }
 
+internal fun xLiquidResizeStrain(current: Float, target: Float): Float {
+    val relative = (target - current) / maxOf(abs(current), abs(target), 1f)
+    return relative / (1f + abs(relative) / 0.18f)
+}
+
 @Immutable
 internal data class XLiquidDeformation(
     val scaleX: Float,
@@ -153,6 +158,7 @@ internal fun XLiquidSurface(
     bodyLeft: Dp,
     bodyTop: Dp,
     bodySize: DpSize,
+    bodyTargetSize: DpSize,
     actionTop: Dp,
     actionSize: DpSize,
     splitGap: Dp,
@@ -179,6 +185,8 @@ internal fun XLiquidSurface(
         val bodyTopPx = bodyTop.toPx()
         val bodyWidthPx = bodySize.width.toPx()
         val bodyHeightPx = bodySize.height.toPx()
+        val bodyStrainX = xLiquidResizeStrain(bodyWidthPx, bodyTargetSize.width.toPx())
+        val bodyStrainY = xLiquidResizeStrain(bodyHeightPx, bodyTargetSize.height.toPx())
         val actionWidthPx = actionSize.width.toPx()
         val actionHeightPx = actionSize.height.toPx()
         val massScale = actionMassScale.coerceIn(0.5f, 1f)
@@ -200,6 +208,7 @@ internal fun XLiquidSurface(
         )
         builder.uniform("bodyCenter", bodyLeftPx + bodyWidthPx / 2f, bodyTopPx + bodyHeightPx / 2f)
         builder.uniform("bodyHalfSize", bodyWidthPx / 2f, bodyHeightPx / 2f)
+        builder.uniform("bodyStrain", bodyStrainX, bodyStrainY)
         builder.uniform("actionCenter", actionLeftPx + actionWidthPx / 2f, actionTop.toPx() + actionHeightPx / 2f)
         builder.uniform("actionHalfSize", massWidthPx / 2f, massHeightPx / 2f)
         builder.uniform("actionScale", shape.scaleX, shape.scaleY)
@@ -226,6 +235,7 @@ internal fun XLiquidSurface(
 internal const val X_LIQUID_SHADER = """
     uniform float2 bodyCenter;
     uniform float2 bodyHalfSize;
+    uniform float2 bodyStrain;
     uniform float2 actionCenter;
     uniform float2 actionHalfSize;
     uniform float2 actionScale;
@@ -276,6 +286,7 @@ internal const val X_LIQUID_SHADER = """
     }
 
     float bodyDistanceAt(float2 point) {
+        float localY = point.y - bodyCenter.y;
         float shoulder = smoothstep(
             bodyCenter.x + bodyHalfSize.x - bodyHalfSize.y * 1.55,
             bodyCenter.x + bodyHalfSize.x + bodyHalfSize.y * 0.20,
@@ -294,17 +305,25 @@ internal const val X_LIQUID_SHADER = """
         float axialPressure =
             tension * 0.30 -
             capillaryEigenmode * 0.42 +
-            mergeRecoilAt() * 0.12;
+            mergeRecoilAt() * 0.12 +
+            bodyStrain.x * 0.90 -
+            bodyStrain.y * 0.22;
+        float radialPressure =
+            bodyStrain.y * 0.72 -
+            bodyStrain.x * 0.12;
         float axialDisplacement =
             bodyHalfSize.y * axialPressure * membraneMode;
+        float radialMode = vertical * (2.0 - vertical);
+        float radialDisplacement =
+            bodyHalfSize.y * radialPressure * radialMode;
         float2 warpedPoint = point - float2(
             shoulder * axialDisplacement,
-            0.0
+            sign(localY) * radialDisplacement
         );
         return roundedBox(
             warpedPoint - bodyCenter,
             bodyHalfSize,
-            bodyHalfSize.y * 0.76
+            bodyHalfSize.y * 0.55
         );
     }
 
@@ -345,7 +364,9 @@ internal const val X_LIQUID_SHADER = """
         if (coverage <= 0.0) return half4(0.0);
         float weightBlendRadius = max(blendRadius, 1.0);
         float actionWeight = clamp(0.5 + 0.5 * (bodyDistance - actionDistance) / weightBlendRadius, 0.0, 1.0);
-        float strain = tension;
+        float resizeMagnitude = length(bodyStrain);
+        float resizeMotion = resizeMagnitude / (resizeMagnitude + 0.08);
+        float strain = max(tension, resizeMotion * 0.45);
         float capillaryMotion = abs(capillaryEigenmode);
         float mergeRecoil = mergeRecoilAt();
         float shoulderDistance = abs(point.x - (bodyCenter.x + bodyHalfSize.x));
