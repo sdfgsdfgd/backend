@@ -263,7 +263,9 @@ internal actual fun connectOpsSocket(
                                         val latency = message.clientTimestamp?.let { (System.currentTimeMillis() - it).coerceAtLeast(0L) }
                                         EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED, latency)) }
                                     } else {
-                                        EventQueue.invokeLater { onMessage(message) }
+                                        // DashboardApp hands this straight to its ordered coroutine inbox;
+                                        // an AWT hop here can strand live output behind unrelated UI work.
+                                        onMessage(message)
                                     }
                                 }
                             }

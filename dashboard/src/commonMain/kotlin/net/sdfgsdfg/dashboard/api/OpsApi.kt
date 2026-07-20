@@ -30,6 +30,7 @@ internal expect fun loadOpsText(
     onFailed: (String) -> Unit,
 )
 
+/** [onMessage] is transport-thread neutral; the Compose caller owns UI dispatch. */
 internal expect fun connectOpsSocket(
     onMessage: (OpsSocketMessageDto) -> Unit,
     onState: (OpsSocketState) -> Unit,

@@ -51,7 +51,6 @@ import kotlinx.coroutines.launch
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsSessionCommandDto
-import net.sdfgsdfg.data.model.OpsSessionEventDto
 import net.sdfgsdfg.data.model.OpsSocketMessageDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.OpsSummaryDto
@@ -90,7 +89,7 @@ fun DashboardApp(
     var socketState by remember { mutableStateOf(OpsSocketState()) }
     var socketConnection by remember { mutableStateOf<OpsSocketConnection?>(null) }
     var workspaceEvent by remember { mutableStateOf<OpsWorkspaceEventDto?>(null) }
-    val sessionInbox = remember { Channel<OpsSessionEventDto>(Channel.UNLIMITED) }
+    val socketInbox = remember { Channel<OpsSocketMessageDto>(Channel.UNLIMITED) }
     val sessionLedger = remember { XSessionLedger() }
     var viewer by remember { mutableStateOf(OpsViewerDto()) }
     var viewerResolved by remember { mutableStateOf(false) }
@@ -176,29 +175,28 @@ fun DashboardApp(
     LaunchedEffect(Unit) {
         refreshViewer()
     }
-    LaunchedEffect(sessionInbox) {
-        for (event in sessionInbox) {
-            sessionLedger.append(event)
+    // One ordered coroutine owns all socket-driven Compose state. JVM transport can feed this
+    // directly without queuing every stream fragment behind unrelated AWT work.
+    LaunchedEffect(socketInbox) {
+        for (message in socketInbox) {
+            message.workspaceEvent?.let { workspaceEvent = it }
+            message.sessionEvent?.let(sessionLedger::append)
+            message.runEvent?.let { event ->
+                val key = "${event.repoId}:${event.run.label.runLifecycleLabel()}"
+                activeRunEvents = (activeRunEvents.filterNot { "${it.repoId}:${it.run.label.runLifecycleLabel()}" == key } + event).takeLast(20)
+            }
+            val summary = message.summary
+            val issuePatch = message.issuePatch
+            when {
+                summary != null -> applySummary(summary, "socket-summary")
+                issuePatch != null -> applyIssuePatch(issuePatch, "socket-issue-patch")
+            }
         }
     }
     DisposableEffect(Unit) {
         mounted[0] = true
         val connection = connectOpsSocket(
-            onMessage = { message ->
-                if (!mounted[0]) return@connectOpsSocket
-                message.workspaceEvent?.let { workspaceEvent = it }
-                message.sessionEvent?.let { sessionInbox.trySend(it) }
-                message.runEvent?.let { event ->
-                    val key = "${event.repoId}:${event.run.label.runLifecycleLabel()}"
-                    activeRunEvents = (activeRunEvents.filterNot { "${it.repoId}:${it.run.label.runLifecycleLabel()}" == key } + event).takeLast(20)
-                }
-                val summary = message.summary
-                val issuePatch = message.issuePatch
-                when {
-                    summary != null -> applySummary(summary, "socket-summary")
-                    issuePatch != null -> applyIssuePatch(issuePatch, "socket-issue-patch")
-                }
-            },
+            onMessage = { if (mounted[0]) socketInbox.trySend(it) },
             onState = { if (mounted[0]) socketState = it },
         )
         socketConnection = connection

@@ -67,6 +67,17 @@ class XTerminalAnsiTest {
     }
 
     @Test
+    fun firstSandboxLineProjectsWithoutWaitingForAnotherEvent() {
+        val first = event(1, "[sandbox] checking Docker image python-client against current Arcana dependencies\n")
+        val ledger = XSessionLedger()
+
+        ledger.append(first)
+
+        assertEquals(1, ledger.presentationRevision("ritual"))
+        assertEquals(first.text?.trimEnd(), ledger.snapshot().xRenderedEvents().single().text?.text)
+    }
+
+    @Test
     fun keepsStderrBlocksSeparateAcrossAStreamBoundary() {
         val first = event(1, "first\n", channel = OpsSessionChannelDto.STDERR)
         val stdout = event(2, "middle\n")
