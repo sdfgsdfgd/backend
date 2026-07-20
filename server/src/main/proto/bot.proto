@@ -60,7 +60,8 @@ message AskRequest {
     bool deepseek_search = 6;
     bool one_time = 7;
     string session_id = 8;
-    bool new_tab = 9;
+    reserved 9;
+    reserved "new_tab";
     bool end_session = 10;
     bool no_pace = 11;
     double pace_min_seconds = 12;

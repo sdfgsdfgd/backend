@@ -204,6 +204,7 @@ class CoreDtoSerializationTest {
         assertEquals("session-1", obj.getValue("session_id").jsonPrimitive.content)
         assertEquals(true, obj.getValue("deepseek_search").jsonPrimitive.boolean)
         assertEquals(true, obj.getValue("no_pace").jsonPrimitive.boolean)
+        assertFalse("new_tab" in obj)
         assertFalse("requestId" in obj)
         assertFalse("sessionId" in obj)
         assertFalse("deepseekSearch" in obj)
