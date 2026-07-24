@@ -131,7 +131,7 @@ internal fun deployGateArtifact(run: TestRunSummaryDto) = TestArtifactDto(
     summary = if (run.status == OpsStatusDto.OK) "4/4 deployment contracts passed" else "Deployment gate did not complete",
     cases = listOf(
         "verifyServer" to "Compiles the backend and runs its server and shared-contract tests.",
-        "dashboard build-if-needed" to "Rebuilds the web dashboard when tracked UI inputs changed; otherwise reuses the verified artifact.",
+        "verifyDashboard-if-needed" to "Runs dashboard checks and rebuilds its artifacts when tracked UI inputs changed; otherwise reuses the verified artifact.",
         "installServer" to "Installs the runnable backend distribution before the runtime swap.",
         "local smoke" to "Probes the restarted backend locally before the deployment is accepted.",
     ).map { (name, meaning) ->

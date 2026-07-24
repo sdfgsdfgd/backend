@@ -76,7 +76,7 @@ class TestArtifactRoutesTest {
         val artifact = json.decodeFromString<TestArtifactDto>(response.body<String>())
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(listOf("verifyServer", "dashboard build-if-needed", "installServer", "local smoke"), artifact.cases.map { it.name })
+        assertEquals(listOf("verifyServer", "verifyDashboard-if-needed", "installServer", "local smoke"), artifact.cases.map { it.name })
         assertEquals(4, artifact.cases.count { it.status == OpsStatusDto.OK })
     }
 }

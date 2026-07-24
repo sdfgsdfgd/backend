@@ -27,8 +27,12 @@ tasks.register("installServer") {
 
 tasks.register("verifyDashboard") {
     group = "verification"
-    description = "Builds the dashboard web and desktop entrypoints."
-    dependsOn(":dashboard:web:wasmJsBrowserDistribution", ":dashboard:desktop:jvmJar")
+    description = "Checks the dashboard and builds its web and desktop entrypoints."
+    dependsOn(
+        ":dashboard:check",
+        ":dashboard:web:wasmJsBrowserDistribution",
+        ":dashboard:desktop:jvmJar",
+    )
 }
 
 subprojects {

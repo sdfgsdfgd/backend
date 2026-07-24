@@ -3,7 +3,7 @@ package net.sdfgsdfg.dashboard
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import net.sdfgsdfg.data.model.OpsAgentDto
 import net.sdfgsdfg.data.model.OpsSessionChannelDto
@@ -219,7 +219,7 @@ class XTerminalAnsiTest {
     }
 
     @Test
-    fun correlatedControlReceiptWakesWithoutObservingStreamTraffic() = runBlocking {
+    fun correlatedControlReceiptWakesWithoutObservingStreamTraffic() = runTest {
         val ledger = XSessionLedger()
         val receipt = OpsSessionEventDto(
             kind = OpsSessionEventKindDto.SESSIONS,

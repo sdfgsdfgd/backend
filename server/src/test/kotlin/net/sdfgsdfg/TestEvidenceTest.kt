@@ -107,7 +107,7 @@ class TestEvidenceTest {
     fun failedDeployGateLeavesUnobservedStagesUnknown() {
         val artifact = deployGateArtifact(TestRunSummaryDto("deploy deadbee", OpsStatusDto.FAIL, detail = "verifyServer failed"))
         assertEquals(OpsStatusDto.FAIL, artifact.status)
-        assertEquals(listOf("verifyServer", "dashboard build-if-needed", "installServer", "local smoke"), artifact.cases.map { it.name })
+        assertEquals(listOf("verifyServer", "verifyDashboard-if-needed", "installServer", "local smoke"), artifact.cases.map { it.name })
         assertTrue(artifact.cases.all { it.status == OpsStatusDto.UNKNOWN })
     }
 
@@ -118,16 +118,17 @@ class TestEvidenceTest {
             [
               {"name":"local-tests","status":"completed","conclusion":"success","started_at":"2026-07-11T00:00:00Z","completed_at":"2026-07-11T00:00:02Z","html_url":"https://github.test/local"},
               {"name":"all-tests / server-py-live-selftest","status":"completed","conclusion":"failure","started_at":"2026-07-11T00:00:00Z","completed_at":"2026-07-11T00:00:05Z","html_url":"https://github.test/live"},
+              {"name":"all-tests / dashboard","status":"completed","conclusion":"success","started_at":"2026-07-11T00:00:00Z","completed_at":"2026-07-11T00:00:04Z","html_url":"https://github.test/dashboard"},
               {"name":"all-tests","status":"completed","conclusion":"failure","started_at":"2026-07-11T00:00:05Z","completed_at":"2026-07-11T00:00:06Z"}
             ]
             """.trimIndent(),
         ).jsonArray.map { it.jsonObject }
         val artifact = backendFullSuiteArtifact(TestRunSummaryDto("full suite", OpsStatusDto.FAIL), jobs)
 
-        assertEquals(listOf("Local backend runtime", "server_py live browser"), artifact.cases.map { it.name })
-        assertEquals(listOf(OpsStatusDto.OK, OpsStatusDto.FAIL), artifact.cases.map { it.status })
-        assertEquals(listOf(2_000.0, 5_000.0), artifact.cases.map { it.durationMs })
-        assertEquals("1/2 testchain branches passed", artifact.summary)
+        assertEquals(listOf("Local backend runtime", "server_py live browser", "Dashboard verification"), artifact.cases.map { it.name })
+        assertEquals(listOf(OpsStatusDto.OK, OpsStatusDto.FAIL, OpsStatusDto.OK), artifact.cases.map { it.status })
+        assertEquals(listOf(2_000.0, 5_000.0, 4_000.0), artifact.cases.map { it.durationMs })
+        assertEquals("2/3 testchain branches passed", artifact.summary)
     }
 }
 

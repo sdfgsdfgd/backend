@@ -46,7 +46,7 @@ val scriptPath: String = "0_scripts/deploy.main.kts"
 val scriptFile: File = root.resolve(scriptPath)
 val syncFromEnv: String = "BACKEND_DEPLOY_SYNC_FROM"
 val dashboardWebArtifact: File = root.resolve("dashboard/web/build/dist/wasmJs/productionExecutable/dashboard-web.js")
-val dashboardWebInputs: List<String> = listOf(
+val dashboardInputs: List<String> = listOf(
     "dashboard",
     "core/src/commonMain",
     "core/build.gradle.kts",
@@ -423,6 +423,7 @@ fun localTests() {
 
 fun allTests() {
     localTests()
+    gradle(":verifyDashboard")
     publicSmoke()
     arcanaSmoke()
 }
@@ -431,7 +432,7 @@ fun appendDeployHistory(
     mode: String,
     durationMs: Long,
     status: String = "OK",
-    detail: String = "verifyServer, dashboard build-if-needed, installServer, local smoke",
+    detail: String = "verifyServer, verifyDashboard-if-needed, installServer, local smoke",
 ) {
     val head = q("git rev-parse --short HEAD 2>/dev/null || true").ifBlank { "unknown" }
     deployHistory.appendText(
@@ -570,22 +571,22 @@ fun dirtyIn(paths: List<String>): Boolean =
         .lineSequence()
         .any(String::isNotBlank)
 
-fun dashboardWebBuildReason(from: String, to: String): String? {
+fun dashboardVerificationReason(from: String, to: String): String? {
     if (!dashboardWebArtifact.isFile) return "missing artifact"
-    if (changedIn(from, to, dashboardWebInputs)) return "dashboard inputs changed"
-    if (dirtyIn(dashboardWebInputs)) return "dirty dashboard inputs"
+    if (changedIn(from, to, dashboardInputs)) return "dashboard inputs changed"
+    if (dirtyIn(dashboardInputs)) return "dirty dashboard inputs"
     val artifactMs = dashboardWebArtifact.lastModified()
-    val stale = dashboardWebInputs.asSequence()
+    val stale = dashboardInputs.asSequence()
         .map(root::resolve)
         .flatMap { if (it.isDirectory) it.walkTopDown().onEnter { dir -> dir.name != "build" } else sequenceOf(it) }
         .any { it.isFile && it.lastModified() > artifactMs }
     return if (stale) "dashboard artifact older than inputs" else null
 }
 
-fun buildDashboardWebIfNeeded(from: String, to: String) {
-    val reason = dashboardWebBuildReason(from, to) ?: return log("✓", "dashboard web artifact is current")
-    log("◆", "building dashboard web artifact: $reason")
-    gradle(":dashboard:web:wasmJsBrowserDistribution")
+fun verifyDashboardIfNeeded(from: String, to: String) {
+    val reason = dashboardVerificationReason(from, to) ?: return log("✓", "dashboard artifact is current")
+    log("◆", "verifying dashboard: $reason")
+    gradle(":verifyDashboard")
 }
 
 fun kotlinRunner(): String =
@@ -698,7 +699,7 @@ fun deploy() {
             syncGit()
             if (carriedSyncFrom == null && scriptChanged(beforeSync, head())) return@withLock beforeSync
             gradle(":verifyServer")
-            buildDashboardWebIfNeeded(beforeSync, head())
+            verifyDashboardIfNeeded(beforeSync, head())
 
             when (mode) {
                 "runtime" -> {

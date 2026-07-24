@@ -477,7 +477,7 @@ private fun opsSummary(
         detail = if (localPreview) {
             "Local health probes passed."
         } else {
-            "verifyServer, dashboard build-if-needed, installServer, local smoke."
+            "verifyServer, verifyDashboard-if-needed, installServer, local smoke."
         },
     )
     val backendLatestRun = if (localPreview) backendCurrentRun else backendHistory.firstOrNull() ?: backendCurrentRun
@@ -933,7 +933,7 @@ private fun fetchBackendFullSuiteRun(http: HttpClient) = runCatching {
         status = githubRunStatus(run),
         timestampMs = started,
         durationMs = started?.let { start -> updated?.minus(start)?.toDouble() },
-        detail = "backend-local, server_py contract/live, Arcana smoke, public ingress, dashboard web/desktop.",
+        detail = "backend-local, server_py contract/live, Arcana smoke, public ingress, dashboard verification.",
         url = run.text("html_url") ?: backendFullSuiteUrl,
         artifactUrl = backendFullSuiteArtifactUrl,
     )
@@ -1000,8 +1000,7 @@ private fun fullSuiteJobTitle(name: String) = when (name) {
     "server-py-live-selftest" -> "server_py live browser"
     "arcana-smoke" -> "Arcana full pyramid"
     "public-ingress" -> "Public ingress"
-    "dashboard-web" -> "Dashboard web build"
-    "dashboard-desktop" -> "Dashboard desktop build"
+    "dashboard" -> "Dashboard verification"
     else -> name.replace('-', ' ').replaceFirstChar(Char::uppercase)
 }
 
@@ -1011,8 +1010,7 @@ private fun fullSuiteJobMeaning(name: String) = when (name) {
     "server-py-live-selftest" -> "Runs the real q browser bridge canary and its live model selector audit."
     "arcana-smoke" -> "Runs Arcana's unit, integration, E2E, and benchmark layers on q."
     "public-ingress" -> "Probes the public backend, ops summary, and dashboard shell through production ingress."
-    "dashboard-web" -> "Compiles the production Kotlin/Wasm dashboard distribution."
-    "dashboard-desktop" -> "Compiles the Compose Desktop dashboard artifact."
+    "dashboard" -> "Runs dashboard JVM/Wasm tests and compiles its production web and desktop artifacts."
     else -> name.replace('-', ' ')
 }
 

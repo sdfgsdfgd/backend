@@ -279,7 +279,7 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
             opsSocketHub,
             repoId = "backend",
             label = "deploy ${extractPushHeadSha(payload)?.take(7) ?: "pending"}",
-            detail = "verifyServer, dashboard build-if-needed, installServer, local smoke.",
+            detail = "verifyServer, verifyDashboard-if-needed, installServer, local smoke.",
         )
     } else if (matchedSlug == "server-py") {
         broadcastRunStarted(opsSocketHub, "server_py", "unit tests", "Restarting server_py; unit tests queued.", SERVER_PY_UNIT_ARTIFACT_URL)
