@@ -1,6 +1,9 @@
 package net.sdfgsdfg
 
 import io.grpc.ManagedChannel
+import io.grpc.Metadata
+import io.grpc.Status
+import io.grpc.StatusException
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 import io.grpc.netty.shaded.io.netty.channel.epoll.EpollDomainSocketChannel
 import io.grpc.netty.shaded.io.netty.channel.epoll.EpollEventLoopGroup
@@ -80,6 +83,26 @@ private const val ASK_JOB_RESULT_TTL_MS = 24L * 60 * 60 * 1000
 private const val ASK_JOB_RUNNING_TTL_MS = 2L * 60 * 60 * 1000
 private const val ZEN_STATUS_ASSOCIATION_WINDOW_MS = 2L * 60 * 60 * 1000
 private const val ARCANA_RPC_ID_HEADER = "X-Arcana-Rpc-Id"
+private const val SERVER_PY_ERROR_KIND_TRAILER = "server-py-error-kind"
+private val serverPyErrorKindKey = Metadata.Key.of(SERVER_PY_ERROR_KIND_TRAILER, Metadata.ASCII_STRING_MARSHALLER)
+private val serverPyErrorKindPattern = Regex("[a-z][a-z0-9_]{0,63}")
+
+internal fun grpcAskFailure(error: StatusException): Pair<HttpStatusCode, String> {
+    val kind = error.trailers
+        ?.get(serverPyErrorKindKey)
+        ?.takeIf(serverPyErrorKindPattern::matches)
+
+    if (kind != null && error.status.code == Status.Code.UNAVAILABLE) {
+        return HttpStatusCode.ServiceUnavailable to kind
+    }
+
+    return when (error.status.code) {
+        Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
+        Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
+        Status.Code.CANCELLED         -> HttpStatusCode.BadRequest to "cancelled"
+        else                          -> HttpStatusCode.BadGateway to "grpc_error"
+    }
+}
 
 /** One process bridge; request-id jobs remain claimable after an HTTP writer disconnects. */
 internal class ServerPyBridge : AutoCloseable {
@@ -177,13 +200,8 @@ private fun ServerPyBridge.startAskJob(
             )
             log.info("[gRPC][$backendId][$rpcId] job result ready elapsed_ms=${elapsedMs()} bytes=${payload.toByteArray().size}")
             ServerPyBridge.AskJobResult(HttpStatusCode.OK, payload, reply.text.length)
-        } catch (err: io.grpc.StatusException) {
-            val (status, code) = when (err.status.code) {
-                io.grpc.Status.Code.DEADLINE_EXCEEDED -> HttpStatusCode.GatewayTimeout to "timeout"
-                io.grpc.Status.Code.UNAVAILABLE       -> HttpStatusCode.BadGateway to "unavailable"
-                io.grpc.Status.Code.CANCELLED         -> HttpStatusCode.BadRequest to "cancelled"
-                else                                  -> HttpStatusCode.BadGateway to "grpc_error"
-            }
+        } catch (err: StatusException) {
+            val (status, code) = grpcAskFailure(err)
             val payload = heartbeatJson.encodeToString(
                 mapOf(
                     "error" to code,
@@ -191,7 +209,7 @@ private fun ServerPyBridge.startAskJob(
                     "status" to err.status.code.name,
                 )
             )
-            log.warn("[gRPC][$backendId][$rpcId] job grpc failed status=${err.status.code} elapsed_ms=${elapsedMs()} desc=${err.status.description}")
+            log.warn("[gRPC][$backendId][$rpcId] job grpc failed status=${err.status.code} error=$code elapsed_ms=${elapsedMs()} desc=${err.status.description}")
             ServerPyBridge.AskJobResult(status, payload)
         } catch (err: Throwable) {
             val payload = heartbeatJson.encodeToString(
