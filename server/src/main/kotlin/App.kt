@@ -81,7 +81,7 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
         ),
         defaultTarget = Url("http://localhost:3000")
     )
-    val cvStaticDir = Paths.get(System.getProperty("user.home"), "Desktop", "cv").toFile()
+    val cvStaticDir = Paths.get(System.getProperty("user.home"), "Desktop", "cv", "out", "public").toFile()
     val syntheticProbeToken = System.getenv("Q_SYNTHETIC_PROBE_TOKEN")?.trim()?.takeIf { it.isNotBlank() }
     val syntheticProbeHeader = System.getenv("Q_SYNTHETIC_PROBE_HEADER")?.trim()?.takeIf { it.isNotBlank() }
         ?: "X-Q-Synthetic-Probe"
