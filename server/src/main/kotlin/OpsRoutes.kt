@@ -489,9 +489,7 @@ private fun opsSummary(
     val arcanaRuns = arcanaRuns(arcanaLatestRun, arcanaIngest)
     val backendStatus = (listOf(OpsStatusDto.OK) + backendRuns.map { it.status }).worstStatus()
     val serverPyStatus = (listOf(serverPySocketStatus) + serverPyRuns.map { it.status }).worstStatus()
-    val arcanaStatus = (arcanaRuns.map { it.status } + listOfNotNull(
-        arcanaSignals.firstOrNull { it.isActiveProcessSignal() }?.status,
-    )).worstStatus()
+    val arcanaStatus = arcanaRuns.map { it.status }.worstStatus()
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),

@@ -1185,7 +1185,7 @@ class OpsRoutesTest {
 
         val summaryResponse = client.get(OPS_SUMMARY_PATH) { header(HttpHeaders.Host, "ops.sdfgsdfg.net") }
         val arcana = json.decodeFromString<OpsSummaryDto>(summaryResponse.body<String>()).repos.first { it.id == "arcana" }
-        assertEquals((arcana.runs.map { it.status } + arcana.signals.first().status).worstStatus(), arcana.status)
+        assertEquals(arcana.runs.map { it.status }.worstStatus(), arcana.status)
         assertEquals(ARCANA_PYRAMID_RUN_LABEL, arcana.latestRun?.label)
         assertEquals("370 passed on q @abc1234", arcana.latestRun?.detail)
         assertEquals(2, arcana.issues.todo)
