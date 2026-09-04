@@ -21,7 +21,9 @@ class BackendRuntimeTest {
         try {
             first.broadcastRunStarted("backend", TestRunSummaryDto("deploy", OpsStatusDto.WIP, timestampMs = 1))
 
-            assertEquals("deploy", first.withActiveRuns(summary).repos.single().history.single().label)
+            val active = first.withActiveRuns(summary).repos.single()
+            assertEquals("deploy", active.history.single().label)
+            assertEquals(OpsStatusDto.WIP, active.status)
             assertTrue(second.withActiveRuns(summary).repos.single().history.isEmpty())
         } finally {
             first.close()

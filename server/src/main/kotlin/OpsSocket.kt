@@ -43,6 +43,7 @@ import net.sdfgsdfg.data.model.RepoIssuePatchDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.canRunSessions
 import net.sdfgsdfg.data.model.isFreshForIssuePatch
+import net.sdfgsdfg.data.model.worstStatus
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
@@ -163,7 +164,10 @@ internal class OpsSocketHub(
                 if (complete) resolved += event.activeKey()
                 !complete
             }
-            if (pending.isEmpty()) repo else repo.copy(history = (pending.map { it.run } + repo.history).distinctBy { it.historyKey() })
+            if (pending.isEmpty()) repo else repo.copy(
+                status = (listOf(repo.status) + pending.map { it.run.status }).worstStatus(),
+                history = (pending.map { it.run } + repo.history).distinctBy { it.historyKey() },
+            )
         }
         resolved.forEach(activeRuns::remove)
         return summary.copy(repos = repos)

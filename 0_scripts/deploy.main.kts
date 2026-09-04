@@ -148,7 +148,7 @@ fun String.jsonString(): String = buildString {
             '\n' -> append("\\n")
             '\r' -> append("\\r")
             '\t' -> append("\\t")
-            else -> append(ch)
+            else -> if (ch < ' ') append("\\u${ch.code.toString(16).padStart(4, '0')}") else append(ch)
         }
     }
     append('"')
@@ -216,9 +216,28 @@ fun publicSmoke() {
 fun qRun(command: String, check: Boolean = true, quiet: Boolean = false): Result =
     run(if (runningOnQ) command else "ssh $qHost ${command.shellQuote()}", check = check, quiet = quiet)
 
+fun qGitIdentity(directory: String): String = qRun(
+    """cd $directory && state=dirty; test -n "${'$'}(git status --porcelain --untracked-files=normal)" || state=clean; printf '%s:%s:%s' "${'$'}(git rev-parse HEAD)" "${'$'}(git rev-parse HEAD^{tree})" "${'$'}state"""",
+    quiet = true,
+).out.trim()
+
+fun qGitBlob(directory: String, path: String): String = qRun("cd $directory && git hash-object -- ${path.shellQuote()}", quiet = true).out.trim()
+
+fun Map<String, String>.jsonObject(): String = entries.joinToString(prefix = "{", postfix = "}") { (key, value) ->
+    "${key.jsonString()}:${value.jsonString()}"
+}
+
 fun arcanaSmoke() {
     log("◆", "q arcana full pyramid")
-    val head = qRun("cd $qArcanaDir && git rev-parse --short HEAD", quiet = true).out.trim().ifBlank { "unknown" }
+    fun evidenceIdentity() = qGitIdentity(qArcanaDir) to mapOf(
+        "server_py" to qGitIdentity("~/Desktop/py/server_py"),
+        "server_py/_4_models.py" to qGitBlob("~/Desktop/py/server_py", "_4_models.py"),
+        "publisher_backend" to qGitIdentity("~/Desktop/kotlin/backend"),
+        "capability_ledger" to qGitBlob(qArcanaDir, "z_tests_n_benchmarks/ledgers/capability_contracts.json"),
+    )
+    val startedAtMs = System.currentTimeMillis()
+    val (sourceStart, dependenciesStart) = evidenceIdentity()
+    val head = sourceStart.substringBefore(':')
     // Snapshot identity lets backend enrich cases from the ledger without projecting later taxonomy changes onto this run.
     val ledgerSha = qRun("cd $qArcanaDir && sha256sum z_tests_n_benchmarks/ledgers/capability_contracts.json", quiet = true)
         .out.substringBefore(' ').trim().takeIf(String::isNotBlank)
@@ -235,6 +254,8 @@ fun arcanaSmoke() {
         .venv/bin/python -m pip show coverage >/dev/null 2>&1 || .venv/bin/python -m pip install coverage
         """.trimIndent(),
     )
+    val toolchain = qRun("cd $qArcanaDir && .venv/bin/python --version && .venv/bin/python -m pytest --version", quiet = true)
+        .out.lineSequence().filter(String::isNotBlank).joinToString(" | ")
 
     qRun("cd $qArcanaDir && .venv/bin/python -m coverage erase")
 
@@ -342,6 +363,21 @@ fun arcanaSmoke() {
         .lineSequence()
         .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
         .lastOrNull()
+    val (sourceEnd, dependenciesEnd) = evidenceIdentity()
+    val evidenceStable = sourceStart == sourceEnd && dependenciesStart == dependenciesEnd &&
+        listOf(sourceStart, dependenciesStart.getValue("server_py"), dependenciesStart.getValue("publisher_backend")).all { it.endsWith(":clean") }
+    val finishedAtMs = System.currentTimeMillis()
+    val provenance = listOf(
+        "\"host\":${qRun("hostname -f 2>/dev/null || hostname", quiet = true).out.trim().jsonString()}",
+        "\"started_at_ms\":$startedAtMs",
+        "\"finished_at_ms\":$finishedAtMs",
+        "\"source_start\":${sourceStart.jsonString()}",
+        "\"source_end\":${sourceEnd.jsonString()}",
+        "\"dependencies_start\":${dependenciesStart.jsonObject()}",
+        "\"dependencies_end\":${dependenciesEnd.jsonObject()}",
+        "\"stable\":$evidenceStable",
+        "\"toolchain\":${toolchain.jsonString()}",
+    ).joinToString(prefix = "{", postfix = "}")
     fun writeLayerArtifact(result: LayerResult) {
         val cases = result.cases.joinToString(prefix = "[", postfix = "]") { case ->
             listOfNotNull(
@@ -353,32 +389,37 @@ fun arcanaSmoke() {
             ).joinToString(prefix = "{", postfix = "}")
         }
         val fileName = "arcana-${result.layer.label}.json"
+        val artifactStatus = if (result.code == 0 && evidenceStable) "OK" else "FAIL"
         val artifact = listOfNotNull(
             "\"label\":${result.layer.label.jsonString()}",
             "\"paths\":${result.layer.paths.jsonString()}",
-            "\"status\":${result.status.jsonString()}",
+            "\"status\":${artifactStatus.jsonString()}",
+            "\"timestamp_ms\":$startedAtMs",
             "\"duration_ms\":${result.durationMs}",
             "\"summary\":${result.summary.jsonString()}",
             "\"output_tail\":${result.output.takeLast(12_000).jsonString()}",
             "\"source_revision\":${head.jsonString()}",
             ledgerSha?.let { "\"ledger_sha\":${it.jsonString()}" },
             "\"cases\":$cases",
+            "\"provenance\":$provenance",
         ).joinToString(prefix = "{", postfix = "}")
-        logs.resolve(fileName).writeText(artifact)
+        val artifactFile = logs.resolve(fileName).apply { writeText(artifact) }
         if (!runningOnQ) {
-            qRun("cd ~/Desktop/kotlin/backend && mkdir -p 0_scripts/logs && printf %s ${artifact.shellQuote()} > ${"0_scripts/logs/$fileName".shellQuote()}")
+            qRun("mkdir -p ~/Desktop/kotlin/backend/0_scripts/logs")
+            run("scp ${artifactFile.absolutePath.shellQuote()} $qHost:~/Desktop/kotlin/backend/0_scripts/logs/$fileName")
         }
     }
     results.forEach(::writeLayerArtifact)
     val durationMs = (System.nanoTime() - started) / 1_000_000
-    val status = if (results.any { it.code != 0 }) "FAIL" else "OK"
+    val status = if (results.any { it.code != 0 } || !evidenceStable) "FAIL" else "OK"
     val totalPassed = results.mapNotNull { it.passed }.takeIf { it.size == results.size && status == "OK" }?.sum()
-    val summary = totalPassed?.let { "$it passed" } ?: results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }
-    val detail = "$summary on q @$head"
+    val testSummary = totalPassed?.let { "$it passed" } ?: results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }
+    val summary = if (evidenceStable) testSummary else "$testSummary; source/dependency changed during run"
+    val detail = "$summary on q @${head.take(7)}"
     val coverageField = coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" }
     fun layerPayload(result: LayerResult): String = listOfNotNull(
         "\"label\":${result.layer.label.jsonString()}",
-        "\"status\":${result.status.jsonString()}",
+        "\"status\":${(if (result.code == 0 && evidenceStable) "OK" else "FAIL").jsonString()}",
         "\"duration_ms\":${result.durationMs}",
         "\"detail\":${result.summary.jsonString()}",
         "\"artifact_url\":${arcanaLayerArtifactUrl(result.layer.label).jsonString()}",
@@ -387,11 +428,13 @@ fun arcanaSmoke() {
     val payload = listOfNotNull(
         "\"status\":${status.jsonString()}",
         "\"label\":\"q arcana full pyramid\"",
+        "\"timestamp_ms\":$startedAtMs",
         "\"duration_ms\":$durationMs",
         "\"detail\":${detail.jsonString()}",
         "\"url\":${arcanaIngestArtifactUrl.jsonString()}",
         coverageField,
         "\"runs\":[${results.joinToString(",") { layerPayload(it) }}]",
+        "\"provenance\":$provenance",
     ).joinToString(prefix = "{", postfix = "}")
     qRun("curl -fsS -X POST http://127.0.0.1/api/ops/ingest/arcana -H 'Content-Type: application/json' --data-binary ${payload.shellQuote()}")
     if (status != "OK") fail("q arcana full pyramid failed: ${results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }}")

@@ -26,14 +26,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
 import net.sdfgsdfg.data.model.ArcanaIngestDto
 import net.sdfgsdfg.data.model.IssueEventChangeDto
 import net.sdfgsdfg.data.model.IssueEventDto
@@ -60,6 +58,7 @@ import net.sdfgsdfg.data.model.TestCaseDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.arcanaLayerArtifactName
 import net.sdfgsdfg.data.model.arcanaTestLayerKeys
+import net.sdfgsdfg.data.model.worstStatus
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -77,7 +76,6 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.UUID
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.abs
 
@@ -104,7 +102,6 @@ private val homeDir = File(System.getProperty("user.home"))
 private val backendRepo = File(".").canonicalFile
 private val serverPyRepo = homeDir.resolve("Desktop/py/server_py")
 internal val arcanaRepo = File(System.getenv("ARCANA_HOME") ?: homeDir.resolve("Desktop/py/arcana").path)
-private val issueRepoRoots = mapOf("backend" to backendRepo, "server_py" to serverPyRepo, "arcana" to arcanaRepo)
 private val serverPySocket = File("/tmp/server_py/server_py.sock")
 private val backendFullSuiteUrl = "https://github.com/sdfgsdfgd/backend/actions/workflows/full-suite.yml"
 private val serverPyLiveSelftestUrl = "https://github.com/sdfgsdfgd/server_py/actions/workflows/live-selftest.yml"
@@ -150,7 +147,6 @@ private data class TestTotals(val tests: Int, val failures: Int, val errors: Int
 
 private val peerSnapshotLock = Any()
 private var peerSnapshotCache: CachedPeerSnapshot? = null
-private val issueMutationLock = Any()
 
 internal fun Route.opsRoutes(
     localPreview: Boolean = System.getenv("BACKEND_ENV") == "local",
@@ -300,7 +296,7 @@ internal fun Route.opsRoutes(
             call.respondText("Invalid issue mutation JSON", status = HttpStatusCode.BadRequest)
             return@post
         }
-        runCatching { withContext(Dispatchers.IO) { mutateLocalIssue(mutation) } }.getOrElse {
+        runCatching { withContext(Dispatchers.IO) { mutateArcanaIssue(mutation) } }.getOrElse {
             call.respondText(it.message ?: "Issue mutation failed", status = HttpStatusCode.BadRequest)
             return@post
         }
@@ -460,11 +456,10 @@ private fun opsSummary(
         ?.withPeerArtifactUrl(localPreview)
     val serverPyReady = serverPyReadySnapshot.serverPyReady
     val serverPyTransport = serverPyReadySnapshot.serverPyTransport
-    val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN
-    val serverPyStatus = serverPySocketStatus
+    val serverPySocketStatus = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.WARN
     val serverPyLatestRun = serverPySelfTest?.toRunSummary() ?: TestRunSummaryDto(
         label = "gRPC bridge",
-        status = serverPyStatus,
+        status = serverPySocketStatus,
         detail = if (serverPyReady) "$serverPyTransport bridge ready." else "$serverPyTransport bridge unavailable.",
     )
     val arcanaIngest = latestArcanaIngest(arcanaIngestFile)
@@ -489,11 +484,14 @@ private fun opsSummary(
     val arcanaIssues = arcanaIngest?.issues?.takeIf { it.hasAny() }?.withSource("arcana", "Arcana ingest", arcanaIngestArtifactUrl)
         ?: localArcanaIssues(arcanaRepo)
     val arcanaSignals = mergedArcanaSignals(processSnapshots)
-    val arcanaStatus = if (arcanaSignals.firstOrNull { it.isActiveProcessSignal() }?.status == OpsStatusDto.OK) {
-        OpsStatusDto.OK
-    } else {
-        arcanaIngest?.status ?: OpsStatusDto.WIP
-    }
+    val backendRuns = backendRuns(backendLatestRun, backendFullSuite())
+    val serverPyRuns = serverPyRuns(serverPySelfTest, serverPyUnit, serverPyLatestRun)
+    val arcanaRuns = arcanaRuns(arcanaLatestRun, arcanaIngest)
+    val backendStatus = (listOf(OpsStatusDto.OK) + backendRuns.map { it.status }).worstStatus()
+    val serverPyStatus = (listOf(serverPySocketStatus) + serverPyRuns.map { it.status }).worstStatus()
+    val arcanaStatus = (arcanaRuns.map { it.status } + listOfNotNull(
+        arcanaSignals.firstOrNull { it.isActiveProcessSignal() }?.status,
+    )).worstStatus()
 
     return OpsSummaryDto(
         generatedAtMs = System.currentTimeMillis(),
@@ -502,11 +500,11 @@ private fun opsSummary(
                 id = "backend",
                 name = "backend",
                 role = "Ktor control plane",
-                status = OpsStatusDto.OK,
+                status = backendStatus,
                 runtimeLabel = backendRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = backendRuntimeLabels,
                 latestRun = backendLatestRun,
-                runs = backendRuns(backendLatestRun, backendFullSuite()),
+                runs = backendRuns,
                 history = backendHistory,
                 issues = backendIssues,
                 signals = listOf(
@@ -527,7 +525,7 @@ private fun opsSummary(
                 runtimeLabel = serverPyRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = serverPyRuntimeLabels,
                 latestRun = serverPyLatestRun,
-                runs = serverPyRuns(serverPySelfTest, serverPyUnit, serverPyLatestRun),
+                runs = serverPyRuns,
                 history = serverPyHistory,
                 selfTest = serverPySelfTest,
                 issues = serverPyIssues,
@@ -541,7 +539,7 @@ private fun opsSummary(
                 runtimeLabel = arcanaRuntimeLabels.joinedRuntimeLabel(),
                 runtimeLabels = arcanaRuntimeLabels,
                 latestRun = arcanaLatestRun,
-                runs = arcanaRuns(arcanaLatestRun, arcanaIngest),
+                runs = arcanaRuns,
                 history = arcanaHistory,
                 issues = arcanaIssues,
                 signals = arcanaSignals,
@@ -629,7 +627,7 @@ private fun sshMacProcessSnapshot(): OpsHostSnapshotDto? = runCatching {
 
 private fun OpsHostSnapshotDto.serverPySignal() = OpsSignalDto(
     label = "transport",
-    status = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+    status = if (serverPyReady) OpsStatusDto.OK else OpsStatusDto.WARN,
     detail = serverPyTransport,
     meta = serverPyRuntimeLabel,
 )
@@ -645,7 +643,7 @@ private fun mergedArcanaSignals(hostSnapshots: List<OpsHostSnapshotDto>): List<O
     return listOf(
         OpsSignalDto(
             label = activeProcessesLabel,
-            status = if (summaries.any { it.status == OpsStatusDto.OK }) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+            status = if (summaries.any { it.status == OpsStatusDto.WIP }) OpsStatusDto.WIP else OpsStatusDto.UNKNOWN,
             detail = summaries.joinToString(" / ") { "${it.meta}: ${it.detail}" }.compact(180),
             meta = hostSnapshots.map { it.backendRuntimeLabel }.runtimeLabels().joinToString(" · "),
         ),
@@ -694,7 +692,7 @@ private fun arcanaSignals(runtimeLabel: String, processes: List<ProcessSnapshot>
     add(
         OpsSignalDto(
             label = activeProcessesLabel,
-            status = if (arcanaGroups.size + codexGroups.size > 0) OpsStatusDto.OK else OpsStatusDto.UNKNOWN,
+            status = if (arcanaGroups.size + codexGroups.size > 0) OpsStatusDto.WIP else OpsStatusDto.UNKNOWN,
             detail = "${arcanaGroups.size} arcana live · ${codexGroups.size} codex live",
             meta = runtimeLabel,
         ),
@@ -996,7 +994,7 @@ internal fun backendFullSuiteArtifact(run: TestRunSummaryDto, rawJobs: List<Json
 
 private fun fullSuiteJobTitle(name: String) = when (name) {
     "local-tests" -> "Local backend runtime"
-    "server-py-contract-tests" -> "server_py wire contract"
+    "server-py-wire-dto" -> "server_py wire DTO"
     "server-py-live-selftest" -> "server_py live browser"
     "arcana-smoke" -> "Arcana full pyramid"
     "public-ingress" -> "Public ingress"
@@ -1006,7 +1004,7 @@ private fun fullSuiteJobTitle(name: String) = when (name) {
 
 private fun fullSuiteJobMeaning(name: String) = when (name) {
     "local-tests" -> "Builds the server distribution, starts PostgreSQL and backend, then probes local tests and security metrics."
-    "server-py-contract-tests" -> "Proves backend and server_py still agree on the shared selftest JSON wire format."
+    "server-py-wire-dto" -> "Protects backend serialization of the public server_py selftest JSON shape."
     "server-py-live-selftest" -> "Runs the real q browser bridge canary and its live model selector audit."
     "arcana-smoke" -> "Runs Arcana's unit, integration, E2E, and benchmark layers on q."
     "public-ingress" -> "Probes the public backend, ops summary, and dashboard shell through production ingress."
@@ -1097,14 +1095,6 @@ private fun File.xmlRoot() = DocumentBuilderFactory.newInstance()
     .parse(this)
     .documentElement
 
-private fun List<OpsStatusDto>.ciStatus() = when {
-    OpsStatusDto.FAIL in this -> OpsStatusDto.FAIL
-    OpsStatusDto.WARN in this -> OpsStatusDto.WARN
-    OpsStatusDto.WIP in this -> OpsStatusDto.WIP
-    OpsStatusDto.UNKNOWN in this -> OpsStatusDto.UNKNOWN
-    else -> OpsStatusDto.OK
-}
-
 private fun serverPyRuns(selfTest: SelfTestSummaryDto?, unit: TestRunSummaryDto?, latestRun: TestRunSummaryDto) = buildList {
     unit?.let { add(it.copy(artifactUrl = it.artifactUrl ?: serverPyUnitArtifactUrl)) }
     if (selfTest == null) return@buildList
@@ -1135,156 +1125,20 @@ internal fun localArcanaIssues(repoRoot: File): IssueSummaryDto = runCatching {
 private fun repoIssues(repoRoot: File, githubRepo: String, githubIssues: (String) -> IssueSummaryDto) =
     localArcanaIssues(repoRoot) + githubIssues(githubRepo)
 
-private fun mutateLocalIssue(request: IssueMutationRequestDto) = synchronized(issueMutationLock) {
-    val repoRoot = issueRepoRoots[request.repo] ?: error("Unknown repo: ${request.repo}")
-    val op = request.op.lowercase()
-    val status = if (op == "archive") "archive" else request.status.normalizedIssueStatus() ?: error("Invalid status: ${request.status}")
-    val issuesFile = repoRoot.resolve(".arcana/issues.json")
-    val eventsFile = repoRoot.resolve(".arcana/issues.events.jsonl")
-    val now = System.currentTimeMillis()
-    val body = request.body?.trim()
-    val issues = issuesFile.issueObjects().toMutableList()
-    val index = request.id?.let { id -> issues.indexOfFirst { it.issueKey() == id } } ?: -1
-
-    fun event(name: String, issue: JsonObject, before: JsonObject? = null) = buildJsonObject {
-        put("event_id", "EVT-${now.toString(16)}-${UUID.randomUUID().toString().take(8)}")
-        put("ts_ms", now)
-        put("event", name)
-        put("key", issue.issueKey().orEmpty())
-        put("title", issue["title"]?.jsonPrimitive?.contentOrNull.orEmpty())
-        put("status", issue["status"]?.jsonPrimitive?.contentOrNull ?: status)
-        put("actor", "dashboard")
-        put("host", java.net.InetAddress.getLocalHost().hostName)
-        val changes = before?.issueChanges(issue).orEmpty()
-        if (changes.isNotEmpty()) put("changes", JsonObject(changes))
-    }
-
-    val createdOrUpdated = when (op) {
-        "create" -> {
-            val (title, description) = body.issueTextParts()
-            val issue = buildIssueObject(
-                key = request.repo.nextIssueKey(issues, eventsFile),
-                title = title,
-                status = status,
-                description = description,
-                createdAt = now,
-                updatedAt = now,
-            )
-            issues += issue
-            issue to event("created", issue)
+private fun mutateArcanaIssue(request: IssueMutationRequestDto) {
+    val python = arcanaRepo.resolve(".venv/bin/python").takeIf(File::canExecute)?.path ?: "python3"
+    val process = ProcessBuilder(python, "-m", "commands.issues", "--mutate-json")
+        .apply {
+            environment()["ARCANA_DEFER_ISSUE_SYNC"] = "1"
+            directory(arcanaRepo)
+            redirectErrorStream(true)
         }
-        "update", "move" -> {
-            if (index < 0) error("Issue not found: ${request.id}")
-            val before = issues[index]
-            val (title, description) = body?.issueTextParts() ?: (before["title"]?.jsonPrimitive?.contentOrNull.orEmpty() to before["description"]?.jsonPrimitive?.contentOrNull.orEmpty())
-            val issue = before.updatedIssueObject(title, status, description, now)
-            issues[index] = issue
-            issue to event(if (status == "done" && before.statusText() != "done") "completed" else "updated", issue, before)
-        }
-        "archive" -> {
-            if (index < 0) error("Issue not found: ${request.id}")
-            val before = issues[index]
-            val issue = before.updatedIssueObject(
-                before["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                "archive",
-                before["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                now,
-            )
-            issues[index] = issue
-            issue to event("archived", issue, before)
-        }
-        else -> error("Invalid issue op: ${request.op}")
-    }
-    issuesFile.writeIssueObjects(issues)
-    eventsFile.appendIssueEvent(createdOrUpdated.second)
+        .start()
+    process.outputStream.bufferedWriter().use { it.write(opsJson.encodeToString(request)) }
+    val output = process.inputStream.bufferedReader().readText().trim()
+    if (process.waitFor() != 0) error(output.ifBlank { "Arcana issue mutation failed" })
+    if (runCatching { opsJson.parseToJsonElement(output).jsonObject["issue"] }.getOrNull() == null) error("Invalid Arcana issue mutation receipt")
 }
-
-private fun File.issueObjects(): List<JsonObject> = runCatching {
-    takeIf { it.isFile }
-        ?.readText()
-        ?.let { opsJson.parseToJsonElement(it).jsonObject["issues"] as? JsonArray }
-        ?.filterIsInstance<JsonObject>()
-        ?: emptyList()
-}.getOrDefault(emptyList())
-
-private fun File.writeIssueObjects(issues: List<JsonObject>) {
-    parentFile?.mkdirs()
-    writeText(opsJson.encodeToString(buildJsonObject {
-        put("version", 1)
-        put("issues", JsonArray(issues))
-    }))
-}
-
-private fun File.appendIssueEvent(event: JsonObject) {
-    parentFile?.mkdirs()
-    appendText(opsJson.encodeToString(event) + "\n")
-}
-
-private fun String?.issueTextParts(): Pair<String, String> {
-    val lines = orEmpty().trim().lines()
-    val title = lines.firstOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: error("Issue text is required")
-    return title to lines.drop(1).joinToString("\n").trim()
-}
-
-private fun String.nextIssueKey(issues: List<JsonObject>, eventsFile: File): String {
-    val prefix = issueRepoPrefix()
-    val currentMax = issues.mapNotNull { it.issueKey()?.issueNumber(prefix) }.maxOrNull() ?: 0
-    val eventMax = runCatching {
-        eventsFile.takeIf { it.isFile }?.useLines { lines ->
-            lines.mapNotNull { line ->
-                runCatching {
-                    opsJson.parseToJsonElement(line).jsonObject["key"]?.jsonPrimitive?.contentOrNull?.issueNumber(prefix)
-                }.getOrNull()
-            }.maxOrNull()
-        } ?: 0
-    }.getOrDefault(0)
-    val number = maxOf(currentMax, eventMax) + 1
-    return "$prefix-${number.toString().padStart(3, '0')}"
-}
-
-private fun String.issueRepoPrefix() = when (this) {
-    "arcana" -> "ARC"
-    "backend" -> "BCK"
-    "server_py" -> "SPY"
-    else -> take(3).uppercase(Locale.ENGLISH).padEnd(3, 'X')
-}
-
-private fun String.issueNumber(prefix: String): Int? =
-    takeIf { startsWith("$prefix-") }?.substringAfter('-')?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }?.toIntOrNull()
-
-private fun buildIssueObject(key: String, title: String, status: String, description: String, createdAt: Long, updatedAt: Long) = buildJsonObject {
-    put("key", key)
-    put("title", title)
-    put("status", status)
-    put("description", description)
-    put("notes", "")
-    put("created_at_ms", createdAt)
-    put("updated_at_ms", updatedAt)
-    if (status == "done") put("completed_at_ms", updatedAt)
-}
-
-private fun JsonObject.updatedIssueObject(title: String, status: String, description: String, now: Long) = buildJsonObject {
-    val notes = this@updatedIssueObject["notes"]?.jsonPrimitive?.contentOrNull.orEmpty()
-    put("key", this@updatedIssueObject.issueKey().orEmpty())
-    put("title", title)
-    put("status", status)
-    put("description", description)
-    put("notes", notes.takeUnless { it.isNotBlank() && description.contains(it) }.orEmpty())
-    put("created_at_ms", this@updatedIssueObject["created_at_ms"]?.jsonPrimitive?.longOrNull ?: now)
-    put("updated_at_ms", now)
-    if (status == "done") put("completed_at_ms", now)
-}
-
-private fun JsonObject.issueChanges(after: JsonObject): Map<String, JsonElement> = listOf("title", "status", "description", "notes")
-    .mapNotNull { field ->
-        val from = this[field]?.jsonPrimitive?.contentOrNull
-        val to = after[field]?.jsonPrimitive?.contentOrNull
-        if (from == to) null else field to buildJsonObject {
-            from?.let { put("from", it) }
-            to?.let { put("to", it) }
-        }
-    }
-    .toMap()
 
 private fun githubIssues(repo: String, http: HttpClient): IssueSummaryDto {
     val now = System.currentTimeMillis()
@@ -1466,6 +1320,7 @@ private fun ArcanaIngestDto.toRunSummary() = TestRunSummaryDto(
     detail = detail,
     url = url,
     coveragePct = coveragePct,
+    provenance = provenance,
 )
 
 internal fun SelfTestSummaryDto.toRunSummary() = TestRunSummaryDto(

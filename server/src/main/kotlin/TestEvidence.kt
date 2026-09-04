@@ -100,6 +100,7 @@ internal fun TestArtifactDto.toRunSummary(artifactUrl: String) = TestRunSummaryD
     url = url,
     artifactUrl = artifactUrl,
     coveragePct = coveragePct,
+    provenance = provenance,
 )
 
 internal fun SelfTestResultDto.toTestArtifact() = TestArtifactDto(

@@ -79,10 +79,10 @@ def poll_arcana_smoke(started_ms: int) -> int:
         arcana = next((repo for repo in summary.get("repos", []) if repo.get("id") == "arcana"), None)
         latest = arcana.get("latest_run") if isinstance(arcana, dict) else None
         last_payload = arcana
-        if is_fresh_ok(latest, started_ms):
+        if is_fresh_terminal(latest, started_ms):
             write_result(arcana)
             print(json.dumps(arcana, indent=2), flush=True)
-            return 0
+            return 0 if latest.get("status") == "OK" else 1
         time.sleep(POLL_INTERVAL)
     payload = {
         "ok": False,
@@ -94,13 +94,13 @@ def poll_arcana_smoke(started_ms: int) -> int:
     raise SystemExit(json.dumps(payload, indent=2))
 
 
-def is_fresh_ok(latest: dict | None, started_ms: int) -> bool:
+def is_fresh_terminal(latest: dict | None, started_ms: int) -> bool:
     if not isinstance(latest, dict):
         return False
     stamp = int(latest.get("timestamp_ms") or 0)
     if stamp < started_ms - RECENT_WINDOW_MS:
         return False
-    return latest.get("status") == "OK"
+    return latest.get("status") in {"OK", "FAIL"}
 
 
 def write_result(payload: dict) -> None:

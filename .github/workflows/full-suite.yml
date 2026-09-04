@@ -91,10 +91,10 @@ jobs:
         run: cat "$RUNNER_TEMP/backend.log" || true
 
   # ---------------------------------------------------------------------------
-  # server-py-contract-tests: shared DTO wire contract for backend and server_py.
+  # server-py-wire-dto: backend-only serialization coverage for the public selftest DTO.
   # ---------------------------------------------------------------------------
-  server-py-contract-tests:
-    name: all-tests / server-py-contract-tests
+  server-py-wire-dto:
+    name: all-tests / server-py-wire-dto
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -109,7 +109,7 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: server-py-contract-tests
+      - name: server-py-wire-dto
         run: ./gradlew :core:jvmTest --tests 'net.sdfgsdfg.data.model.CoreDtoSerializationTest.selfTestDtosKeepPublicWireNames' --warning-mode all
 
   # ---------------------------------------------------------------------------
@@ -158,6 +158,8 @@ jobs:
           set -euo pipefail
           curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://sdfgsdfg.net/test | tee "$RUNNER_TEMP/public-smoke.txt"
           grep -F "[ OK ]" "$RUNNER_TEMP/public-smoke.txt"
+          curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://sdfgsdfg.net/ | tee "$RUNNER_TEMP/public-home.html"
+          grep -F "Arcana, an Agentic App" "$RUNNER_TEMP/public-home.html"
           curl -fsS --retry 2 --retry-delay 2 --max-time 10 https://ops.sdfgsdfg.net/api/ops/summary > "$RUNNER_TEMP/ops-summary.json"
           python3 - <<'PY'
           import json
@@ -200,7 +202,7 @@ jobs:
     timeout-minutes: 5
     needs:
       - backend-local
-      - server-py-contract-tests
+      - server-py-wire-dto
       - server-py-live-selftest
       - arcana-smoke
       - public-ingress
@@ -212,7 +214,7 @@ jobs:
         run: |
           set -euo pipefail
           test "${{ needs.backend-local.result }}" = "success"
-          test "${{ needs.server-py-contract-tests.result }}" = "success"
+          test "${{ needs.server-py-wire-dto.result }}" = "success"
           test "${{ needs.server-py-live-selftest.result }}" = "success"
           test "${{ needs.arcana-smoke.result }}" = "success"
           test "${{ needs.public-ingress.result }}" = "success"

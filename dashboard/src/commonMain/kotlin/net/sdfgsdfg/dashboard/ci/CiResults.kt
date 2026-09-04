@@ -80,6 +80,7 @@ import net.sdfgsdfg.data.model.TestArtifactKindDto
 import net.sdfgsdfg.data.model.TestCaseDto
 import net.sdfgsdfg.data.model.TestContractRefDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
+import net.sdfgsdfg.data.model.worstStatus
 
 @Composable
 internal fun CiTab(loadState: OpsLoadState, pageWidth: Dp, modifier: Modifier = Modifier) {
@@ -748,13 +749,7 @@ private fun LayerMetric(value: String, color: Color) {
     )
 }
 
-private fun List<OpsStatusDto>.layerStatus() = when {
-    OpsStatusDto.FAIL in this -> OpsStatusDto.FAIL
-    OpsStatusDto.WARN in this -> OpsStatusDto.WARN
-    OpsStatusDto.WIP in this -> OpsStatusDto.WIP
-    OpsStatusDto.OK in this -> OpsStatusDto.OK
-    else -> OpsStatusDto.UNKNOWN
-}
+private fun List<OpsStatusDto>.layerStatus() = worstStatus()
 
 private fun OpsStatusDto.caseRank() = when (this) {
     OpsStatusDto.FAIL -> 0
@@ -1188,14 +1183,7 @@ private fun String?.testCountLabel(): String? {
 private fun RepoHealthDto.ciStatus(): OpsStatusDto {
     val statuses = ciRuns().filterNot { it.label == "full suite" }.map { it.status }
         .ifEmpty { listOf(if (id == "server_py") selfTest?.status ?: OpsStatusDto.UNKNOWN else latestRun?.status ?: OpsStatusDto.UNKNOWN) }
-    return when {
-        OpsStatusDto.FAIL in statuses -> OpsStatusDto.FAIL
-        OpsStatusDto.WARN in statuses -> OpsStatusDto.WARN
-        OpsStatusDto.WIP in statuses -> OpsStatusDto.WIP
-        OpsStatusDto.OK in statuses -> OpsStatusDto.OK
-        OpsStatusDto.UNKNOWN in statuses -> OpsStatusDto.UNKNOWN
-        else -> OpsStatusDto.OK
-    }
+    return statuses.worstStatus()
 }
 
 private fun RepoHealthDto.ciRuns(): List<TestRunSummaryDto> = when (id) {

@@ -396,6 +396,17 @@ enum class OpsStatusDto {
     UNKNOWN,
 }
 
+fun Iterable<OpsStatusDto>.worstStatus(default: OpsStatusDto = OpsStatusDto.UNKNOWN): OpsStatusDto =
+    maxByOrNull {
+        when (it) {
+            OpsStatusDto.FAIL -> 4
+            OpsStatusDto.WARN -> 3
+            OpsStatusDto.WIP -> 2
+            OpsStatusDto.OK -> 1
+            OpsStatusDto.UNKNOWN -> 0
+        }
+    } ?: default
+
 @Serializable
 data class TestRunSummaryDto(
     val label: String,
@@ -406,6 +417,20 @@ data class TestRunSummaryDto(
     val url: String? = null,
     @SerialName("artifact_url") val artifactUrl: String? = null,
     @SerialName("coverage_pct") val coveragePct: Double? = null,
+    val provenance: EvidenceProvenanceDto? = null,
+)
+
+@Serializable
+data class EvidenceProvenanceDto(
+    val host: String? = null,
+    @SerialName("started_at_ms") val startedAtMs: Long? = null,
+    @SerialName("finished_at_ms") val finishedAtMs: Long? = null,
+    @SerialName("source_start") val sourceStart: String? = null,
+    @SerialName("source_end") val sourceEnd: String? = null,
+    @SerialName("dependencies_start") val dependenciesStart: Map<String, String> = emptyMap(),
+    @SerialName("dependencies_end") val dependenciesEnd: Map<String, String> = emptyMap(),
+    val stable: Boolean? = null,
+    val toolchain: String? = null,
 )
 
 @Serializable
@@ -430,6 +455,7 @@ data class TestArtifactDto(
     @SerialName("source_revision") val sourceRevision: String? = null,
     @SerialName("ledger_sha") val ledgerSha: String? = null,
     val cases: List<TestCaseDto> = emptyList(),
+    val provenance: EvidenceProvenanceDto? = null,
 )
 
 @Serializable
@@ -485,6 +511,7 @@ data class ArcanaIngestDto(
     val url: String? = null,
     val issues: IssueSummaryDto = IssueSummaryDto(),
     val runs: List<TestRunSummaryDto> = emptyList(),
+    val provenance: EvidenceProvenanceDto? = null,
 )
 
 @Serializable

@@ -18,6 +18,14 @@ import kotlinx.serialization.json.put
 // tests, not generic serialization coverage; keep them only for DTOs that cross
 // repo/process boundaries.
 class CoreDtoSerializationTest {
+	@Test
+	fun opsStatusUsesOneStableWorstFirstOrder() {
+		assertEquals(OpsStatusDto.UNKNOWN, emptyList<OpsStatusDto>().worstStatus())
+		assertEquals(OpsStatusDto.OK, listOf(OpsStatusDto.UNKNOWN, OpsStatusDto.OK).worstStatus())
+		assertEquals(OpsStatusDto.WIP, listOf(OpsStatusDto.OK, OpsStatusDto.WIP).worstStatus())
+		assertEquals(OpsStatusDto.WARN, listOf(OpsStatusDto.WIP, OpsStatusDto.WARN).worstStatus())
+		assertEquals(OpsStatusDto.FAIL, OpsStatusDto.entries.worstStatus())
+	}
     private val json = Json { encodeDefaults = true }
 
     @Test
@@ -514,6 +522,16 @@ class CoreDtoSerializationTest {
                 kind = TestArtifactKindDto.MODEL_SELECTORS,
                 sourceRevision = "abc1234",
                 ledgerSha = "deadbeef",
+                provenance = EvidenceProvenanceDto(
+                    host = "q",
+                    startedAtMs = 40L,
+                    finishedAtMs = 41L,
+                    sourceStart = "source-a",
+                    sourceEnd = "source-a",
+                    dependenciesStart = mapOf("server_py" to "dependency-a"),
+                    dependenciesEnd = mapOf("server_py" to "dependency-a"),
+                    stable = true,
+                ),
                 cases = listOf(
                     TestCaseDto(
                         name = "test_model_selector[sol-pro]",
@@ -540,6 +558,10 @@ class CoreDtoSerializationTest {
         assertEquals(41L, artifact.getValue("timestamp_ms").jsonPrimitive.long)
         assertEquals("abc1234", artifact.getValue("source_revision").jsonPrimitive.content)
         assertEquals("deadbeef", artifact.getValue("ledger_sha").jsonPrimitive.content)
+        val provenance = artifact.getValue("provenance").jsonObject
+        assertEquals("source-a", provenance.getValue("source_start").jsonPrimitive.content)
+        assertEquals("dependency-a", provenance.getValue("dependencies_end").jsonObject.getValue("server_py").jsonPrimitive.content)
+        assertEquals(true, provenance.getValue("stable").jsonPrimitive.boolean)
         assertEquals("tests.integration.provider", case.getValue("scope").jsonPrimitive.content)
         assertEquals("Command, Provider, And Transport Surface", contract.getValue("subsystem_name").jsonPrimitive.content)
         assertEquals("Protect provider boundaries.", contract.getValue("subsystem_purpose").jsonPrimitive.content)

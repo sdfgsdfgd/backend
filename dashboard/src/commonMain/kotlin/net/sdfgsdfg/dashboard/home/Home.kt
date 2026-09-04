@@ -146,7 +146,7 @@ private fun SummaryStrip(summary: OpsSummaryDto, pageWidth: Dp, modifier: Modifi
 
 @Composable
 private fun RepoCard(repo: RepoHealthDto, generatedAtMs: Long, modifier: Modifier = Modifier) {
-    val status = repo.homeStatus()
+    val status = repo.status
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
@@ -219,35 +219,6 @@ private fun RepoCardContent(repo: RepoHealthDto, generatedAtMs: Long, status: Op
     visibleSignals.takeIf { it.isNotEmpty() }?.let {
         if (repo.id == "arcana") ArcanaSignalStack(it, generatedAtMs) else SignalStack(it, generatedAtMs)
     }
-}
-
-private fun RepoHealthDto.homeStatus() = (listOf(runtimeStatus()) + testStatuses()).maxBy { it.homeSeverity() }
-
-private fun RepoHealthDto.runtimeStatus() = when (id) {
-    "backend" -> signals.map { it.status }.ifEmpty { listOf(OpsStatusDto.OK) }.maxBy { it.homeSeverity() }
-    "server_py", "arcana" -> signals.map { it.status }.ifEmpty { listOf(OpsStatusDto.UNKNOWN) }.maxBy { it.homeSeverity() }
-    else -> status
-}
-
-private fun RepoHealthDto.testStatuses(): List<OpsStatusDto> = when (id) {
-    "backend" -> listOfNotNull(
-        runs.firstOrNull { it.label == "unit tests" }?.status,
-        runs.firstOrNull { it.label == "full suite" }?.status,
-    )
-    "server_py" -> listOfNotNull(
-        runs.firstOrNull { it.label == "unit tests" }?.status,
-        runs.firstOrNull { it.label == "live e2e selftest" }?.status ?: selfTest?.status,
-    )
-    "arcana" -> arcanaLayerRuns(fillMissing = true).map { it.status }
-    else -> emptyList()
-}
-
-private fun OpsStatusDto.homeSeverity() = when (this) {
-    OpsStatusDto.FAIL -> 5
-    OpsStatusDto.WARN -> 4
-    OpsStatusDto.WIP -> 3
-    OpsStatusDto.OK -> 2
-    OpsStatusDto.UNKNOWN -> 1
 }
 
 @Composable
