@@ -994,7 +994,7 @@ internal fun backendFullSuiteArtifact(run: TestRunSummaryDto, rawJobs: List<Json
 
 private fun fullSuiteJobTitle(name: String) = when (name) {
     "local-tests" -> "Local backend runtime"
-    "server-py-wire-dto" -> "server_py wire DTO"
+    "server-py-wire-dto", "server-py-contract-tests" -> "server_py wire DTO"
     "server-py-live-selftest" -> "server_py live browser"
     "arcana-smoke" -> "Arcana full pyramid"
     "public-ingress" -> "Public ingress"
@@ -1004,7 +1004,7 @@ private fun fullSuiteJobTitle(name: String) = when (name) {
 
 private fun fullSuiteJobMeaning(name: String) = when (name) {
     "local-tests" -> "Builds the server distribution, starts PostgreSQL and backend, then probes local tests and security metrics."
-    "server-py-wire-dto" -> "Protects backend serialization of the public server_py selftest JSON shape."
+    "server-py-wire-dto", "server-py-contract-tests" -> "Protects backend serialization of the public server_py selftest JSON shape."
     "server-py-live-selftest" -> "Runs the real q browser bridge canary and its live model selector audit."
     "arcana-smoke" -> "Runs Arcana's unit, integration, E2E, and benchmark layers on q."
     "public-ingress" -> "Probes the public backend, ops summary, and dashboard shell through production ingress."
