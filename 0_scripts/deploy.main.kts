@@ -357,7 +357,9 @@ fun arcanaSmoke() {
         Layer("e2e", qArcanaE2eTests),
         Layer("benchmarks", qArcanaBenchmarkTests),
     )
-    val results = layers.map(::runLayer)
+    val results = layers.map { layer ->
+        if (layer.label == "e2e") withRuntimeLock("Arcana live E2E") { runLayer(layer) } else runLayer(layer)
+    }
     val coveragePct = qRun("cd $qArcanaDir && .venv/bin/python -m coverage report --format=total", check = false, quiet = true)
         .out
         .lineSequence()
@@ -705,17 +707,17 @@ fun <T> withLock(block: () -> T): T =
         lock.use { block() }
     }
 
-fun <T> withRuntimeSwapLock(block: () -> T): T {
-    log("◆", "runtime swap waiting for webhook-sensitive work")
+fun <T> withRuntimeLock(owner: String, block: () -> T): T {
+    log("◆", "$owner waiting for webhook-sensitive work")
     val started = System.nanoTime()
     RandomAccessFile(runtimeLockFile, "rw").channel.use { channel ->
         val lock = channel.lock()
         try {
-            log("✓", "runtime swap lock acquired in ${(System.nanoTime() - started) / 1_000_000}ms")
+            log("✓", "$owner runtime lock acquired in ${(System.nanoTime() - started) / 1_000_000}ms")
             return block()
         } finally {
             lock.release()
-            log("✓", "runtime swap lock released")
+            log("✓", "$owner runtime lock released")
         }
     }
 }
@@ -747,7 +749,7 @@ fun deploy() {
             when (mode) {
                 "runtime" -> {
                     log("✓", "verification passed; runtime systemd unit detected")
-                    withRuntimeSwapLock {
+                    withRuntimeLock("runtime swap") {
                         systemctl("stop")
                         gradle(":installServer")
                         startService()

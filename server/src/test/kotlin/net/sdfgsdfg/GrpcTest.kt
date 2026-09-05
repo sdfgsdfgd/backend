@@ -4,6 +4,11 @@ import io.grpc.Metadata
 import io.grpc.Status
 import io.grpc.StatusException
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -36,5 +41,24 @@ class GrpcTest {
             HttpStatusCode.BadGateway to "unavailable",
             grpcAskFailure(unavailable("DeepSeek Server Busy!")),
         )
+    }
+
+    @Test
+    fun runtimeLockSerializesInProcessCallersBeforeFileLock() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val first = async(Dispatchers.Default) {
+            withWebhookRuntimeLock({}) {
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        entered.await()
+        val second = async(Dispatchers.Default) { withWebhookRuntimeLock({}) {} }
+
+        assertEquals(null, withTimeoutOrNull(50) { second.await() })
+        release.complete(Unit)
+        first.await()
+        second.await()
     }
 }

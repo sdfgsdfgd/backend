@@ -28,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -76,6 +78,7 @@ private val heartbeatJson = Json {
 
 private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json")
 private val webhookRuntimeLockFile = File(resolveLogDir(), "webhook-runtime.lock")
+private val webhookRuntimeMutex = Mutex()
 private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
 private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
 private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
@@ -401,7 +404,7 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
         withWebhookRuntimeLock(onAcquired = { waitedMs ->
             application.log.info("[gRPC] [selftest] webhook runtime lock acquired waited_ms=$waitedMs")
         }) {
-            val result = runCatching { serverPyBridge.botStub.selfTest(req) }
+            val result = runCatching { serverPyBridge.botStub.withWaitForReady().selfTest(req) }
             val dto = result.fold(
                 onSuccess = {
                     SelfTestResultDto(
@@ -476,24 +479,25 @@ private fun loadLastSelfTestResult(): SelfTestResultDto? = runCatching {
     }
 }.getOrNull()
 
-private suspend fun <T> withWebhookRuntimeLock(onAcquired: (Long) -> Unit, block: suspend () -> T): T {
-    val started = System.nanoTime()
-    val file = withContext(Dispatchers.IO) {
-        webhookRuntimeLockFile.parentFile?.mkdirs()
-        RandomAccessFile(webhookRuntimeLockFile, "rw")
-    }
-    try {
-        val lock = withContext(Dispatchers.IO) { file.channel.lock() }
-        try {
-            onAcquired((System.nanoTime() - started) / 1_000_000)
-            return block()
-        } finally {
-            withContext(Dispatchers.IO) { lock.release() }
+internal suspend fun <T> withWebhookRuntimeLock(onAcquired: (Long) -> Unit, block: suspend () -> T): T =
+    webhookRuntimeMutex.withLock {
+        val started = System.nanoTime()
+        val file = withContext(Dispatchers.IO) {
+            webhookRuntimeLockFile.parentFile?.mkdirs()
+            RandomAccessFile(webhookRuntimeLockFile, "rw")
         }
-    } finally {
-        withContext(Dispatchers.IO) { file.close() }
+        try {
+            val lock = withContext(Dispatchers.IO) { file.channel.lock() }
+            try {
+                onAcquired((System.nanoTime() - started) / 1_000_000)
+                block()
+            } finally {
+                withContext(Dispatchers.IO) { lock.release() }
+            }
+        } finally {
+            withContext(Dispatchers.IO) { file.close() }
+        }
     }
-}
 
 private fun loadZenAutofixStatus(): JsonObject? = runCatching {
     if (!zenAutofixStatusFile.exists()) {

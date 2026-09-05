@@ -35,7 +35,7 @@ private val arcanaSmokeWebhookSecret = System.getenv("ARCANA_SMOKE_WEBHOOK_SECRE
 private val arcanaSmokeWebhookHeader = System.getenv("ARCANA_SMOKE_WEBHOOK_HEADER")?.trim()
     .takeIf { !it.isNullOrEmpty() } ?: "X-Arcana-Smoke-Secret"
 private const val SERVER_PY_REPO_DIR = "/home/x/Desktop/py/server_py"
-private const val SERVER_PY_READY_CMD = "timeout 180 bash -c 'until [ -S /tmp/server_py/server_py.sock ]; do sleep 3; done'"
+private const val SERVER_PY_READY_CMD = "cd $SERVER_PY_REPO_DIR && timeout 180 venv/bin/python -c \"import grpc; channel=grpc.insecure_channel('unix:///tmp/server_py/server_py.sock'); grpc.channel_ready_future(channel).result(timeout=170); channel.close()\""
 private const val SERVER_PY_SELF_TEST_ARTIFACT_URL = "/api/ops/artifacts/server-py-selftest.json"
 private const val SERVER_PY_UNIT_ARTIFACT_URL = "/api/ops/artifacts/server-py-unit.json"
 private const val ARCANA_INGEST_ARTIFACT_URL = "/api/ops/artifacts/arcana-ingest.json"
@@ -153,8 +153,8 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
          * - take webhookDeployMutex for in-process deploy hooks;
          * - take webhookSelfTestMutex, so multiple live audits never overlap;
          * - recheck HEAD under the lock, then wait for the UDS socket and call
-         *   /api/selftest/run, which holds webhook-runtime.lock while backend
-         *   deploy's detached runtime swap waits before stopping backend.service.
+         *   /api/selftest/run, which shares webhook-runtime.lock with backend and
+         *   server_py runtime swaps plus Arcana's live E2E layer.
          */
         val selfTestPayload = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
         val newChatFlag = selfTestPayload?.get("new_chat")?.jsonPrimitive?.booleanOrNull
@@ -285,11 +285,16 @@ private suspend fun ApplicationCall.processGitHubWebhook(targetOverride: String?
         broadcastRunStarted(opsSocketHub, "server_py", "unit tests", "Restarting server_py; unit tests queued.", SERVER_PY_UNIT_ARTIFACT_URL)
     }
     webhookDeployMutex.withLock {
-        for (command in profile.commands) {
-            runWebhookCommand(matchedSlug, command, deploymentLog)
-        }
         if (matchedSlug == "server-py") {
+            log("◆ server_py restart waiting for webhook-sensitive work", deploymentLog)
+            withWebhookRuntimeLock(onAcquired = { waitedMs ->
+                log("✓ server_py runtime lock acquired in ${waitedMs}ms", deploymentLog)
+            }) {
+                for (command in profile.commands) runWebhookCommand(matchedSlug, command, deploymentLog)
+            }
             runServerPyUnitTests(deploymentLog, opsSocketHub)
+        } else {
+            for (command in profile.commands) runWebhookCommand(matchedSlug, command, deploymentLog)
         }
     }
 }
