@@ -459,6 +459,9 @@ internal interface OpsAgentAdapter {
 private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAdapter {
     private val json = Json { ignoreUnknownKeys = true }
     private val models = setOf(
+        "latest-pro",
+        "latest-thinking-standard",
+        "latest-thinking-heavy",
         "5.6-pro",
         "5.6-thinking-standard",
         "5.6-thinking-heavy",

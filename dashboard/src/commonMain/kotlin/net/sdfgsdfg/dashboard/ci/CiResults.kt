@@ -697,7 +697,7 @@ private fun TestCaseDto.observedPill(): String? = detail?.let { note ->
     Regex("""pill=([^;]+)""").findAll(note).lastOrNull()?.groupValues?.getOrNull(1)?.trim()
 }
 
-private fun selectorFamilyOrder(family: String) = listOf("GPT-5.6 Sol", "GPT-5.5", "GPT-5.4", "GPT-5.3", "o3")
+private fun selectorFamilyOrder(family: String) = listOf("Latest", "GPT-5.6 Sol", "GPT-5.5", "GPT-5.4", "GPT-5.3", "o3")
     .indexOf(family).takeIf { it >= 0 } ?: Int.MAX_VALUE
 
 private fun String.humanIdentifier(): String = removePrefix("test_")
