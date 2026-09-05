@@ -338,6 +338,12 @@ private fun TestArtifactExpanded(run: TestRunSummaryDto, state: TestArtifactStat
                     state.sourceUrl?.let { EvidenceLink("artifact", it) }
                     run.url?.takeIf { it != state.sourceUrl }?.let { EvidenceLink("source", it) }
                 }
+                artifact.provenance?.let { provenance ->
+                    provenance.sourceEnd?.split(':')?.takeIf { it.size == 3 }?.let { (commit, tree, sourceState) ->
+                        val stable = provenance.stable == true
+                        MiniMetric("source", "${commit.take(7)}:${tree.take(7)}:$sourceState · ${if (stable) "stable" else "unstable"}", if (stable) green else amber)
+                    }
+                }
                 if (artifact.kind == TestArtifactKindDto.MODEL_SELECTORS) {
                     ModelSelectorEvidence(artifact, selfTest)
                 } else {

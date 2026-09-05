@@ -16,6 +16,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.sdfgsdfg.data.model.ARCANA_PYRAMID_RUN_LABEL
+import net.sdfgsdfg.data.model.EvidenceProvenanceDto
 import net.sdfgsdfg.data.model.OpsStatusDto
 import net.sdfgsdfg.data.model.TestArtifactDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
@@ -315,6 +316,17 @@ private fun broadcastRunStarted(opsSocketHub: OpsSocketHub, repoId: String, labe
 private suspend fun runServerPyUnitTests(logFile: File, opsSocketHub: OpsSocketHub): Int {
     val startedAtMs = System.currentTimeMillis()
     val started = System.nanoTime()
+    suspend fun sourceIdentity(): String? {
+        val output = mutableListOf<String>()
+        val exit = runWebhookCommand(
+            slug = "server-py-unit-provenance",
+            command = """cd $SERVER_PY_REPO_DIR && state=dirty; test -n "${'$'}(git status --porcelain --untracked-files=normal)" || state=clean; printf '%s:%s:%s' "${'$'}(git rev-parse HEAD)" "${'$'}(git rev-parse HEAD^{tree})" "${'$'}state"""",
+            logFile = logFile,
+            stdoutLines = output,
+        )
+        return output.joinToString("").trim().takeIf { exit == 0 && it.isNotEmpty() }
+    }
+    val sourceStart = sourceIdentity()
     val junitFile = File.createTempFile("server-py-unit-", ".xml")
     val stdout = mutableListOf<String>()
     val stderr = mutableListOf<String>()
@@ -325,28 +337,40 @@ private suspend fun runServerPyUnitTests(logFile: File, opsSocketHub: OpsSocketH
         stdoutLines = stdout,
         stderrLines = stderr,
     )
+    val sourceEnd = sourceIdentity()
+    val finishedAtMs = System.currentTimeMillis()
+    val stable = sourceStart != null && sourceStart == sourceEnd && sourceStart.endsWith(":clean")
     val lines = stdout + stderr
-    val status = if (exit == 0) OpsStatusDto.OK else OpsStatusDto.FAIL
+    val status = if (exit == 0 && stable) OpsStatusDto.OK else OpsStatusDto.FAIL
     val summary = lines.asReversed()
         .map(String::trim)
         .firstOrNull { line -> line.contains(" passed") || line.contains(" failed") || line.contains(" error") }
         ?: "pytest exit=$exit"
+    val detail = if (stable) summary else "$summary; source provenance unstable"
     val durationMs = (System.nanoTime() - started) / 1_000_000.0
     val coveragePct = lines.coveragePct()
-    val artifact = junitArtifact(
+    val artifact = (junitArtifact(
         label = "unit tests",
         sources = listOf(JunitEvidenceSource(file = junitFile)),
         timestampMs = startedAtMs,
         durationMs = durationMs,
-        detail = summary,
+        detail = detail,
         coveragePct = coveragePct,
-    )?.copy(status = status) ?: TestArtifactDto(
+    ) ?: TestArtifactDto(
         label = "unit tests",
-        status = status,
         timestampMs = startedAtMs,
         durationMs = durationMs,
-        detail = summary,
+        detail = detail,
         coveragePct = coveragePct,
+    )).copy(
+        status = status,
+        provenance = EvidenceProvenanceDto(
+            startedAtMs = startedAtMs,
+            finishedAtMs = finishedAtMs,
+            sourceStart = sourceStart,
+            sourceEnd = sourceEnd,
+            stable = stable,
+        ),
     )
     junitFile.delete()
     serverPyUnitFile.writeText(json.encodeToString(artifact))
