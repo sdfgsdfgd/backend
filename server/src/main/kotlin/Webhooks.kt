@@ -410,6 +410,6 @@ private fun List<String>.coveragePct(): Double? = asReversed()
 
 private fun serverPyHeadCmd(headSha: String, wait: Boolean): String =
     if (wait)
-        """timeout 180 bash -c 'cd $SERVER_PY_REPO_DIR && until [ "${'$'}(git rev-parse HEAD 2>/dev/null)" = "$headSha" ]; do echo "waiting for server_py HEAD $headSha (current=${'$'}(git rev-parse HEAD 2>/dev/null || echo unknown))" >&2; sleep 3; done; echo "server_py HEAD ready: $headSha" >&2'"""
+        """timeout 2400 bash -c 'cd $SERVER_PY_REPO_DIR && until [ "${'$'}(git rev-parse HEAD 2>/dev/null)" = "$headSha" ]; do echo "waiting for server_py HEAD $headSha (current=${'$'}(git rev-parse HEAD 2>/dev/null || echo unknown))" >&2; sleep 3; done; echo "server_py HEAD ready: $headSha" >&2'"""
     else
         """cd $SERVER_PY_REPO_DIR && current=${'$'}(git rev-parse HEAD) && [ "${'$'}current" = "$headSha" ] || { echo "server_py HEAD mismatch: expected $headSha current=${'$'}current" >&2; exit 1; }"""
