@@ -69,6 +69,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.positionInRoot
@@ -467,7 +468,7 @@ private fun XLuxuryCaretField(
             .onGloballyPositioned { containerOrigin = it.positionInRoot() },
     ) {
         Box(
-            fieldModifier,
+            fieldModifier.pointerHoverIcon(LocalDashboardTextPointerIcon.current, overrideDescendants = true),
         ) {
             BasicTextField(
                 value = value,

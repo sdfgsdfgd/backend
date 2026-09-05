@@ -42,6 +42,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.Channel
@@ -80,6 +81,7 @@ fun DashboardApp(
     windowKeys: DashboardWindowKeyRouter? = null,
     arrowShiftSignal: Int = 0,
     focusedArrowKeys: Boolean = true,
+    textPointerIcon: PointerIcon = PointerIcon.Text,
     // CMP-10297 workaround: raw WheelEvent deltas from wasmJsMain.
     externalScrollDeltas: ReceiveChannel<Float>? = null,
     onNativeWheelRegionChanged: ((Boolean) -> Unit)? = null,
@@ -313,7 +315,10 @@ fun DashboardApp(
         Modifier.fillMaxSize()
     }
 
-    CompositionLocalProvider(LocalNativeWheelRegionChanged provides onNativeWheelRegionChanged) {
+    CompositionLocalProvider(
+        LocalNativeWheelRegionChanged provides onNativeWheelRegionChanged,
+        LocalDashboardTextPointerIcon provides textPointerIcon,
+    ) {
         MaterialTheme(
             colorScheme = darkColorScheme(
                 primary = cyan,

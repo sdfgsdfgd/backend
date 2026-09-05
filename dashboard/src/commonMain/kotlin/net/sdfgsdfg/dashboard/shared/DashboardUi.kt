@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -76,6 +77,7 @@ internal const val OPS_SUMMARY_REFRESH_MS = 45_000L
 internal const val UPDATE_FLASH_MS = 5 * 60 * 1_000L
 // Wasm's outer wheel bridge yields while a native Compose nested scroller owns the pointer.
 internal val LocalNativeWheelRegionChanged = staticCompositionLocalOf<((Boolean) -> Unit)?> { null }
+internal val LocalDashboardTextPointerIcon = staticCompositionLocalOf { PointerIcon.Text }
 
 @Composable
 internal fun rememberFreshKeys(keys: List<String>): Set<String> {

@@ -19,8 +19,9 @@ compose.desktop {
     application {
         mainClass = "net.sdfgsdfg.dashboard.desktop.MainKt"
         nativeDistributions {
+            modules("java.net.http") // Compose jlink workaround: OpsApi.jvm.kt needs HttpClient; the stripped runtime otherwise omits this JDK module.
             packageName = "Trio Ops Cockpit"
-            packageVersion = "0.1.0"
+            packageVersion = "1.0.0"
         }
     }
 }

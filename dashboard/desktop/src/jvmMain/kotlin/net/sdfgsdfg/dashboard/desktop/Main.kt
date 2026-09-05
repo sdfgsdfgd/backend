@@ -1,5 +1,12 @@
 package net.sdfgsdfg.dashboard.desktop
 
+/*
+ * Desktop pointer ownership:
+ *   Dashboard: primary drag -> content; Command -> move cursor; Command + primary drag -> window.
+ *   Tabs: primary click or Left/Right -> DashboardApp.
+ *   GitHub auth: primary drag -> window.
+ */
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -25,7 +32,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,9 +48,13 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpSize
@@ -85,8 +95,25 @@ fun main() = try {
             resizable = true,
             state = mainWindowState,
         ) {
-            WindowDraggableArea(Modifier.fillMaxWidth()) {
-                DashboardApp(windowKeys = windowKeys)
+            val awtWindow = window
+            val windowInfo = LocalWindowInfo.current
+            val showMoveCursor = windowInfo.keyboardModifiers.isMetaPressed
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .dragWindow(
+                        window = awtWindow,
+                        requiresMeta = true,
+                    )
+                    .pointerHoverIcon(
+                        icon = if (showMoveCursor) DashboardCursors.windowMove else DashboardCursors.default,
+                        overrideDescendants = showMoveCursor,
+                    ),
+            ) {
+                DashboardApp(
+                    windowKeys = windowKeys,
+                    textPointerIcon = DashboardCursors.text,
+                )
             }
         }
         authState?.let { state ->
@@ -129,25 +156,33 @@ private fun desktopInitialSize(): DpSize {
     return DpSize((screen.width * 0.9).roundToInt().dp, (screen.height * 0.9).roundToInt().dp)
 }
 
-private fun Modifier.dragWindow(window: AwtWindow) = pointerInput(window) {
+private fun Modifier.dragWindow(
+    window: AwtWindow,
+    requiresMeta: Boolean = false,
+) = pointerInput(window, requiresMeta) {
     var startMouse: Point? = null
     var startWindow = Point()
+    val pass = if (requiresMeta) PointerEventPass.Initial else PointerEventPass.Main
     awaitPointerEventScope {
         while (true) {
-            val event = awaitPointerEvent()
+            val event = awaitPointerEvent(pass)
             val mouse = MouseInfo.getPointerInfo()?.location
             val pressed = event.buttons.isPrimaryPressed
-            val justPressed = event.changes.firstOrNull()?.let { !it.previousPressed && it.pressed } == true
-            if (pressed && justPressed && mouse != null) {
-                startMouse = mouse
-                startWindow = window.location
-            }
-            if (!pressed || mouse == null) {
+            val enabled = !requiresMeta || event.keyboardModifiers.isMetaPressed
+            if (!pressed || mouse == null || !enabled) {
                 startMouse = null
                 continue
             }
-            val origin = startMouse
-            if (event.type == PointerEventType.Move && origin != null) {
+            val justPressed = event.changes.firstOrNull()?.let { !it.previousPressed && it.pressed } == true
+            if (justPressed) {
+                startMouse = mouse
+                startWindow = window.location
+            }
+            val origin = startMouse ?: continue
+            if (requiresMeta) {
+                event.changes.forEach { it.consume() }
+            }
+            if (event.type == PointerEventType.Move) {
                 window.setLocation(
                     startWindow.x + mouse.x - origin.x,
                     startWindow.y + mouse.y - origin.y,

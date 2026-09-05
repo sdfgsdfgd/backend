@@ -90,6 +90,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
@@ -2242,6 +2243,7 @@ private fun XTranscript(
                     SelectionContainer(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .pointerHoverIcon(LocalDashboardTextPointerIcon.current, overrideDescendants = true)
                             .animateItem(
                                 fadeInSpec = tween(360, easing = FastOutSlowInEasing),
                                 fadeOutSpec = tween(120),
