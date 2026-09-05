@@ -209,7 +209,6 @@ internal actual fun connectOpsSocket(
             fun ping() = send("ping", window.performance.now().toLong())
             ws.onopen = {
                 onState(OpsSocketState(OpsSocketStatus.CONNECTED))
-                send("refresh")
                 ping()
                 window.clearInterval(pingTimer)
                 pingTimer = window.setInterval({ ping(); null }, 15_000)

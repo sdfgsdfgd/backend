@@ -249,7 +249,6 @@ internal actual fun connectOpsSocket(
                             socket.set(webSocket)
                             activeOpsApiBase = endpoint
                             EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED)) }
-                            send("refresh")
                             webSocket.request(1)
                         }
 

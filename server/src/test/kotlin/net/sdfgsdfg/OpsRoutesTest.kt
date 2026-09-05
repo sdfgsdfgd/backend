@@ -419,6 +419,46 @@ class OpsRoutesTest {
     }
 
     @Test
+    fun opsSocketPushesInitialSummaryAndKeepsExplicitRefresh() = testApplication {
+        val hub = OpsSocketHub()
+        application {
+            installOpsRouteTestPlugins()
+            routing {
+                opsRoutes(
+                    githubIssues = noGithubIssues,
+                    backendFullSuite = noBackendFullSuite,
+                    resolveViewer = { adminViewer },
+                    opsSocketHub = hub,
+                )
+            }
+        }
+
+        try {
+            createClient { install(ClientWebSockets) }.webSocket(
+                request = {
+                    url(OPS_WS_PATH)
+                    header(HttpHeaders.Host, "ops.sdfgsdfg.net")
+                },
+            ) {
+                val initial = withTimeout(5_000L) {
+                    json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText())
+                }
+                assertEquals("summary", initial.type)
+                assertNotNull(initial.summary)
+
+                send(Frame.Text(json.encodeToString(OpsSocketMessageDto(type = "refresh"))))
+                val refreshed = withTimeout(5_000L) {
+                    json.decodeFromString<OpsSocketMessageDto>((incoming.receive() as Frame.Text).readText())
+                }
+                assertEquals("summary", refreshed.type)
+                assertNotNull(refreshed.summary)
+            }
+        } finally {
+            hub.close()
+        }
+    }
+
+    @Test
     fun opsSocketBindsWorkspaceCommandsToViewerAndHandshakeToken() = testApplication {
         var principal: OpsSocketPrincipal? = null
         application {
