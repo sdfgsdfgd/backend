@@ -49,6 +49,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
@@ -91,6 +95,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
@@ -101,6 +106,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1091,7 +1097,7 @@ internal fun ArcanaSessionsTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                .padding(start = 12.dp, end = 12.dp, bottom = if (phase == XPhase.WORKSPACE) 8.dp else 12.dp)
                 .clip(shape)
                 .background(Color.Black.copy(alpha = 0.42f), shape)
                 .background(
@@ -1589,7 +1595,9 @@ private fun XWideBody(
     onArcanaActivityObserved: () -> Unit,
     onSend: () -> Unit,
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize().padding(18.dp)) {
+    BoxWithConstraints(Modifier.fillMaxSize().padding(
+        if (phase == XPhase.WORKSPACE) PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp) else PaddingValues(18.dp),
+    )) {
         val listWidth = maxWidth * 0.43f
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             AnimatedVisibility(
@@ -1659,7 +1667,9 @@ private fun XCompactBody(
     onArcanaActivityObserved: () -> Unit,
     onSend: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(
+        if (phase == XPhase.WORKSPACE) PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp) else PaddingValues(14.dp),
+    ), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AnimatedVisibility(phase == XPhase.REPOSITORIES, modifier = Modifier.weight(1f, fill = true)) {
             XRepoList(repos.take(3), selectedRepoId, onRepoSelected)
         }
@@ -1798,9 +1808,26 @@ private fun XRightStage(
         tween(600, easing = FastOutSlowInEasing),
         label = "x-input-position",
     )
-    BoxWithConstraints(modifier) {
-        val inputRestingLaneHeight = 176.dp
-        val inputTravel = (maxHeight - inputRestingLaneHeight).coerceAtLeast(0.dp)
+    val choosing = phase == XPhase.WORKSPACE
+    val chooserProgress = animateFloatAsState(
+        if (choosing) 1f else 0f,
+        tween(600, easing = FastOutSlowInEasing),
+        label = "x-chooser-position",
+    )
+    Layout(modifier = modifier, content = {
+        Box(Modifier.fillMaxWidth()) {
+            AnimatedVisibility(
+                visible = choosing,
+                enter = fadeIn(tween(800, easing = FastOutSlowInEasing)) + expandVertically(tween(800, easing = FastOutSlowInEasing)),
+                exit = fadeOut(tween(1_600, easing = FastOutSlowInEasing)) + shrinkVertically(tween(1_600, easing = FastOutSlowInEasing)),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    XSkeuoText(selectedRepo?.name.orEmpty(), 34.sp, color = Color(0xFFD4CC38).copy(alpha = 0.82f), maxLines = 1)
+                    Text("RESUME ${selectedAgent.label.uppercase()}  ·  OR CREATE BELOW", color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Text(sessionMessage, color = Color(0xFFB99ADB).copy(alpha = 0.76f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
         AnimatedContent(
             targetState = phase,
             transitionSpec = {
@@ -1816,11 +1843,11 @@ private fun XRightStage(
             label = "x-phase-transition",
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = if (phase == XPhase.SESSION) 0.dp else inputRestingLaneHeight),
+                .padding(bottom = if (phase == XPhase.REPOSITORIES) 176.dp else 0.dp),
         ) { current ->
             when (current) {
                 XPhase.REPOSITORIES -> XWelcome(viewer)
-                XPhase.WORKSPACE -> XSessionChooser(selectedRepo, selectedAgent, sessions, selectedSessionKey, sessionMessage, onSessionSelected)
+                XPhase.WORKSPACE -> XSessionChooser(sessions, selectedSessionKey, onSessionSelected)
                 XPhase.SESSION -> key(runtimeId) {
                     XTranscript(
                         selectedRepo,
@@ -1847,12 +1874,26 @@ private fun XRightStage(
             mode = composerMode,
             onAudioToggle = onAudioToggle,
             onSend = onSend,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .offset { IntOffset(0, (-inputTravel * (1f - inputBias.value)).roundToPx()) }
-                .fillMaxWidth()
-                .heightIn(max = maxHeight),
+            modifier = Modifier.fillMaxWidth(),
         )
+    }) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val loose = constraints.copy(minHeight = 0)
+        val heading = measurables[0].measure(loose)
+        val inputMaxHeight = if (choosing) (height - heading.height).coerceAtLeast(0) else height
+        val input = measurables[2].measure(loose.copy(maxHeight = inputMaxHeight))
+        // Measure the single, persistent composer first: its animated height owns the history boundary.
+        val bodyTop = if (choosing) (heading.height + input.height).coerceAtMost(height) else 0
+        val body = measurables[1].measure(Constraints.fixed(width, height - bodyTop))
+        layout(width, height) {
+            heading.placeRelative(0, 0)
+            body.placeRelative(0, bodyTop)
+            val travel = (height - 176.dp.roundToPx()).coerceAtLeast(0)
+            val restingTop = height - input.height - travel * (1f - inputBias.value)
+            val inputTop = restingTop + (heading.height - restingTop) * chooserProgress.value
+            input.placeRelative(0, inputTop.roundToInt())
+        }
     }
 }
 
@@ -1922,19 +1963,15 @@ private fun XWelcome(viewer: OpsViewerDto) {
 
 @Composable
 private fun XSessionChooser(
-    repo: XRepoPreview?,
-    agent: XAgent,
     sessions: List<OpsSessionSummaryDto>,
     selectedSessionKey: String?,
-    message: String,
     onSelected: (OpsSessionSummaryDto) -> Unit,
 ) {
-    val active = sessions.filter { it.runtimeId != null && it.state?.isActiveRuntime == true }
-    val history = sessions.filterNot { it in active }
-    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        XSkeuoText(repo?.name.orEmpty(), 34.sp, color = Color(0xFFD4CC38).copy(alpha = 0.82f), maxLines = 1)
-        Text("RESUME ${agent.label.uppercase()}  ·  OR CREATE BELOW", color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-        Text(message, color = Color(0xFFB99ADB).copy(alpha = 0.76f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    val (active, history) = remember(sessions) {
+        sessions.partition { it.runtimeId != null && it.state?.isActiveRuntime == true }
+    }
+    val gridState = rememberLazyStaggeredGridState()
+    Column(Modifier.fillMaxSize().padding(horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         AnimatedVisibility(
             visible = active.isNotEmpty(),
             enter = fadeIn(tween(520)) + expandVertically(tween(620, easing = FastOutSlowInEasing)),
@@ -1972,12 +2009,19 @@ private fun XSessionChooser(
         }
         Spacer(Modifier.height(5.dp))
         if (history.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text("No durable ritual in this workspace", color = muted.copy(alpha = 0.64f), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(history, key = { _, session -> session.runtimeId ?: session.sessionId }) { index, session ->
+            LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Adaptive(320.dp),
+                state = gridState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalItemSpacing = 4.dp,
+                contentPadding = PaddingValues(bottom = 4.dp),
+            ) {
+                itemsIndexed(history, key = { _, session -> session.xKey }, contentType = { _, _ -> "session" }) { index, session ->
                     XSessionCard(
                         session = session,
                         selected = session.xKey == selectedSessionKey,
@@ -1985,7 +2029,7 @@ private fun XSessionChooser(
                         titlePrefix = "${index + 1}. ",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 68.dp, max = 94.dp)
+                            .heightIn(min = 68.dp, max = 180.dp)
                             .animateItem(
                                 fadeInSpec = tween(700, easing = FastOutSlowInEasing),
                                 fadeOutSpec = tween(140),
@@ -2013,9 +2057,11 @@ private fun XSessionCard(
                 "${if (selected) "◆ " else ""}$titlePrefix${session.title}",
                 color = Color(0xFFD9C986),
                 fontSize = if (live) 12.sp else 14.sp,
+                lineHeight = if (live) 16.sp else 18.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                maxLines = if (live) 1 else 7,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
             Text(
                 listOfNotNull(
@@ -2027,7 +2073,8 @@ private fun XSessionCard(
                 color = if (live) Color(0xFF77DCA2).copy(alpha = 0.82f) else Color(0xFFA995B9).copy(alpha = 0.76f),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
-                maxLines = 1,
+                maxLines = if (live) 1 else 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

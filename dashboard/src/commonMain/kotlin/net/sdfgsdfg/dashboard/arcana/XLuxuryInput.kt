@@ -147,7 +147,7 @@ internal fun XLuxuryInput(
             label = "x-action-width",
         )
         val maxIslandWidth = minOf(maxWidth * 0.9f, maxWidth - targetActionWidth - bleed * 2).coerceAtLeast(220.dp)
-        val maxIslandHeight = minOf(maxHeight * 0.9f, maxHeight - bleed * 2).coerceAtLeast(48.dp)
+        val maxIslandHeight = (maxHeight - bleed * 2).coerceAtLeast(48.dp)
         val maxHorizontalTextInset = maxOf(24.dp, maxIslandWidth * 0.05f)
         val measureCap = (maxIslandWidth - maxHorizontalTextInset * 2).coerceAtLeast(120.dp)
         val textMeasurer = rememberTextMeasurer()

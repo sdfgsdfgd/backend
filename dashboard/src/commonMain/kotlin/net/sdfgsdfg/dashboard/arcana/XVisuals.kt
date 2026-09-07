@@ -155,7 +155,7 @@ internal fun XGlassCard(
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 11.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 11.dp),
             contentAlignment = Alignment.Center,
             content = content,
         )
