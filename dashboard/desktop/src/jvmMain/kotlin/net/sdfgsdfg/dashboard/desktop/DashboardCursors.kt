@@ -7,9 +7,9 @@ import java.awt.image.BaseMultiResolutionImage
 import javax.imageio.ImageIO
 
 internal object DashboardCursors {
-    val default = load("dashboard-default", Point(4, 3), PointerIcon.Default)
-    val windowMove = load("dashboard-window-move", Point(16, 16), PointerIcon.Hand)
-    val text = load("dashboard-text", Point(16, 16), PointerIcon.Text)
+    val default = load("dashboard-default", Point(2, 1), PointerIcon.Default)
+    val windowMove = load("dashboard-window-move", Point(15, 15), PointerIcon.Hand)
+    val text = load("dashboard-text", Point(15, 16), PointerIcon.Text)
 
     private fun load(
         name: String,
