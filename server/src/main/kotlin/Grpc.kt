@@ -248,13 +248,13 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
             call.respondText(statusPayload("bad_request", ""), ContentType.Application.Json, HttpStatusCode.BadRequest)
             return@get
         }
+        call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
         val job = serverPyBridge.askJobs[rpcId]
         if (job == null) {
             application.log.info("[gRPC][$rpcId] result claim unknown")
             call.respondText(statusPayload("unknown", rpcId), ContentType.Application.Json, HttpStatusCode.NotFound)
             return@get
         }
-        call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
         call.response.headers.append("X-Backend-Ask-Id", job.backendId)
         if (!job.deferred.isCompleted) {
             application.log.info("[gRPC][${job.backendId}][$rpcId] result claim running")

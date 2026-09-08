@@ -469,12 +469,11 @@ private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAd
         "deepseek-instant",
     )
     private val home = arcanaRepo
-    private val python get() = File(home, ".venv/bin/python").takeIf(File::canExecute)?.absolutePath ?: "python3"
-    private val entry get() = File(home, "_0.py")
+    private val entry get() = File(home, "arcana")
 
     override suspend fun list(workspace: File): List<OpsNativeSession> = withContext(Dispatchers.IO) {
-        check(entry.isFile) { "Arcana is not installed at ${home.path}" }
-        val process = ProcessBuilder(python, entry.absolutePath, "--path", workspace.path, "--list-sessions")
+        check(entry.canExecute()) { "Arcana is not installed at ${home.path}" }
+        val process = ProcessBuilder(entry.absolutePath, "--path", workspace.path, "--list-sessions")
             .directory(home)
             .start()
         val stdout = process.inputStream.bufferedReader().readText()
@@ -505,9 +504,8 @@ private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAd
         structured: suspend (OpsStructuredEventDto) -> Unit,
         lifecycle: suspend (OpsSessionStateDto, String?, String?, Int?) -> Unit,
     ): OpsAgentProcess = withContext(Dispatchers.IO) {
-        check(entry.isFile) { "Arcana is not installed at ${home.path}" }
+        check(entry.canExecute()) { "Arcana is not installed at ${home.path}" }
         val args = buildList {
-            add(python)
             add(entry.absolutePath)
             addAll(listOf("--path", request.workspace.path, "--sandbox", if (request.auto) "--auto" else "--manual", "--stdio"))
             if (!request.indexSync) add("--no-index-sync")
