@@ -23,6 +23,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -48,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import net.sdfgsdfg.data.model.OpsIssuePatchDto
 import net.sdfgsdfg.data.model.OpsRunEventDto
 import net.sdfgsdfg.data.model.OpsSessionCommandDto
@@ -59,6 +62,7 @@ import net.sdfgsdfg.data.model.OpsViewerDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventDto
 import net.sdfgsdfg.data.model.canRunSessions
 import net.sdfgsdfg.dashboard.tools.issueFrameTrace
+import kotlin.coroutines.resume
 
 private fun OpsSummaryDto.issueTraceShape() =
     "repos=${repos.joinToString { "${it.id}:${it.issues.active}/${it.issues.items.size}" }}"
@@ -101,7 +105,7 @@ fun DashboardApp(
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
     val fallbackFocusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
-    val viewerRequest = remember { intArrayOf(0) }
+    var viewerRequest by remember { mutableIntStateOf(0) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
     val canRunSessions = viewerResolved && viewer.canRunSessions()
@@ -114,22 +118,7 @@ fun DashboardApp(
     val renderedTab = presentedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
 
     fun refreshViewer() {
-        val request = ++viewerRequest[0]
-        loadOpsViewer(
-            onLoaded = {
-                if (mounted[0] && request == viewerRequest[0]) {
-                    viewer = it
-                    viewerResolved = true
-                }
-            },
-            onFailed = {
-                if (mounted[0] && request == viewerRequest[0]) {
-                    viewer = OpsViewerDto()
-                    viewerResolved = true
-                }
-                issueFrameTrace("viewer-load-failed") { it.ifBlank { "Failed to load ops viewer" } }
-            },
-        )
+        viewerRequest++
     }
 
     fun applySummary(summary: OpsSummaryDto, source: String = "summary") {
@@ -176,8 +165,30 @@ fun DashboardApp(
     LaunchedEffect(windowKeys, focusedArrowKeys) {
         if (windowKeys == null && focusedArrowKeys) runCatching { fallbackFocusRequester.requestFocus() }
     }
-    LaunchedEffect(Unit) {
-        refreshViewer()
+    LaunchedEffect(viewerRequest) {
+        val request = viewerRequest
+        var retryDelay = 1_000L
+        while (isActive) {
+            val resolved = suspendCancellableCoroutine<OpsViewerDto?> { continuation ->
+                loadOpsViewer(
+                    onLoaded = { if (continuation.isActive) continuation.resume(it) },
+                    onFailed = { message ->
+                        if (continuation.isActive) {
+                            issueFrameTrace("viewer-load-failed") { message.ifBlank { "Failed to load ops viewer" } }
+                            continuation.resume(null)
+                        }
+                    },
+                )
+            }
+            if (request != viewerRequest) return@LaunchedEffect
+            if (resolved != null) {
+                viewer = resolved
+                viewerResolved = true
+                return@LaunchedEffect
+            }
+            delay(retryDelay)
+            retryDelay = (retryDelay * 2).coerceAtMost(15_000L)
+        }
     }
     // One ordered coroutine owns all socket-driven Compose state. JVM transport can feed this
     // directly without queuing every stream fragment behind unrelated AWT work.
