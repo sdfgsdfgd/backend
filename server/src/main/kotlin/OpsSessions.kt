@@ -378,6 +378,7 @@ internal class OpsSessionService(
                         workspace, nativeSessionId, initialInput, command.model, command.noPace,
                         command.paceMinSeconds, command.paceMaxSeconds,
                         command.auto == true, command.indexSync == true, command.arcanaMode ?: OpsArcanaModeDto.WORKSPACE,
+                        command.sandbox != false,
                     ),
                     runtime::stream,
                     runtime::structured,
@@ -437,6 +438,7 @@ internal data class OpsAgentLaunch(
     val auto: Boolean,
     val indexSync: Boolean,
     val mode: OpsArcanaModeDto,
+    val sandbox: Boolean = true,
 )
 
 internal interface OpsAgentProcess {
@@ -507,7 +509,8 @@ private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAd
         check(entry.canExecute()) { "Arcana is not installed at ${home.path}" }
         val args = buildList {
             add(entry.absolutePath)
-            addAll(listOf("--path", request.workspace.path, "--sandbox", if (request.auto) "--auto" else "--manual", "--stdio"))
+            addAll(listOf("--path", request.workspace.path, if (request.auto) "--auto" else "--manual", "--stdio"))
+            if (request.sandbox && request.mode != OpsArcanaModeDto.GENERAL) add("--sandbox")
             if (!request.indexSync) add("--no-index-sync")
             when (request.mode) {
                 OpsArcanaModeDto.WORKSPACE -> Unit

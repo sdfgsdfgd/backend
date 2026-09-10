@@ -190,6 +190,7 @@ private data class XArcanaLaunch(
     val paceMaxSeconds: Double?,
     val auto: Boolean,
     val indexSync: Boolean,
+    val sandbox: Boolean,
     val debugTelemetry: Boolean,
     val mode: OpsArcanaModeDto,
 )
@@ -452,6 +453,7 @@ internal fun ArcanaSessionsTab(
                 readDashboardPref("ops.x.arcana.paceMaxSeconds")?.toDoubleOrNull(),
                 readDashboardPref("ops.x.arcana.auto")?.toBooleanStrictOrNull() ?: false,
                 readDashboardPref("ops.x.arcana.indexSync")?.toBooleanStrictOrNull() ?: false,
+                readDashboardPref("ops.x.arcana.sandbox")?.toBooleanStrictOrNull() ?: true,
                 readDashboardPref(X_ARCANA_DEBUG_TELEMETRY_PREF)?.toBooleanStrictOrNull() ?: false,
                 OpsArcanaModeDto.entries.firstOrNull { it.name == readDashboardPref("ops.x.arcana.mode") }
                     ?: OpsArcanaModeDto.WORKSPACE,
@@ -584,6 +586,7 @@ internal fun ArcanaSessionsTab(
         writeDashboardPref("ops.x.arcana.paceMaxSeconds", value.paceMaxSeconds?.toString().orEmpty())
         writeDashboardPref("ops.x.arcana.auto", value.auto.toString())
         writeDashboardPref("ops.x.arcana.indexSync", value.indexSync.toString())
+        writeDashboardPref("ops.x.arcana.sandbox", value.sandbox.toString())
         writeDashboardPref(X_ARCANA_DEBUG_TELEMETRY_PREF, value.debugTelemetry.toString())
         writeDashboardPref("ops.x.arcana.mode", value.mode.name)
     }
@@ -670,6 +673,7 @@ internal fun ArcanaSessionsTab(
             paceMaxSeconds = arcana.paceFor(arcana.model.pacingProvider)?.second.takeIf { summary.agent == OpsAgentDto.ARCANA && !arcana.noPace },
             auto = arcana.auto.takeIf { summary.agent == OpsAgentDto.ARCANA },
             indexSync = arcana.indexSync.takeIf { summary.agent == OpsAgentDto.ARCANA },
+            sandbox = arcana.sandbox.takeIf { summary.agent == OpsAgentDto.ARCANA },
             arcanaMode = arcana.mode.takeIf { summary.agent == OpsAgentDto.ARCANA },
         )
         startRetry = 0
@@ -949,6 +953,7 @@ internal fun ArcanaSessionsTab(
                     paceMaxSeconds = arcana.paceFor(arcana.model.pacingProvider)?.second.takeIf { selectedAgent == XAgent.ARCANA && !arcana.noPace },
                     auto = arcana.auto.takeIf { selectedAgent == XAgent.ARCANA },
                     indexSync = arcana.indexSync.takeIf { selectedAgent == XAgent.ARCANA },
+                    sandbox = arcana.sandbox.takeIf { selectedAgent == XAgent.ARCANA },
                     arcanaMode = arcana.mode.takeIf { selectedAgent == XAgent.ARCANA },
                 )
                 startRetry = 0
@@ -1438,6 +1443,21 @@ private fun XArcanaRecipe(
                     }
                 },
                 onClick = { onSettingsChanged(settings.copy(auto = !settings.auto)) },
+                modifier = Modifier.height(48.dp),
+            )
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text("◆  Sandbox ${if (settings.mode == OpsArcanaModeDto.GENERAL) "not applicable" else if (settings.sandbox) "on" else "off"}", color = Color(0xFFD9C986), fontSize = 11.sp)
+                        Text(when {
+                            settings.mode == OpsArcanaModeDto.GENERAL -> "general chat uses a temporary folder"
+                            settings.sandbox -> "work on a copy · apply changes back"
+                            else -> "edit the selected repository directly"
+                        }, color = muted, fontSize = 8.sp)
+                    }
+                },
+                onClick = { onSettingsChanged(settings.copy(sandbox = !settings.sandbox)) },
+                enabled = settings.mode != OpsArcanaModeDto.GENERAL,
                 modifier = Modifier.height(48.dp),
             )
             DropdownMenuItem(

@@ -145,6 +145,7 @@ data class OpsSessionCommandDto(
     val auto: Boolean? = null,
     @SerialName("index_sync") val indexSync: Boolean? = null,
     @SerialName("arcana_mode") val arcanaMode: OpsArcanaModeDto? = null,
+    val sandbox: Boolean? = null,
 )
 
 @Serializable
