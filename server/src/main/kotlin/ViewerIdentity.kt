@@ -9,20 +9,19 @@ import java.net.InetAddress
 import java.net.http.HttpClient
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.nio.file.attribute.FileTime
 
 private const val ownerUserId = "kaan"
 private const val ownerRole = "admin"
 private const val guestUserId = "guest"
 private const val guestRole = "guest"
-private const val ownerIpCacheTtlMs = 30_000L
 private val ownerPublicIpFile = Paths.get(
     System.getenv("OWNER_PUBLIC_IP_FILE")?.trim()?.takeIf { it.isNotBlank() }
         ?: "/home/x/Desktop/SCRIPTS/public_ip.txt"
 )
 
-@Volatile private var ownerIpv4Cache: String? = null
-@Volatile private var ownerIpv6Cache: String? = null
-@Volatile private var ownerIpCacheAtMs: Long = 0
+private data class OwnerIpCache(val modifiedAt: FileTime, val addresses: Pair<String?, String?>)
+@Volatile private var ownerIpCache: OwnerIpCache? = null
 
 internal suspend fun ApplicationCall.opsViewer(http: HttpClient): OpsViewerDto {
     val client = clientInfo()
@@ -94,8 +93,8 @@ private fun String.matchesCurrentOwnerPublicIp(): Boolean {
 }
 
 private fun currentOwnerPublicIps(): Pair<String?, String?> {
-    val now = System.currentTimeMillis()
-    if (now - ownerIpCacheAtMs < ownerIpCacheTtlMs) return ownerIpv4Cache to ownerIpv6Cache
+    val modifiedAt = runCatching { Files.getLastModifiedTime(ownerPublicIpFile) }.getOrNull() ?: return null to null
+    ownerIpCache?.takeIf { it.modifiedAt == modifiedAt }?.let { return it.addresses }
 
     var v4: String? = null
     var v6: String? = null
@@ -112,9 +111,7 @@ private fun currentOwnerPublicIps(): Pair<String?, String?> {
             }
         }
     if (v4 != null || v6 != null) {
-        ownerIpv4Cache = v4
-        ownerIpv6Cache = v6
-        ownerIpCacheAtMs = now
+        ownerIpCache = OwnerIpCache(modifiedAt, v4 to v6)
     }
     return v4 to v6
 }

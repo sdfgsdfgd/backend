@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Process-owned resources: one construction seam, one deterministic shutdown seam. */
 internal class BackendRuntime(
+    val recovery: NetworkRecovery = NetworkRecovery(),
     val proxyHttp: HttpClient = proxyHttpClient(),
     val proxyWebSocket: HttpClient = proxyWebSocketClient(),
     // Requests retain their tighter deadlines; this client owns pooling and the outer connect ceiling.
@@ -19,6 +20,7 @@ internal class BackendRuntime(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        recovery.close()
         opsSocket.close()
         serverPy.close()
         requestEvents.close()

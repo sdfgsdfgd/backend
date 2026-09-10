@@ -39,9 +39,12 @@ internal expect fun connectOpsSocket(
 internal class OpsSocketConnection(
     private val sendMessage: (OpsSocketMessageDto) -> Boolean,
     private val closeSocket: () -> Unit,
+    private val retrySocket: () -> Unit,
 ) {
+    constructor(sendMessage: (OpsSocketMessageDto) -> Boolean, closeSocket: () -> Unit) : this(sendMessage, closeSocket, {})
     fun send(message: OpsSocketMessageDto) = sendMessage(message)
     fun close() = closeSocket()
+    fun retry() = retrySocket()
 }
 
 internal expect fun mutateIssue(

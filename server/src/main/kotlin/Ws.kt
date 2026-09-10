@@ -4,13 +4,15 @@ import io.ktor.server.application.log
 import io.ktor.server.routing.Route
 import io.ktor.server.websocket.application
 import io.ktor.server.websocket.sendSerialized
-import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicInteger
@@ -19,17 +21,17 @@ fun Route.ws() {
     val json = Json { ignoreUnknownKeys = true }
     val repoManager = RepositoryManager()
 
-    webSocket("/ws") {
+    recoveringWebSocket("/ws") {
         if (!ConnectionCounter.tryAcquire()) { // Reject if at capacity
             application.log.warn("Rejecting WebSocket connection: at capacity.")
             close(CloseReason(CloseReason.Codes.TRY_AGAIN_LATER, "Server at capacity."))
-            return@webSocket
+            return@recoveringWebSocket
         }
 
         val clientId = "client-${System.currentTimeMillis()}" // Generate an ID for logging
         application.log.info("[WS-$clientId] Connected. Active: ${ConnectionCounter.count()}")
 
-        runCatching {
+        try {
             // todo: STREAMLINE under a new Banner sealed Class, and --> receiveDeserialized<WsMessage>()
             incoming.receiveAsFlow().collect { frame ->
                 (frame as? Frame.Text)?.readText()?.trim()?.takeIf { it.isNotBlank() }?.let { rawText ->
@@ -65,18 +67,24 @@ fun Route.ws() {
                     }
                 }
             }
-        }.onFailure { e ->
-            when (e) {
-                is ClosedReceiveChannelException -> application.log.info("[WS-$clientId] Client closed connection.")
-                else -> application.log.error("[WS-$clientId] Error: ${e.message}", e)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (closed: ClosedReceiveChannelException) {
+            application.log.info("[WS-$clientId] Client closed connection.")
+        } catch (failure: Throwable) {
+            application.log.error("[WS-$clientId] Error: ${failure.message}", failure)
+            throw failure
+        } finally {
+            try {
+                withContext(NonCancellable) {
+                    activeGitOperations[clientId]?.cancel()
+                    stopContainerInternal(clientId)
+                }
+            } finally {
+                WorkspaceTracker.removeClient(clientId)
+                ConnectionCounter.release()
+                application.log.info("[WS-$clientId] Disconnected. Active: ${ConnectionCounter.count()}")
             }
-        }.also {
-            // Cleanup
-            activeGitOperations[clientId]?.cancel()
-            stopContainerInternal(clientId)
-            WorkspaceTracker.removeClient(clientId)
-            ConnectionCounter.release()
-            application.log.info("[WS-$clientId] Disconnected. Active: ${ConnectionCounter.count()}")
         }
     }
 }

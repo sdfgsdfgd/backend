@@ -24,18 +24,21 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.WebSocket
+import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 import java.util.prefs.Preferences
 
 private const val githubTokenPrefKey = "ops.github.token"
 private const val opsSocketSendTimeoutSeconds = 10L
 private val dashboardPrefs = Preferences.userRoot().node("net/sdfgsdfg/dashboard")
 // One selector/pool serves the desktop process; Compose owns sockets, main owns transport shutdown.
-private val opsHttp = HttpClient.newHttpClient()
+private val opsHttp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 private var activeOpsApiBase: String? = null
 private enum class OpsApiMode { Dev, Local, Prod }
 @Volatile private var activeGithubToken: String? = readDashboardPref(githubTokenPrefKey)
@@ -203,13 +206,21 @@ internal actual fun connectOpsSocket(
 ): OpsSocketConnection {
     val active = AtomicBoolean(true)
     val socket = AtomicReference<WebSocket?>()
+    val connecting = AtomicReference<CompletableFuture<WebSocket>?>()
+    val currentAttempt = AtomicReference<AtomicBoolean?>()
+    val retryRequested = AtomicBoolean()
+    val lastPong = AtomicLong()
+    val failureDetail = AtomicReference<String?>()
     val sendLock = Any()
     var sendTail: CompletionStage<*> = CompletableFuture.completedFuture(Unit)
 
-    fun disconnect(current: WebSocket, abort: Boolean = false) {
+    fun disconnect(current: WebSocket, abort: Boolean = false, detail: String? = null) {
         if (abort) current.abort()
         if (socket.compareAndSet(current, null) && active.get()) {
-            EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+            failureDetail.set(detail)
+            EventQueue.invokeLater {
+                if (active.get() && socket.get() == null) onState(OpsSocketState(OpsSocketStatus.DISCONNECTED, detail = detail))
+            }
         }
     }
 
@@ -226,41 +237,55 @@ internal actual fun connectOpsSocket(
             }
             sendTail
         }
-        queued.whenComplete { _, error -> if (error != null) disconnect(current, abort = true) }
+        queued.whenComplete { _, error -> if (error != null) disconnect(current, abort = true, detail = error.message) }
         return true
     }
 
     fun send(type: String, clientTimestamp: Long? = null) = send(OpsSocketMessageDto(type, clientTimestamp))
 
-    Thread({
+    val worker = Thread({
         while (active.get()) {
             for (endpoint in opsApiEndpoints()) {
                 if (!active.get()) break
-                EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTING)) }
-                runCatching {
+                val attempt = AtomicBoolean(true)
+                currentAttempt.set(attempt)
+                EventQueue.invokeLater {
+                    if (active.get() && attempt.get()) onState(OpsSocketState(OpsSocketStatus.CONNECTING, detail = failureDetail.get()))
+                }
+                try {
                     val wsUrl = endpoint
                         .replaceFirst("https://", "wss://")
                         .replaceFirst("http://", "ws://") + OPS_WS_PATH
-                    val builder = opsHttp.newWebSocketBuilder().applyOpsAuth()
+                    val builder = opsHttp.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(10)).applyOpsAuth()
                     val listener = object : WebSocket.Listener {
                         private var text = ""
 
                         override fun onOpen(webSocket: WebSocket) {
+                            if (!active.get() || !attempt.get()) { webSocket.abort(); return }
                             socket.set(webSocket)
+                            if (!active.get() || !attempt.get()) { disconnect(webSocket, abort = true); return }
+                            lastPong.set(System.nanoTime())
+                            failureDetail.set(null)
                             activeOpsApiBase = endpoint
-                            EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED)) }
+                            EventQueue.invokeLater {
+                                if (active.get() && socket.get() === webSocket) onState(OpsSocketState(OpsSocketStatus.CONNECTED))
+                            }
                             webSocket.request(1)
                         }
 
                         override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*> {
+                            if (!attempt.get() || socket.get() !== webSocket) return CompletableFuture.completedFuture(null)
                             text += data
                             if (last) {
                                 val raw = text
                                 text = ""
                                 runCatching { dashboardJson.decodeFromString<OpsSocketMessageDto>(raw) }.getOrNull()?.let { message ->
                                     if (message.type == "pong") {
+                                        lastPong.set(System.nanoTime())
                                         val latency = message.clientTimestamp?.let { (System.currentTimeMillis() - it).coerceAtLeast(0L) }
-                                        EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.CONNECTED, latency)) }
+                                        EventQueue.invokeLater {
+                                            if (active.get() && socket.get() === webSocket) onState(OpsSocketState(OpsSocketStatus.CONNECTED, latency))
+                                        }
                                     } else {
                                         // DashboardApp hands this straight to its ordered coroutine inbox;
                                         // an AWT hop here can strand live output behind unrelated UI work.
@@ -273,35 +298,63 @@ internal actual fun connectOpsSocket(
                         }
 
                         override fun onError(webSocket: WebSocket, error: Throwable) {
-                            disconnect(webSocket)
+                            disconnect(webSocket, abort = true, detail = error.message ?: "Connection failed")
                         }
 
                         override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*> {
-                            disconnect(webSocket)
+                            disconnect(webSocket, detail = reason.ifBlank { "Connection closed ($statusCode)" })
                             return CompletableFuture.completedFuture(null)
                         }
                     }
-                    socket.set(builder.buildAsync(URI.create(wsUrl), listener).join())
+                    val future = builder.buildAsync(URI.create(wsUrl), listener)
+                    connecting.set(future)
+                    future.get(10, TimeUnit.SECONDS)
                     while (active.get() && socket.get()?.isInputClosed == false && socket.get()?.isOutputClosed == false) {
+                        if (System.nanoTime() - lastPong.get() > TimeUnit.SECONDS.toNanos(35)) {
+                            throw TimeoutException("No heartbeat response from the server")
+                        }
                         send("ping", System.currentTimeMillis())
                         Thread.sleep(15_000)
                     }
-                }.onFailure {
+                } catch (error: Exception) {
                     socket.getAndSet(null)?.abort()
-                    if (active.get()) EventQueue.invokeLater { onState(OpsSocketState(OpsSocketStatus.DISCONNECTED)) }
+                    failureDetail.set(error.cause?.message ?: error.message ?: "Connection timed out")
+                    if (active.get() && !retryRequested.get()) EventQueue.invokeLater {
+                        if (active.get() && socket.get() == null) onState(OpsSocketState(
+                            OpsSocketStatus.DISCONNECTED,
+                            detail = failureDetail.get(),
+                        ))
+                    }
+                } finally {
+                    attempt.set(false)
+                    connecting.getAndSet(null)?.cancel(true)
+                    socket.getAndSet(null)?.abort()
                 }
             }
-            runCatching { Thread.sleep(2_500) }
+            if (!retryRequested.getAndSet(false)) runCatching { Thread.sleep(2_500) }
         }
     }, "ops-socket").apply {
         isDaemon = true
         start()
     }
 
-    return OpsSocketConnection(::send) {
-        active.set(false)
-        runCatching { socket.getAndSet(null)?.sendClose(WebSocket.NORMAL_CLOSURE, "dashboard disposed") }
-    }
+    return OpsSocketConnection(
+        sendMessage = ::send,
+        closeSocket = {
+            active.set(false)
+            currentAttempt.getAndSet(null)?.set(false)
+            connecting.getAndSet(null)?.cancel(true)
+            socket.getAndSet(null)?.abort()
+            worker.interrupt()
+        },
+        retrySocket = {
+            retryRequested.set(true)
+            currentAttempt.getAndSet(null)?.set(false)
+            connecting.getAndSet(null)?.cancel(true)
+            socket.getAndSet(null)?.abort()
+            worker.interrupt()
+        },
+    )
 }
 
 internal actual fun mutateIssue(
@@ -336,6 +389,7 @@ private fun fetchOpsText(path: String): String {
             val url = if (absolute) path else "$endpoint$path"
             val request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(15))
                 .applyOpsAuth()
                 .GET()
                 .build()
@@ -382,6 +436,7 @@ private fun postOps(path: String, body: String = ""): Pair<Int, String> {
             val response = opsHttp.send(
                 HttpRequest.newBuilder()
                     .uri(URI.create("$endpoint$path"))
+                    .timeout(Duration.ofSeconds(30))
                     .header("Content-Type", "application/json")
                     .applyOpsAuth()
                     .POST(HttpRequest.BodyPublishers.ofString(body))

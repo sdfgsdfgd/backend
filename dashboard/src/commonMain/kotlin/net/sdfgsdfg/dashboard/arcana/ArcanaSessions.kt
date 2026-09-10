@@ -225,7 +225,14 @@ private data class XRepoPreview(
 )
 
 private data class XInputRequestUi(val kind: String, val prompt: String, val allowEmpty: Boolean)
-private data class XInputUi(val placeholder: String, val action: String? = null, val actionColor: Color = Color.Transparent, val enabled: Boolean = true)
+private data class XInputUi(
+    val placeholder: String,
+    val action: String? = null,
+    val actionColor: Color = Color.Transparent,
+    val enabled: Boolean = true,
+    val notice: XSyncUiState? = null,
+    val detail: String? = null,
+)
 @Immutable
 internal data class XArcanaActivity(val id: String, val label: String)
 private const val ARCANA_ACTIVITY_SCHEMA = "arcana.activity.v1"
@@ -426,6 +433,7 @@ internal fun ArcanaSessionsTab(
     sessionLedger: XSessionLedger,
     sendWorkspaceCommand: (OpsWorkspaceCommandDto) -> Boolean,
     sendSessionCommand: (OpsSessionCommandDto) -> Boolean,
+    reconnect: () -> Unit,
     header: @Composable (@Composable RowScope.() -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -471,6 +479,8 @@ internal fun ArcanaSessionsTab(
     }
     var repositoryStatus by remember { mutableStateOf(XSyncUiState()) }
     var workspaceStatus by remember { mutableStateOf(XSyncUiState()) }
+    var workspaceRetry by remember { mutableStateOf(0) }
+    var composerError by remember { mutableStateOf<String?>(null) }
     var workspaceId by remember { mutableStateOf<String?>(null) }
     var sessions by remember { mutableStateOf(emptyList<OpsSessionSummaryDto>()) }
     var sessionScope by remember { mutableStateOf<Pair<Long, XAgent>?>(null) }
@@ -499,7 +509,6 @@ internal fun ArcanaSessionsTab(
     val composerMode = remember(query.text, audioActive) { xComposerMode(query.text, audioActive) }
     val selectedRepo = repositories.firstOrNull { it.id == selectedRepoId }
     val currentSelectedRepo by rememberUpdatedState(selectedRepo)
-    val currentSendWorkspaceCommand by rememberUpdatedState(sendWorkspaceCommand)
     val runtimeView = rememberXRuntimeView(sessionLedger, runtimeId)
     val sessionState = runtimeView.sessionState
     val pendingInput = runtimeView.pendingInput
@@ -507,6 +516,23 @@ internal fun ArcanaSessionsTab(
     val runtimeState = runtimeView.runtimeState
     val live = runtimeState?.isActiveRuntime == true && sessionState?.field("status") != "concluded"
     val activeSessions = globalSessions.filter { it.runtimeId != null && it.state?.isActiveRuntime == true }
+    val connected = socketState.status == OpsSocketStatus.CONNECTED
+    val composerNotice = when {
+        !connected -> XSyncUiState(
+            if (socketState.status == OpsSocketStatus.DISCONNECTED) XSyncStage.ERROR else XSyncStage.INITIALIZING,
+            message = "Reconnecting… Your draft is kept. Retry to reconnect now.",
+        )
+        phase == XPhase.WORKSPACE && (workspaceId == null || workspaceStatus.stage != XSyncStage.SYNCHRONIZED) ->
+            workspaceStatus.copy(message = if (workspaceStatus.stage == XSyncStage.ERROR) "Workspace unavailable. Your draft is kept."
+                else "Preparing workspace… Your draft is kept.")
+        composerError != null -> XSyncUiState(XSyncStage.ERROR, message = composerError!!)
+        phase == XPhase.WORKSPACE && pendingStart != null -> XSyncUiState(
+            XSyncStage.INITIALIZING, message = "Waiting for session confirmation… Your draft is kept.",
+        )
+        phase == XPhase.REPOSITORIES && repositoryStatus.stage == XSyncStage.ERROR -> repositoryStatus
+        else -> null
+    }
+    val canRetry = !connected || composerNotice?.stage == XSyncStage.ERROR || pendingStart != null
     val inputUi = when (phase) {
         XPhase.REPOSITORIES -> XInputUi("Filter repositories · ↑↓ select · Enter open")
         XPhase.WORKSPACE -> XInputUi("Describe the first turn · Enter create ${selectedAgent.label}")
@@ -538,6 +564,15 @@ internal fun ArcanaSessionsTab(
                 enabled,
             )
         }
+    }.let { input ->
+        input.copy(
+            action = if (canRetry) "Retry" else input.action,
+            actionColor = if (canRetry) Color(0xFF856321) else input.actionColor,
+            enabled = canRetry || (input.enabled && composerNotice == null),
+            notice = composerNotice,
+            detail = if (!connected) socketState.detail else if (phase == XPhase.WORKSPACE && workspaceStatus.stage == XSyncStage.ERROR)
+                workspaceStatus.message else null,
+        )
     }
     val replayGap = runtimeView.replayGap
     val sessionStatus = XSyncUiState(
@@ -610,6 +645,8 @@ internal fun ArcanaSessionsTab(
     }
 
     fun resume(summary: OpsSessionSummaryDto) {
+        if (pendingStart != null) { startRetry++; return }
+        composerError = null
         arcanaSubmitting = false
         audioActive = false
         val targetAgent = XAgent.entries.first { it.wire == summary.agent }
@@ -730,6 +767,25 @@ internal fun ArcanaSessionsTab(
         }
     }
 
+    LaunchedEffect(syncRequestId, socketState.status, workspaceRetry) {
+        val requestId = syncRequestId ?: return@LaunchedEffect
+        val repo = selectedRepo ?: return@LaunchedEffect
+        if (phase != XPhase.WORKSPACE || !connected ||
+            (workspaceId != null && workspaceStatus.stage == XSyncStage.SYNCHRONIZED)
+        ) return@LaunchedEffect
+        workspaceStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, "Preparing ${repo.name}…")
+        if (!sendWorkspaceCommand(OpsWorkspaceCommandDto(requestId, OpsWorkspaceActionDto.SELECT_REPOSITORY, repo.id))) {
+            workspaceStatus = XSyncUiState(XSyncStage.ERROR, message = "Connection unavailable. Retry to prepare the workspace.")
+            return@LaunchedEffect
+        }
+        snapshotFlow { workspaceStatus }.collectLatest { status ->
+            if (status.stage in setOf(XSyncStage.INITIALIZING, XSyncStage.SYNCING)) {
+                delay(30_000)
+                workspaceStatus = status.copy(stage = XSyncStage.ERROR, message = "No workspace response for 30 seconds. Retry to reconnect it.")
+            }
+        }
+    }
+
     LaunchedEffect(socketState.status, viewer.userId, globalSessionRefresh) {
         if (socketState.status != OpsSocketStatus.CONNECTED || OPS_CAPABILITY_SESSIONS_RUN !in viewer.capabilities) return@LaunchedEffect
         val requestId = "active-sessions-${Clock.System.now().toEpochMilliseconds()}-$globalSessionRefresh"
@@ -748,9 +804,9 @@ internal fun ArcanaSessionsTab(
         }
     }
 
-    LaunchedEffect(workspaceId, selectedAgent, socketState.status, phase, sessionListRetry) {
+    LaunchedEffect(workspaceId, workspaceStatus.stage, selectedAgent, socketState.status, phase, sessionListRetry) {
         val workspace = workspaceId ?: return@LaunchedEffect
-        if (phase != XPhase.WORKSPACE || socketState.status != OpsSocketStatus.CONNECTED) return@LaunchedEffect
+        if (phase != XPhase.WORKSPACE || !connected || workspaceStatus.stage != XSyncStage.SYNCHRONIZED) return@LaunchedEffect
         val requestId = "sessions-${selectedAgent.name.lowercase()}-${Clock.System.now().toEpochMilliseconds()}-$sessionListRetry"
         sessionListRequestId = requestId
         when (deliver(
@@ -760,15 +816,16 @@ internal fun ArcanaSessionsTab(
             },
             accept = { it.requestId == requestId && it.kind in setOf(OpsSessionEventKindDto.SESSIONS, OpsSessionEventKindDto.ERROR) },
         )) {
-            XDelivery.NOT_SENT -> sessionMessage = "Ops socket is not ready · Enter to retry"
-            XDelivery.TIMED_OUT -> sessionMessage = "Session history timed out · Enter to retry"
+            XDelivery.NOT_SENT -> { composerError = "Could not load sessions. Your draft is kept."; sessionMessage = composerError!! }
+            XDelivery.TIMED_OUT -> { composerError = "Session history timed out. Retry to load it."; sessionMessage = composerError!! }
             XDelivery.ACKNOWLEDGED -> Unit
         }
     }
 
-    LaunchedEffect(pendingStart, startRetry, socketState.status) {
+    LaunchedEffect(pendingStart, startRetry, socketState.status, workspaceStatus.stage) {
         val command = pendingStart ?: return@LaunchedEffect
-        if (socketState.status != OpsSocketStatus.CONNECTED) return@LaunchedEffect
+        if (!connected || workspaceStatus.stage != XSyncStage.SYNCHRONIZED) return@LaunchedEffect
+        composerError = null
         when (deliver(command, onAttempt = { attempt ->
             sessionMessage = when {
                 command.action == OpsSessionActionDto.RESUME_SESSION && attempt == 0 -> "Resuming session…"
@@ -776,8 +833,8 @@ internal fun ArcanaSessionsTab(
                 else -> "Retrying session start · ${attempt + 1}/3"
             }
         })) {
-            XDelivery.NOT_SENT -> sessionMessage = "Ops socket is not ready · Enter to retry"
-            XDelivery.TIMED_OUT -> sessionMessage = "Session start was not acknowledged · Enter to retry"
+            XDelivery.NOT_SENT -> { composerError = "Could not confirm session creation. Retry checks the same submission."; sessionMessage = composerError!! }
+            XDelivery.TIMED_OUT -> { composerError = "Session creation is unconfirmed. Retry checks the same submission."; sessionMessage = composerError!! }
             XDelivery.ACKNOWLEDGED -> Unit
         }
     }
@@ -817,22 +874,21 @@ internal fun ArcanaSessionsTab(
             }
             if (event.kind == OpsSessionEventKindDto.ERROR && event.requestId in setOf(sessionListRequestId, startRequestId)) {
                 val repo = currentSelectedRepo
-                if (event.requestId == sessionListRequestId && event.text?.contains("Select and synchronize a repository first") == true &&
+                if (event.text?.contains("Select and synchronize a repository first") == true &&
                     repo != null && !workspaceRebindAttempted
                 ) {
                     workspaceRebindAttempted = true
                     val requestId = "rebind-${repo.id}-${Clock.System.now().toEpochMilliseconds()}"
                     syncRequestId = requestId
                     sessionMessage = "Reattaching ${repo.name} workspace…"
-                    if (!currentSendWorkspaceCommand(OpsWorkspaceCommandDto(requestId, OpsWorkspaceActionDto.SELECT_REPOSITORY, repo.id))) {
-                        sessionMessage = "Ops socket is not ready · Enter to retry"
-                    }
+                    workspaceStatus = XSyncUiState(XSyncStage.INITIALIZING, message = sessionMessage)
                 } else {
                     if (event.requestId == startRequestId) {
-                        pendingStart?.text?.let { query = TextFieldValue(it) }
+                        pendingStart?.text?.takeIf { query.text.isBlank() }?.let { query = TextFieldValue(it) }
                         pendingStart = null
                     }
                     sessionMessage = event.text ?: "Session command failed"
+                    composerError = sessionMessage
                 }
             }
             event.runtimeId?.let { id ->
@@ -843,9 +899,11 @@ internal fun ArcanaSessionsTab(
                     if (updated != current) sessions = sessions.toMutableList().also { it[index] = updated }
                 }
             }
-            if (startRequestId != null && event.requestId == startRequestId && event.runtimeId != null) {
+            if (startRequestId != null && event.requestId == startRequestId && event.runtimeId != null && event.kind != OpsSessionEventKindDto.ERROR) {
                 val firstReceipt = pendingStart != null
+                if (pendingStart?.text == query.text) clearComposer()
                 pendingStart = null
+                composerError = null
                 runtimeId = event.runtimeId
                 activeSessionId = event.sessionId
                 phase = XPhase.SESSION
@@ -896,6 +954,7 @@ internal fun ArcanaSessionsTab(
     fun openWorkspace() {
         val repo = selectedRepo ?: return
         arcanaSubmitting = false
+        composerError = null
         if (cursorRepositoryId != repo.id) {
             cursorRepositoryId = repo.id
             nativeSessionCursor = null
@@ -916,22 +975,25 @@ internal fun ArcanaSessionsTab(
         activeSessionId = null
         pendingStart = null
         workspaceStatus = XSyncUiState(XSyncStage.INITIALIZING, 0, "Preparing ${repo.name}…")
-        if (!sendWorkspaceCommand(OpsWorkspaceCommandDto(requestId, OpsWorkspaceActionDto.SELECT_REPOSITORY, repo.id))) {
-            workspaceStatus = XSyncUiState(XSyncStage.ERROR, 0, "Ops socket is not ready")
-        }
     }
     fun send() {
+        if (!connected) { reconnect(); return }
+        if (phase == XPhase.REPOSITORIES && repositoryStatus.stage == XSyncStage.ERROR) { reconnect(); return }
+        composerError = null
         when (phase) {
             XPhase.REPOSITORIES -> openWorkspace()
             XPhase.WORKSPACE -> {
                 val prompt = query.text
-                val workspace = workspaceId ?: return
-                if (workspaceStatus.stage != XSyncStage.SYNCHRONIZED) return
-                if (prompt.isBlank()) {
-                    if (pendingStart != null) {
-                        startRetry++
-                        return
+                if (workspaceId == null || workspaceStatus.stage != XSyncStage.SYNCHRONIZED) {
+                    if (workspaceStatus.stage == XSyncStage.ERROR) {
+                        workspaceStatus = XSyncUiState(XSyncStage.INITIALIZING, message = "Reconnecting workspace…")
+                        workspaceRetry++
                     }
+                    return
+                }
+                val workspace = workspaceId!!
+                if (pendingStart != null) { startRetry++; return }
+                if (prompt.isBlank()) {
                     sessions.firstOrNull { it.xKey == selectedSessionKey }?.let(::resume)
                     if (sessions.isEmpty()) {
                         workspaceRebindAttempted = false
@@ -957,7 +1019,6 @@ internal fun ArcanaSessionsTab(
                     arcanaMode = arcana.mode.takeIf { selectedAgent == XAgent.ARCANA },
                 )
                 startRetry = 0
-                clearComposer()
             }
             XPhase.SESSION -> runtimeId?.let { runtime ->
                 if (!inputUi.enabled) return
@@ -973,7 +1034,8 @@ internal fun ArcanaSessionsTab(
                         ),
                     )
                 ) {
-                    sessionMessage = "Ops socket is not ready · input retained"
+                    composerError = "Input was not sent. Your draft is kept. Retry to send it."
+                    sessionMessage = composerError!!
                     return
                 }
                 arcanaSubmitting = selectedAgent == XAgent.ARCANA
@@ -1882,20 +1944,41 @@ private fun XRightStage(
                 }
             }
         }
-        XLuxuryInput(
-            value = query,
-            onValueChange = onQueryChanged,
-            placeholder = inputUi.placeholder,
-            focusRequester = inputFocusRequester,
-            actionLabel = inputUi.action,
-            actionColor = inputUi.actionColor,
-            enabled = inputUi.enabled,
-            working = working,
-            mode = composerMode,
-            onAudioToggle = onAudioToggle,
-            onSend = onSend,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Column(Modifier.fillMaxWidth()) {
+            inputUi.notice?.let { notice ->
+                val tone = if (notice.stage == XSyncStage.ERROR) Color(0xFFFF8192) else Color(0xFFFFD482)
+                var showDetails by remember(notice.message, inputUi.detail) { mutableStateOf(false) }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)
+                    .background(tone.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                    .border(1.dp, tone.copy(alpha = 0.28f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(if (notice.stage == XSyncStage.ERROR) "!" else "↻", color = tone, fontWeight = FontWeight.Bold)
+                        Text(notice.message, color = tone, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        if (!inputUi.detail.isNullOrBlank()) Text(
+                            if (showDetails) "Hide details" else "Details", color = tone, fontSize = 11.sp,
+                            modifier = Modifier.clickable { showDetails = !showDetails }.padding(vertical = 4.dp),
+                        )
+                    }
+                    if (showDetails) Text(inputUi.detail.orEmpty(), color = tone.copy(alpha = 0.85f), fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+            XLuxuryInput(
+                value = query,
+                onValueChange = onQueryChanged,
+                placeholder = inputUi.placeholder,
+                focusRequester = inputFocusRequester,
+                actionLabel = inputUi.action,
+                actionColor = inputUi.actionColor,
+                enabled = inputUi.enabled,
+                working = working,
+                mode = composerMode,
+                onAudioToggle = onAudioToggle,
+                onSend = onSend,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }) { measurables, constraints ->
         val width = constraints.maxWidth
         val height = constraints.maxHeight

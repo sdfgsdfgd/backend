@@ -101,6 +101,7 @@ fun DashboardApp(
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
     val fallbackFocusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
+    val viewerRequest = remember { intArrayOf(0) }
     var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
     val canRunSessions = viewerResolved && viewer.canRunSessions()
@@ -113,15 +114,16 @@ fun DashboardApp(
     val renderedTab = presentedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
 
     fun refreshViewer() {
+        val request = ++viewerRequest[0]
         loadOpsViewer(
             onLoaded = {
-                if (mounted[0]) {
+                if (mounted[0] && request == viewerRequest[0]) {
                     viewer = it
                     viewerResolved = true
                 }
             },
             onFailed = {
-                if (mounted[0]) {
+                if (mounted[0] && request == viewerRequest[0]) {
                     viewer = OpsViewerDto()
                     viewerResolved = true
                 }
@@ -195,7 +197,7 @@ fun DashboardApp(
             }
         }
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(socketInbox) {
         mounted[0] = true
         val connection = connectOpsSocket(
             onMessage = { if (mounted[0]) socketInbox.trySend(it) },
@@ -209,6 +211,7 @@ fun DashboardApp(
         }
     }
     LaunchedEffect(socketState.status) {
+        if (socketState.status == OpsSocketStatus.CONNECTED) refreshViewer()
         if (socketState.status != OpsSocketStatus.DISCONNECTED) return@LaunchedEffect
         while (true) {
             loadOpsSummary(
@@ -375,6 +378,7 @@ fun DashboardApp(
                             socketState = socketState,
                             workspaceEvent = workspaceEvent,
                             sessionLedger = sessionLedger,
+                            reconnect = { socketConnection?.retry() },
                             sendWorkspaceCommand = { command ->
                                 socketConnection?.send(
                                     OpsSocketMessageDto("workspace_command", workspaceCommand = command),

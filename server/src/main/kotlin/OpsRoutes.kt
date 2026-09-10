@@ -15,7 +15,6 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
-import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
 import kotlinx.coroutines.Dispatchers
@@ -240,10 +239,10 @@ internal fun Route.opsRoutes(
         call.respond(viewer(call))
     }
 
-    webSocket(OPS_WS_PATH) {
+    recoveringWebSocket(OPS_WS_PATH) {
         if (!allowed(call)) {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Not Found"))
-            return@webSocket
+            return@recoveringWebSocket
         }
         socketHub.serve(this, OpsSocketPrincipal(viewer(call), call.opsGithubBearerToken()))
     }

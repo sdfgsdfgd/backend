@@ -27,6 +27,7 @@ internal enum class OpsSocketStatus { CONNECTING, CONNECTED, DISCONNECTED }
 internal data class OpsSocketState(
     val status: OpsSocketStatus = OpsSocketStatus.CONNECTING,
     val latencyMs: Long? = null,
+    val detail: String? = null,
 )
 
 data class OpsGithubAuthWindowState(

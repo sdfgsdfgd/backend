@@ -11,6 +11,8 @@ import io.grpc.netty.shaded.io.netty.channel.unix.DomainSocketAddress
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.log
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveNullable
 import io.ktor.server.response.respond
@@ -25,13 +27,20 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.produceIn
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -240,6 +249,45 @@ private fun ServerPyBridge.startAskJob(
 /*
  * ---------- REST → gRPC unary bridge ----------
  */
+@OptIn(ExperimentalCoroutinesApi::class)
+private suspend fun ApplicationCall.respondWithHeartbeat(contentType: ContentType, heartbeat: String, payloads: Flow<String>) {
+    val label = "[gRPC][${response.headers["X-Backend-Ask-Id"] ?: "stream"}][${response.headers[ARCANA_RPC_ID_HEADER] ?: request.path()}]"
+    val startedAt = System.nanoTime()
+    fun elapsedMs() = (System.nanoTime() - startedAt) / 1_000_000
+    respondTextWriter(contentType) {
+        coroutineScope {
+            val chunks = payloads.produceIn(this)
+            var heartbeats = 0
+            try {
+                var frame: String? = heartbeat
+                while (frame != null) {
+                    val kind = if (frame == heartbeat) "heartbeat#${++heartbeats}" else "payload"
+                    application.log.info("$label $kind write elapsed_ms=${elapsedMs()} bytes=${frame.toByteArray().size}")
+                    write(frame)
+                    flush()
+                    application.log.info("$label $kind flushed elapsed_ms=${elapsedMs()}")
+                    frame = select {
+                        chunks.onReceiveCatching { result ->
+                            result.exceptionOrNull()?.let { throw it }
+                            result.getOrNull()
+                        }
+                        onTimeout(20.seconds) { heartbeat }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                application.log.warn("$label writer cancelled elapsed_ms=${elapsedMs()} heartbeats=$heartbeats cause=${cancelled.message}")
+                throw cancelled
+            } catch (failure: Throwable) {
+                application.log.error("$label writer failed elapsed_ms=${elapsedMs()} heartbeats=$heartbeats", failure)
+                throw failure
+            } finally {
+                chunks.cancel()
+                application.log.info("$label writer finished elapsed_ms=${elapsedMs()} heartbeats=$heartbeats")
+            }
+        }
+    }
+}
+
 internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketHub) {
     get("/api/ask/result/{id}") {
         serverPyBridge.pruneAskJobs()
@@ -271,7 +319,6 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
 
     post("/api/ask") {
         serverPyBridge.pruneAskJobs()
-        val heartbeatSeconds = 20.seconds
         val body = call.receive<AskRequestDto>()
         val requestId = "ask-${UUID.randomUUID().toString().take(8)}"
         val rpcId = cleanRpcId(body.requestId) ?: cleanRpcId(call.request.headers[ARCANA_RPC_ID_HEADER]) ?: "srv-${UUID.randomUUID()}"
@@ -309,55 +356,14 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
 
         call.response.headers.append(ARCANA_RPC_ID_HEADER, rpcId)
         call.response.headers.append("X-Backend-Ask-Id", job.backendId)
-        call.respondTextWriter(contentType = ContentType.Application.Json) {
-            var heartbeatCount = 0
-            try {
-                while (!job.deferred.isCompleted) {
-                    heartbeatCount += 1
-                    try {
-                        application.log.info("[gRPC][$requestId][$rpcId] heartbeat#$heartbeatCount write elapsed_ms=${elapsedMs()}")
-                        write(" \n")        // legal JSON whitespace keeps Cloudflare happy
-                        flush()
-                        application.log.info("[gRPC][$requestId][$rpcId] heartbeat#$heartbeatCount flushed elapsed_ms=${elapsedMs()}")
-                    } catch (err: CancellationException) {
-                        application.log.warn(
-                            "[gRPC][$requestId][$rpcId] heartbeat#$heartbeatCount cancelled elapsed_ms=${elapsedMs()} " +
-                                "cause=${err::class.simpleName}: ${err.message}"
-                        )
-                        throw err
-                    } catch (err: Throwable) {
-                        application.log.error(
-                            "[gRPC][$requestId][$rpcId] heartbeat#$heartbeatCount write/flush failed elapsed_ms=${elapsedMs()} " +
-                                "cause=${err::class.qualifiedName}: ${err.message}",
-                            err
-                        )
-                        throw err
-                    }
-                    if (withTimeoutOrNull(heartbeatSeconds.inWholeMilliseconds) { job.deferred.await(); true } == true) {
-                        break
-                    }
-                }
+        try {
+            call.respondWithHeartbeat(ContentType.Application.Json, " \n", flow {
                 val result = job.deferred.await()
-                application.log.info("[gRPC][$requestId][$rpcId] final payload write elapsed_ms=${elapsedMs()} bytes=${result.payload.toByteArray().size} status=${result.status.value}")
-                write(result.payload)
-                flush()
-                application.log.info("[gRPC][$requestId][$rpcId] final payload flushed elapsed_ms=${elapsedMs()}")
-            } catch (err: CancellationException) {
-                application.log.warn(
-                    "[gRPC][$requestId][$rpcId] writer cancelled elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount " +
-                        "cause=${err::class.simpleName}: ${err.message}"
-                )
-                throw err
-            } catch (err: Throwable) {
-                application.log.error(
-                    "[gRPC][$requestId][$rpcId] writer failed elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount " +
-                        "cause=${err::class.qualifiedName}: ${err.message}",
-                    err
-                )
-                throw err
-            } finally {
-                application.log.info("[gRPC][$requestId][$rpcId] writer finished elapsed_ms=${elapsedMs()} heartbeats=$heartbeatCount job_done=${job.deferred.isCompleted}")
-            }
+                application.log.info("[gRPC][$requestId][$rpcId] final payload ready elapsed_ms=${elapsedMs()} bytes=${result.payload.toByteArray().size} status=${result.status.value}")
+                emit(result.payload)
+            })
+        } finally {
+            application.log.info("[gRPC][$requestId][$rpcId] delivery finished elapsed_ms=${elapsedMs()} job_done=${job.deferred.isCompleted}")
         }
     }
 
@@ -368,20 +374,10 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
         val prompt = call.request.queryParameters["q"] ?: return@get call.respond(HttpStatusCode.BadRequest, TypeInfo(String::class))
         val req = AskRequest.newBuilder().setPrompt(prompt).build()
 
-        @Suppress("BlockingMethodInNonBlockingContext") // Ktor `write/flush` are suspend-based, IDE warning is a false positive
-        call.respondTextWriter(contentType = ContentType.Text.EventStream) {
-            write(": keep-alive\n\n")      // first  bytes → resets Netty timer
-            flush()
-
-            serverPyBridge.botStub.askStream(req).collect { chunk ->
-                application.log.info("[gRPC] streaming collected chunk --> ${chunk.text.take(14)}...${chunk.text.takeLast(14)}")
-
-                write("data:${chunk.text}\n\n")
-                flush()
-            }
-
-            application.log.info("[gRPC] < streaming COLLECT ENDED >")
-        }
+        call.respondWithHeartbeat(ContentType.Text.EventStream, ": keep-alive\n\n", serverPyBridge.botStub.askStream(req).map { chunk ->
+            application.log.info("[gRPC] streaming collected chunk --> ${chunk.text.take(14)}...${chunk.text.takeLast(14)}")
+            chunk.text.lineSequence().joinToString("\n") { "data:$it" } + "\n\n"
+        })
 
         application.log.info("[gRPC] < streaming ENDED >")
     }

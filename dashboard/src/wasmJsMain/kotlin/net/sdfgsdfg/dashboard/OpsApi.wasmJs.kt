@@ -42,6 +42,8 @@ internal actual fun loadOpsText(
     val url = opsUrl(path)
     XMLHttpRequest().apply {
         open("GET", url)
+        timeout = 15_000
+        ontimeout = { onFailed("GET $url timed out"); null }
         withCredentials = true
         onload = {
             if (status.toInt() in 200..299) {
@@ -68,6 +70,8 @@ private inline fun <reified T> loadOpsJson(
 ) {
     XMLHttpRequest().apply {
         open("GET", url)
+        timeout = 15_000
+        ontimeout = { onFailed("$label timed out"); null }
         withCredentials = true
         onload = {
             if (status.toInt() in 200..299) {
@@ -96,6 +100,8 @@ internal actual fun mutateIssue(
     val url = opsUrl(OPS_ISSUES_PATH)
     XMLHttpRequest().apply {
         open("POST", url)
+        timeout = 30_000
+        ontimeout = { onFailed("POST $url timed out; receipt is unknown"); null }
         withCredentials = true
         setRequestHeader("Content-Type", "application/json")
         onload = {
@@ -190,12 +196,14 @@ internal actual fun connectOpsSocket(
     var socket: WebSocket? = null
     var pingTimer = 0
     var reconnectTimer = 0
+    var connectTimer = 0
+    var lastPong = 0.0
+    var failureDetail: String? = null
 
     fun send(message: OpsSocketMessageDto): Boolean {
         val ws = socket ?: return false
         if (ws.readyState == WebSocket.OPEN) {
-            ws.send(dashboardJson.encodeToString(message))
-            return true
+            return runCatching { ws.send(dashboardJson.encodeToString(message)) }.isSuccess
         }
         return false
     }
@@ -204,19 +212,43 @@ internal actual fun connectOpsSocket(
 
     fun connect() {
         if (!active) return
-        onState(OpsSocketState(OpsSocketStatus.CONNECTING))
+        onState(OpsSocketState(OpsSocketStatus.CONNECTING, detail = failureDetail))
         socket = WebSocket(opsWsUrl()).also { ws ->
-            fun ping() = send("ping", window.performance.now().toLong())
-            ws.onopen = {
-                onState(OpsSocketState(OpsSocketStatus.CONNECTED))
-                ping()
+            fun failed(detail: String) {
+                if (!active || socket !== ws) return
+                socket = null
+                window.clearTimeout(connectTimer)
                 window.clearInterval(pingTimer)
-                pingTimer = window.setInterval({ ping(); null }, 15_000)
+                ws.close()
+                failureDetail = detail
+                onState(OpsSocketState(OpsSocketStatus.DISCONNECTED, detail = detail))
+                window.clearTimeout(reconnectTimer)
+                reconnectTimer = window.setTimeout({ connect(); null }, 5_000)
+            }
+            fun ping() = send("ping", window.performance.now().toLong())
+            connectTimer = window.setTimeout({ failed("Connection timed out"); null }, 10_000)
+            ws.onopen = {
+                if (active && socket === ws) {
+                    window.clearTimeout(connectTimer)
+                    lastPong = window.performance.now()
+                    failureDetail = null
+                    onState(OpsSocketState(OpsSocketStatus.CONNECTED))
+                    ping()
+                    window.clearInterval(pingTimer)
+                    pingTimer = window.setInterval({
+                        if (window.performance.now() - lastPong > 35_000) failed("No heartbeat response from the server")
+                        else if (!ping()) failed("Could not send to the server")
+                        null
+                    }, 15_000)
+                } else ws.close()
                 null
             }
             ws.onmessage = { event: MessageEvent ->
-                val message = runCatching { dashboardJson.decodeFromString<OpsSocketMessageDto>(event.data.toString()) }.getOrNull()
+                val message = if (active && socket === ws) runCatching {
+                    dashboardJson.decodeFromString<OpsSocketMessageDto>(event.data.toString())
+                }.getOrNull() else null
                 if (message?.type == "pong") {
+                    lastPong = window.performance.now()
                     val latency = message.clientTimestamp?.let { (window.performance.now() - it).toLong().coerceAtLeast(0L) }
                     onState(OpsSocketState(OpsSocketStatus.CONNECTED, latency))
                 } else if (message != null) {
@@ -225,30 +257,30 @@ internal actual fun connectOpsSocket(
                 null
             }
             ws.onerror = {
-                onState(OpsSocketState(OpsSocketStatus.DISCONNECTED))
+                failed("Connection failed")
                 null
             }
             ws.onclose = {
-                window.clearInterval(pingTimer)
-                socket = null
-                if (active) {
-                    onState(OpsSocketState(OpsSocketStatus.DISCONNECTED))
-                    window.clearTimeout(reconnectTimer)
-                    reconnectTimer = window.setTimeout({ connect(); null }, 5_000)
-                }
+                failed("Connection closed")
                 null
             }
         }
     }
 
     connect()
-    return OpsSocketConnection(::send) {
-        active = false
+    fun closeSocket() {
         window.clearInterval(pingTimer)
         window.clearTimeout(reconnectTimer)
-        socket?.close()
+        window.clearTimeout(connectTimer)
+        val previous = socket
         socket = null
+        previous?.close()
     }
+    return OpsSocketConnection(
+        sendMessage = ::send,
+        closeSocket = { active = false; closeSocket() },
+        retrySocket = { closeSocket(); connect() },
+    )
 }
 
 private fun opsSummaryUrl(): String {

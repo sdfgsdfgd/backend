@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -116,8 +117,8 @@ internal class OpsSocketHub(
         val client = Client(session, principal, CoroutineScope(SupervisorJob(scope.coroutineContext[Job]) + Dispatchers.Default))
         clients += client
         ensureLoop()
-        sendSummary(client)
         try {
+            sendSummary(client)
             for (frame in session.incoming) {
                 val raw = (frame as? Frame.Text)?.readText()?.trim()?.takeIf { it.isNotBlank() } ?: continue
                 val decoded = runCatching { json.decodeFromString<OpsSocketMessageDto>(raw) }.getOrNull()
@@ -303,6 +304,8 @@ internal class OpsSocketHub(
                 sendLock.withLock { session.send(json.encodeToString(message)) }
             }
         } catch (failure: Throwable) {
+            session.call.application.attributes.getOrNull(NetworkRecovery.Key)
+                ?.failed(session.call, failure, transportTimeout = failure is TimeoutCancellationException)
             disconnect(this, closeSession = true)
             throw failure
         }

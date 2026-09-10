@@ -11,6 +11,7 @@ import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.application.hooks.CallFailed
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
@@ -25,9 +26,9 @@ internal fun proxyHttpClient() = HttpClient(Apache5) {
     followRedirects = false
     engine {
         followRedirects = false
+        socketTimeout = 0
     }
     install(HttpTimeout) {
-        requestTimeoutMillis = 7500
         connectTimeoutMillis = 5000
     }
 }
@@ -36,7 +37,8 @@ internal fun proxyWebSocketClient() = HttpClient(CIO) {
     install(ClientWebSockets)
 }
 
-private fun requestEventPlugin(events: RequestEvents) = createApplicationPlugin("RequestEventPlugin") {
+private fun requestEventPlugin(events: RequestEvents, recovery: NetworkRecovery?) = createApplicationPlugin("RequestEventPlugin") {
+    on(CallFailed) { call, cause -> recovery?.failed(call, cause) }
     onCall { call ->
         call.attributes.put(RequestEventStartKey, System.nanoTime())
     }
@@ -68,7 +70,8 @@ private fun requestEventPlugin(events: RequestEvents) = createApplicationPlugin(
 }
 
 // *** *** TODO:  Add  2 sequence within 15 secs    `port-knocking`    authentication
-internal fun Application.cfg(events: RequestEvents) {
+internal fun Application.cfg(events: RequestEvents, recovery: NetworkRecovery? = null) {
+    recovery?.let { attributes.put(NetworkRecovery.Key, it) }
     // [ Configure ]
     install(ContentNegotiation) {
         json(Json {
@@ -101,7 +104,7 @@ internal fun Application.cfg(events: RequestEvents) {
         timeoutMillis = 30_000
     }
 
-    install(requestEventPlugin(events))
+    install(requestEventPlugin(events, recovery))
     installEdgeGatekeeper(events)
 }
 

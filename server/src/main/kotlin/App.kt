@@ -15,7 +15,6 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.host
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
-import io.ktor.server.websocket.webSocket
 import io.ktor.server.request.host
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.uri
@@ -53,7 +52,7 @@ fun Application.module() {
     // Native event loops and clients follow the Ktor application, including hot/test restarts.
     monitor.subscribe(ApplicationStopped) { runtime.close() }
     runtime.requestEvents.init()
-    cfg(runtime.requestEvents)
+    cfg(runtime.requestEvents, runtime.recovery)
     routes(runtime)
 }
 
@@ -164,10 +163,10 @@ private fun Application.routes(runtime: BackendRuntime) = routing {
     }
 
     // [ Reverse Proxy ] -->  Next.js @ :3000
-    webSocket("/api/live/ws") {
+    recoveringWebSocket("/api/live/ws") {
         if (call.request.host().lowercase() != "x.sdfgsdfg.net") {
             close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "host not allowed"))
-            return@webSocket
+            return@recoveringWebSocket
         }
 
         val requestUri = call.request.uri
