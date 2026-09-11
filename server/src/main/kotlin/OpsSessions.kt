@@ -1238,6 +1238,8 @@ private fun JsonObject.boolean(key: String) = this[key]?.jsonPrimitive?.booleanO
 internal fun arcanaSessionState(status: String?, active: Boolean) = when (status) {
     "awaiting_acceptance" -> OpsSessionStateDto.AWAITING_ACCEPTANCE
     "concluded" -> OpsSessionStateDto.CONCLUDED
+    "interrupted" -> OpsSessionStateDto.INTERRUPTED
+    "failed" -> OpsSessionStateDto.FAILED
     else -> if (active) OpsSessionStateDto.RUNNING else OpsSessionStateDto.ONGOING
 }
 
