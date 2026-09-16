@@ -89,8 +89,6 @@ private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json"
 private val webhookRuntimeLockFile = File(resolveLogDir(), "webhook-runtime.lock")
 private val webhookRuntimeMutex = Mutex()
 private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
-private const val DEFAULT_SELFTEST_PROMPT = "respond with zitchdog"
-private const val DEFAULT_SELFTEST_EXPECT = "zitchdog"
 private const val ASK_JOB_RESULT_TTL_MS = 24L * 60 * 60 * 1000
 private const val ASK_JOB_RUNNING_TTL_MS = 2L * 60 * 60 * 1000
 private const val ZEN_STATUS_ASSOCIATION_WINDOW_MS = 2L * 60 * 60 * 1000
@@ -384,12 +382,12 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
 
     post("/api/selftest/run") {
         val body = call.receiveNullable<SelfTestRequestDto>()
-        application.log.info("[gRPC] [selftest] POST /api/selftest/run prompt='${body?.prompt ?: DEFAULT_SELFTEST_PROMPT}'")
+        application.log.info("[gRPC] [selftest] POST /api/selftest/run prompt='${body?.prompt ?: "server_py default"}'")
         val workflowUrl = body?.workflowUrl?.takeIf { it.isNotBlank() }
         val headSha = body?.headSha?.takeIf { it.isNotBlank() }
         val req = SelfTestRequest.newBuilder()
-            .setPrompt(body?.prompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_PROMPT)
-            .setExpectSubstr(body?.expectSubstr?.takeIf { it.isNotBlank() } ?: DEFAULT_SELFTEST_EXPECT)
+            .setPrompt(body?.prompt?.takeIf { it.isNotBlank() }.orEmpty())
+            .setExpectSubstr(body?.expectSubstr?.takeIf { it.isNotBlank() }.orEmpty())
             .setModel(body?.model.orEmpty())
             .setNewChat(body?.newChat ?: false)
             .setWorkflowUrl(workflowUrl.orEmpty())
