@@ -166,8 +166,7 @@ private enum class XAgent(val label: String, val wire: OpsAgentDto) {
 }
 
 internal enum class XArcanaModel(val label: String, val compact: String, val wire: String) {
-    DEEPSEEK_EXPERT("DeepSeek Expert", "Expert", "deepseek-expert"),
-    DEEPSEEK_INSTANT("DeepSeek Instant", "Instant", "deepseek-instant"),
+    DEEPSEEK("DeepSeek · DeepThink", "DeepSeek", "deepseek"),
     GPT_6_THINKING_STANDARD("GPT 6 Latest · Medium", "6 Medium", "latest-thinking-standard"),
     GPT_6_THINKING_HEAVY("GPT 6 Latest · Extra High", "6 Extra High", "latest-thinking-heavy"),
     GPT_6_PRO("GPT 6 Latest · Pro", "6 Pro", "latest-pro"),
@@ -176,7 +175,8 @@ internal enum class XArcanaModel(val label: String, val compact: String, val wir
     GPT_56_PRO("GPT 5.6 Pro", "5.6 Pro", "5.6-pro");
 
     companion object {
-        fun fromWire(value: String?) = entries.firstOrNull { it.wire == value } ?: GPT_6_PRO
+        fun fromWire(value: String?) = if (value in setOf("deepseek-expert", "deepseek-instant")) DEEPSEEK
+            else entries.firstOrNull { it.wire == value } ?: GPT_6_PRO
     }
 }
 

@@ -467,6 +467,7 @@ private class ArcanaAgentAdapter(private val scope: CoroutineScope) : OpsAgentAd
         "5.6-pro",
         "5.6-thinking-standard",
         "5.6-thinking-heavy",
+        "deepseek",
         "deepseek-expert",
         "deepseek-instant",
     )
