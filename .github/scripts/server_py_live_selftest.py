@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def main() -> int:
     payload = trigger_selftest()
     if payload and is_terminal(payload, started_ms):
         return finish(payload)
-    return poll_selftest(started_ms)
+    return poll_selftest(started_ms, (payload or {}).get("zen_run_id") or "")
 
 
 def trigger_selftest() -> dict | None:
@@ -71,17 +72,25 @@ def trigger_selftest() -> dict | None:
         raise SystemExit(json.dumps(fail_payload, indent=2))
 
 
-def poll_selftest(started_ms: int) -> int:
+def poll_selftest(started_ms: int, zen_run_id: str = "") -> int:
     deadline = time.time() + POLL_TIMEOUT
     last_payload = None
     while time.time() < deadline:
-        req = urllib.request.Request(STATUS_URL, headers=BASE_HEADERS)
+        url = STATUS_URL + "?" + urllib.parse.urlencode({"zen_run_id": zen_run_id}) if zen_run_id else STATUS_URL
+        req = urllib.request.Request(url, headers=BASE_HEADERS)
         try:
             with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as response:
                 if response.status == 204:
                     time.sleep(POLL_INTERVAL)
                     continue
                 last_payload = json.loads(response.read().decode())
+                if (zen_run_id and last_payload.get("zen_run_id") != zen_run_id) or (not zen_run_id and (
+                    int(last_payload.get("timestamp_ms") or 0) < started_ms - RECENT_WINDOW_MS
+                    or (workflow_url() and last_payload.get("workflow_url") != workflow_url())
+                )):
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                zen_run_id = zen_run_id or last_payload.get("zen_run_id") or ""
                 write_result(last_payload)
         except Exception as error:
             print(f"[server-py-live-selftest] status poll failed: {error}", flush=True)
@@ -107,8 +116,8 @@ def is_terminal(payload: dict, started_ms: int) -> bool:
     if stamp < started_ms - RECENT_WINDOW_MS:
         return False
     zen = payload.get("zen")
-    zen_state = str(zen.get("state") or "").lower() if isinstance(zen, dict) else ""
-    if not payload.get("ok") and zen_state in ZEN_IN_PROGRESS:
+    zen_state = str(zen.get("state") or "").lower() if isinstance(zen, dict) and payload.get("zen_run_id") and zen.get("run_id") == payload["zen_run_id"] else ""
+    if zen_state in ZEN_IN_PROGRESS:
         print(f"[server-py-live-selftest] zen autofix is active ({zen_state}); waiting.", flush=True)
         return False
     return True
@@ -118,6 +127,19 @@ def finish(payload: dict) -> int:
     print(json.dumps(payload, indent=2), flush=True)
     if not payload.get("ok"):
         raise SystemExit(payload.get("raw_error") or payload.get("text_excerpt") or "Self-test failed")
+    zen = payload.get("zen") or {}
+    if payload.get("zen_run_id") and (
+        zen.get("run_id") != payload["zen_run_id"] or zen.get("state") not in {"verified", "verified_and_pushed"}
+    ):
+        raise SystemExit(f"Zen has not resolved this run: {zen.get('summary') or zen.get('state') or 'status unavailable'}")
+    audit = payload.get("model_audit") or {}
+    if audit.get("status") != "OK" or audit.get("unknown") or audit.get("discovery_errors"):
+        raise SystemExit(f"UI discovery still needs investigation: {json.dumps(audit)}")
+    discoveries = (zen.get("codex") or {}).get("discoveries", [])
+    if any(item.get("resolution") == "unresolved" for item in discoveries):
+        raise SystemExit("Zen still reports unresolved UI discoveries")
+    if discoveries:
+        print(f"::notice::PASS with {len(discoveries)} handled UI discoveries: {json.dumps(discoveries)}")
     return 0
 
 

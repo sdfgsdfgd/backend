@@ -48,6 +48,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.sdfgsdfg.data.model.AskReplyDto
 import net.sdfgsdfg.data.model.AskRequestDto
+import net.sdfgsdfg.data.model.ModelAuditResultDto
 import net.sdfgsdfg.data.model.OpsPacingProfileDto
 import net.sdfgsdfg.data.model.OpsPacingRangeDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
@@ -59,13 +60,11 @@ import rpc.BotOuterClass.PacingRequest
 import rpc.BotOuterClass.SelfTestRequest
 import java.io.File
 import java.io.RandomAccessFile
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.encoding.Base64
-import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -89,9 +88,9 @@ private val selfTestResultFile = File(resolveLogDir(), "server-py-selftest.json"
 private val webhookRuntimeLockFile = File(resolveLogDir(), "webhook-runtime.lock")
 private val webhookRuntimeMutex = Mutex()
 private val zenAutofixStatusFile = File("/home/x/Desktop/py/server_py/artifacts/zen/autofix-status.json")
+private val zenRunIdPattern = Regex("autofix-\\d{8}-\\d{6}")
 private const val ASK_JOB_RESULT_TTL_MS = 24L * 60 * 60 * 1000
 private const val ASK_JOB_RUNNING_TTL_MS = 2L * 60 * 60 * 1000
-private const val ZEN_STATUS_ASSOCIATION_WINDOW_MS = 2L * 60 * 60 * 1000
 private const val ARCANA_RPC_ID_HEADER = "X-Arcana-Rpc-Id"
 private const val SERVER_PY_ERROR_KIND_TRAILER = "server-py-error-kind"
 private val serverPyErrorKindKey = Metadata.Key.of(SERVER_PY_ERROR_KIND_TRAILER, Metadata.ASCII_STRING_MARSHALLER)
@@ -392,6 +391,7 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
             .setNewChat(body?.newChat ?: false)
             .setWorkflowUrl(workflowUrl.orEmpty())
             .setHeadSha(headSha.orEmpty())
+            .setZenRunId(body?.zenRunId.orEmpty())
             .build()
 
         application.log.info("[gRPC] [selftest] waiting for webhook runtime lock path='${webhookRuntimeLockFile.absolutePath}'")
@@ -410,6 +410,10 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
                         auditLatencyMs = it.auditLatencyMs,
                         satisfiedExpectation = it.satisfiedExpectation,
                         retried = it.retried,
+                        modelAudit = if (it.hasModelAudit()) it.modelAudit.let { audit ->
+                            ModelAuditResultDto(audit.status, audit.unknownList, audit.discoveryErrorsList)
+                        } else null,
+                        zenRunId = it.zenRunId.takeIf(String::isNotBlank),
                         cases = it.casesList.map { case ->
                             SelfTestCaseDto(
                                 name = case.name,
@@ -446,7 +450,12 @@ internal fun Route.grpc(serverPyBridge: ServerPyBridge, opsSocketHub: OpsSocketH
     }
 
     get("/api/selftest/status") {
-        val saved = loadLastSelfTestResult()
+        val id = call.request.queryParameters["zen_run_id"]
+        if (id != null && !zenRunIdPattern.matches(id)) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid Zen run id")
+            return@get
+        }
+        val saved = loadLastSelfTestResult(id)
         if (saved == null) {
             call.respond(HttpStatusCode.NoContent, "No self-test run recorded")
         } else {
@@ -465,13 +474,15 @@ private fun persistSelfTestResult(result: SelfTestResultDto, opsSocketHub: OpsSo
     }
 }
 
-private fun loadLastSelfTestResult(): SelfTestResultDto? = runCatching {
-    if (!selfTestResultFile.exists()) {
-        null
-    } else {
-        heartbeatJson.decodeFromString<SelfTestResultDto>(selfTestResultFile.readText())
-    }
-}.getOrNull()
+private fun loadLastSelfTestResult(zenRunId: String? = null): SelfTestResultDto? {
+    val latest = runCatching { heartbeatJson.decodeFromString<SelfTestResultDto>(selfTestResultFile.readText()) }.getOrNull()
+    if (zenRunId == null || latest?.zenRunId == zenRunId) return latest
+    val receipt = File(zenAutofixStatusFile.parentFile, "${zenRunId.removePrefix("autofix-")}/verification-selftest.json")
+    return runCatching { heartbeatJson.decodeFromString<SelfTestResultDto>(receipt.readText()) }.getOrNull()
+        ?.takeIf { it.zenRunId == zenRunId }
+        ?: SelfTestResultDto(ok = false, textExcerpt = "", rawError = "Zen verification has not produced a result",
+            zenRunId = zenRunId, timestampMs = System.currentTimeMillis())
+}
 
 internal suspend fun <T> withWebhookRuntimeLock(onAcquired: (Long) -> Unit, block: suspend () -> T): T =
     webhookRuntimeMutex.withLock {
@@ -493,27 +504,12 @@ internal suspend fun <T> withWebhookRuntimeLock(onAcquired: (Long) -> Unit, bloc
         }
     }
 
-private fun loadZenAutofixStatus(): JsonObject? = runCatching {
-    if (!zenAutofixStatusFile.exists()) {
-        null
-    } else {
-        heartbeatJson.parseToJsonElement(zenAutofixStatusFile.readText()).jsonObject
-    }
-}.getOrNull()
-
-private fun JsonObject.zenTimestampMs(): Long? =
-    listOf("finished_at", "started_at").firstNotNullOfOrNull { key ->
-        get(key)?.jsonPrimitive?.contentOrNull?.let { value ->
-            runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+internal fun SelfTestResultDto.withZenStatus(): SelfTestResultDto {
+    val id = zenRunId?.takeIf(zenRunIdPattern::matches) ?: return copy(zen = null)
+    val latestZen = listOf(zenAutofixStatusFile, File(zenAutofixStatusFile.parentFile, "${id.removePrefix("autofix-")}/status.json"))
+        .firstNotNullOfOrNull { file ->
+            runCatching { heartbeatJson.parseToJsonElement(file.readText()).jsonObject }.getOrNull()
+                ?.takeIf { it["run_id"]?.jsonPrimitive?.contentOrNull == id }
         }
-    }
-
-private fun JsonObject.belongsToSelfTest(timestampMs: Long): Boolean {
-    val zenMs = zenTimestampMs() ?: return true
-    return timestampMs <= 0L || abs(zenMs - timestampMs) <= ZEN_STATUS_ASSOCIATION_WINDOW_MS
-}
-
-private fun SelfTestResultDto.withZenStatus(): SelfTestResultDto {
-    val latestZen = loadZenAutofixStatus()?.takeIf { it.belongsToSelfTest(timestampMs) }
-    return copy(zen = latestZen)
+    return copy(zen = latestZen ?: zen?.takeIf { it["run_id"]?.jsonPrimitive?.contentOrNull == id })
 }

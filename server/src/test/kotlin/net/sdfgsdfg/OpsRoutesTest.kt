@@ -59,6 +59,7 @@ import net.sdfgsdfg.data.model.OpsWorkspaceEventKindDto
 import net.sdfgsdfg.data.model.OpsWorkspaceEventStatusDto
 import net.sdfgsdfg.data.model.SelfTestCaseDto
 import net.sdfgsdfg.data.model.SelfTestResultDto
+import net.sdfgsdfg.data.model.ModelAuditResultDto
 import net.sdfgsdfg.data.model.SelfTestSummaryDto
 import net.sdfgsdfg.data.model.TestRunSummaryDto
 import net.sdfgsdfg.data.model.worstStatus
@@ -233,7 +234,7 @@ class OpsRoutesTest {
         val history = File(dir, "server-py-selftest-history.jsonl")
         val unitArtifact = File(dir, "server-py-unit.json")
         val unitHistory = File(dir, "server-py-unit-history.jsonl")
-        artifact.writeText("""{"ok":true,"text_excerpt":"conversation ok","latency_ms":88.0,"timestamp_ms":42}""")
+        artifact.writeText("""{"ok":true,"satisfied_expectation":true,"model_audit":{"status":"OK"},"text_excerpt":"conversation ok","latency_ms":88.0,"timestamp_ms":42}""")
 
         application {
             installOpsRouteTestPlugins()
@@ -1265,6 +1266,8 @@ class OpsRoutesTest {
     fun selfTestSummaryPreservesLiveSelftestSignals() {
         val summary = SelfTestResultDto(
             ok = true,
+            modelAudit = ModelAuditResultDto("ERROR"),
+            zenRunId = "autofix-20260923-090000",
             textExcerpt = "conversation ok",
             latencyMs = 100.0,
             askLatencyMs = 70.0,
@@ -1276,6 +1279,7 @@ class OpsRoutesTest {
                 SelfTestCaseDto("o3", ok = false, latencyMs = 10.0, note = "missing"),
             ),
             zen = buildJsonObject {
+                put("run_id", "autofix-20260923-090000")
                 put("state", "push_failed")
                 put("reason", "model selector drift")
                 put("severity", "error")
@@ -1285,7 +1289,7 @@ class OpsRoutesTest {
             timestampMs = 42L,
         ).toOpsSelfTestSummary()
 
-        assertEquals(OpsStatusDto.OK, summary.status)
+        assertEquals(OpsStatusDto.FAIL, summary.status)
         assertEquals(true, summary.satisfiedExpectation)
         assertEquals(42L, summary.timestampMs)
         assertEquals(true, assertNotNull(summary.timestampLabel).isNotBlank())

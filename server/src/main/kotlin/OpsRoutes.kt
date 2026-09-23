@@ -666,7 +666,7 @@ private fun peerSnapshotBackoffMs(misses: Int) = when {
 private fun latestServerPySelfTest(file: File = serverPySelfTestFile): SelfTestResultDto? = runCatching {
     file.takeIf { it.exists() }
         ?.readText()
-        ?.let { opsJson.decodeFromString<SelfTestResultDto>(it) }
+        ?.let { opsJson.decodeFromString<SelfTestResultDto>(it).withZenStatus() }
 }.getOrNull()
 
 private fun latestTestRun(file: File): TestRunSummaryDto? = runCatching {
@@ -1339,7 +1339,7 @@ internal fun SelfTestResultDto.toOpsSelfTestSummary(): SelfTestSummaryDto {
         )
     }
     return SelfTestSummaryDto(
-        status = if (ok) OpsStatusDto.OK else OpsStatusDto.FAIL,
+        status = status,
         ok = ok,
         satisfiedExpectation = satisfiedExpectation,
         timestampMs = timestampMs.takeIf { it > 0 },

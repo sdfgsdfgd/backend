@@ -119,6 +119,13 @@ message SelfTestRequest {
     bool new_chat = 4;
     string workflow_url = 5;
     string head_sha = 6;
+    string zen_run_id = 7;
+}
+
+message ModelAuditResult {
+    string status = 1;
+    repeated string unknown = 2;
+    repeated string discovery_errors = 3;
 }
 
 message SelfTestReply {
@@ -131,4 +138,6 @@ message SelfTestReply {
     double ask_latency_ms = 7;
     double audit_latency_ms = 8;
     repeated TestCaseResult cases = 9;
+    ModelAuditResult model_audit = 10;
+    string zen_run_id = 11;
 }

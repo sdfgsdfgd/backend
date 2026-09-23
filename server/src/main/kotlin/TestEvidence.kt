@@ -105,7 +105,7 @@ internal fun TestArtifactDto.toRunSummary(artifactUrl: String) = TestRunSummaryD
 
 internal fun SelfTestResultDto.toTestArtifact() = TestArtifactDto(
     label = "live e2e",
-    status = if (ok && satisfiedExpectation) OpsStatusDto.OK else OpsStatusDto.FAIL,
+    status = status,
     timestampMs = timestampMs.takeIf { it > 0 },
     durationMs = latencyMs,
     detail = rawError,

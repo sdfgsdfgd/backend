@@ -3,6 +3,8 @@ package net.sdfgsdfg.data.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class SelfTestRequestDto(
@@ -12,6 +14,7 @@ data class SelfTestRequestDto(
     @SerialName("new_chat") val newChat: Boolean = false,
     @SerialName("workflow_url") val workflowUrl: String? = null,
     @SerialName("head_sha") val headSha: String? = null,
+    @SerialName("zen_run_id") val zenRunId: String? = null,
 )
 
 @Serializable
@@ -29,6 +32,29 @@ data class SelfTestResultDto(
     @SerialName("workflow_url") val workflowUrl: String? = null,
     @SerialName("head_sha") val headSha: String? = null,
     @SerialName("timestamp_ms") val timestampMs: Long = 0L,
+    @SerialName("model_audit") val modelAudit: ModelAuditResultDto? = null,
+    @SerialName("zen_run_id") val zenRunId: String? = null,
+) {
+    val status: OpsStatusDto get() {
+        val zenState = zen?.takeIf { !zenRunId.isNullOrBlank() && it["run_id"]?.jsonPrimitive?.contentOrNull == zenRunId }
+            ?.get("state")?.jsonPrimitive?.contentOrNull
+        return when {
+            zenState in setOf("queued", "in_progress", "verifying", "committing", "pushing") -> OpsStatusDto.WIP
+            !ok || !satisfiedExpectation || modelAudit?.status == "ERROR" -> OpsStatusDto.FAIL
+            !zenRunId.isNullOrBlank() && zenState !in setOf("verified", "verified_and_pushed") -> if (zenState == null) OpsStatusDto.UNKNOWN else OpsStatusDto.FAIL
+            modelAudit == null -> OpsStatusDto.UNKNOWN
+            modelAudit.status == "WARN" || modelAudit.unknown.isNotEmpty() || modelAudit.discoveryErrors.isNotEmpty() -> OpsStatusDto.WARN
+            modelAudit.status == "OK" -> OpsStatusDto.OK
+            else -> OpsStatusDto.UNKNOWN
+        }
+    }
+}
+
+@Serializable
+data class ModelAuditResultDto(
+    val status: String,
+    val unknown: List<String> = emptyList(),
+    @SerialName("discovery_errors") val discoveryErrors: List<String> = emptyList(),
 )
 
 @Serializable
