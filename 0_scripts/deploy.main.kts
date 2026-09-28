@@ -227,7 +227,10 @@ fun Map<String, String>.jsonObject(): String = entries.joinToString(prefix = "{"
     "${key.jsonString()}:${value.jsonString()}"
 }
 
-fun arcanaSmoke() {
+fun arcanaSmoke(): Unit = if (!runningOnQ) {
+    qRun("cd ~/Desktop/kotlin/backend && /home/x/.sdkman/candidates/kotlin/current/bin/kotlin $scriptPath arcana-smoke")
+    Unit
+} else withRuntimeLock("Arcana validation") {
     log("◆", "q arcana full pyramid")
     fun evidenceIdentity() = qGitIdentity(qArcanaDir) to mapOf(
         "server_py" to qGitIdentity("~/Desktop/py/server_py"),
@@ -357,17 +360,16 @@ fun arcanaSmoke() {
         Layer("e2e", qArcanaE2eTests),
         Layer("benchmarks", qArcanaBenchmarkTests),
     )
-    val results = layers.map { layer ->
-        if (layer.label == "e2e") withRuntimeLock("Arcana live E2E") { runLayer(layer) } else runLayer(layer)
-    }
+    val results = layers.map(::runLayer)
     val coveragePct = qRun("cd $qArcanaDir && .venv/bin/python -m coverage report --format=total", check = false, quiet = true)
         .out
         .lineSequence()
         .mapNotNull { it.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { pct -> pct in 0.0..100.0 } }
         .lastOrNull()
     val (sourceEnd, dependenciesEnd) = evidenceIdentity()
-    val evidenceStable = sourceStart == sourceEnd && dependenciesStart == dependenciesEnd &&
-        listOf(sourceStart, dependenciesStart.getValue("server_py"), dependenciesStart.getValue("publisher_backend")).all { it.endsWith(":clean") }
+    val unchanged = sourceStart == sourceEnd && dependenciesStart == dependenciesEnd
+    val clean = listOf(sourceStart, dependenciesStart.getValue("server_py"), dependenciesStart.getValue("publisher_backend")).all { it.endsWith(":clean") }
+    val evidenceStable = unchanged && clean
     val finishedAtMs = System.currentTimeMillis()
     val provenance = listOf(
         "\"host\":${qRun("hostname -f 2>/dev/null || hostname", quiet = true).out.trim().jsonString()}",
@@ -416,7 +418,11 @@ fun arcanaSmoke() {
     val status = if (results.any { it.code != 0 } || !evidenceStable) "FAIL" else "OK"
     val totalPassed = results.mapNotNull { it.passed }.takeIf { it.size == results.size && status == "OK" }?.sum()
     val testSummary = totalPassed?.let { "$it passed" } ?: results.joinToString("; ") { "${it.layer.label}: ${it.summary}" }
-    val summary = if (evidenceStable) testSummary else "$testSummary; source/dependency changed during run"
+    val summary = when {
+        !unchanged -> "$testSummary; source/dependency changed during run"
+        !clean -> "$testSummary; source/dependency worktree dirty"
+        else -> testSummary
+    }
     val detail = "$summary on q @${head.take(7)}"
     val coverageField = coveragePct?.let { "\"coverage_pct\":${String.format(Locale.US, "%.1f", it)}" }
     fun layerPayload(result: LayerResult): String = listOfNotNull(

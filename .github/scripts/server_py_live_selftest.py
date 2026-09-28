@@ -14,6 +14,7 @@ RESULT_PATH = Path("server-py-selftest.json")
 RECENT_WINDOW_MS = 60_000
 POLL_INTERVAL = 5
 POLL_TIMEOUT = 2_100
+ZEN_POLL_TIMEOUT = 7_200  # bounded total poll budget for a matching active repair
 HTTP_TIMEOUT = 20
 ZEN_IN_PROGRESS = {"queued", "in_progress", "verifying", "committing", "pushing"}
 BASE_HEADERS = {
@@ -27,7 +28,7 @@ def main() -> int:
     payload = trigger_selftest()
     if payload and is_terminal(payload, started_ms):
         return finish(payload)
-    return poll_selftest(started_ms, (payload or {}).get("zen_run_id") or "")
+    return poll_selftest(started_ms, (payload or {}).get("zen_run_id") or "", payload)
 
 
 def trigger_selftest() -> dict | None:
@@ -72,10 +73,11 @@ def trigger_selftest() -> dict | None:
         raise SystemExit(json.dumps(fail_payload, indent=2))
 
 
-def poll_selftest(started_ms: int, zen_run_id: str = "") -> int:
-    deadline = time.time() + POLL_TIMEOUT
-    last_payload = None
-    while time.time() < deadline:
+def poll_selftest(started_ms: int, zen_run_id: str = "", last_payload: dict | None = None) -> int:
+    started = time.monotonic()
+    deadline = started + (ZEN_POLL_TIMEOUT if zen_state(last_payload or {}) in ZEN_IN_PROGRESS else POLL_TIMEOUT)
+    last_poll_error = ""
+    while time.monotonic() < deadline:
         url = STATUS_URL + "?" + urllib.parse.urlencode({"zen_run_id": zen_run_id}) if zen_run_id else STATUS_URL
         req = urllib.request.Request(url, headers=BASE_HEADERS)
         try:
@@ -83,16 +85,21 @@ def poll_selftest(started_ms: int, zen_run_id: str = "") -> int:
                 if response.status == 204:
                     time.sleep(POLL_INTERVAL)
                     continue
-                last_payload = json.loads(response.read().decode())
-                if (zen_run_id and last_payload.get("zen_run_id") != zen_run_id) or (not zen_run_id and (
-                    int(last_payload.get("timestamp_ms") or 0) < started_ms - RECENT_WINDOW_MS
-                    or (workflow_url() and last_payload.get("workflow_url") != workflow_url())
+                candidate = json.loads(response.read().decode())
+                if (zen_run_id and candidate.get("zen_run_id") != zen_run_id) or (not zen_run_id and (
+                    int(candidate.get("timestamp_ms") or 0) < started_ms - RECENT_WINDOW_MS
+                    or (workflow_url() and candidate.get("workflow_url") != workflow_url())
                 )):
                     time.sleep(POLL_INTERVAL)
                     continue
+                last_payload = candidate
+                last_poll_error = ""
                 zen_run_id = zen_run_id or last_payload.get("zen_run_id") or ""
+                if zen_state(last_payload) in ZEN_IN_PROGRESS:
+                    deadline = started + ZEN_POLL_TIMEOUT
                 write_result(last_payload)
         except Exception as error:
+            last_poll_error = str(error)
             print(f"[server-py-live-selftest] status poll failed: {error}", flush=True)
             time.sleep(POLL_INTERVAL)
             continue
@@ -100,10 +107,18 @@ def poll_selftest(started_ms: int, zen_run_id: str = "") -> int:
             return finish(last_payload)
         time.sleep(POLL_INTERVAL)
 
+    state = zen_state(last_payload or {})
+    active = state in ZEN_IN_PROGRESS
     payload = {
         "ok": False,
-        "ci_stage": "poll",
-        "raw_error": "Self-test did not update before timeout",
+        "ci_stage": "zen_wait" if active else "poll",
+        "raw_error": (f"Zen repair {zen_run_id} last observed {state}; recovery remains unconfirmed after the bounded {ZEN_POLL_TIMEOUT // 60}-minute wait"
+                      if active else "No terminal result for this self-test before the bounded wait expired"),
+        "zen_run_id": zen_run_id,
+        "zen": (last_payload or {}).get("zen"),
+        "workflow_url": workflow_url(),
+        "status_url": STATUS_URL,
+        "last_poll_error": last_poll_error,
         "last_payload": last_payload,
         "timestamp_ms": int(time.time() * 1000),
     }
@@ -111,14 +126,20 @@ def poll_selftest(started_ms: int, zen_run_id: str = "") -> int:
     raise SystemExit(json.dumps(payload, indent=2))
 
 
+def zen_state(payload: dict) -> str:
+    zen = payload.get("zen") or {}
+    if payload.get("zen_run_id") and zen.get("run_id") == payload["zen_run_id"]:
+        return str(zen.get("state") or "").strip().lower()
+    return ""
+
+
 def is_terminal(payload: dict, started_ms: int) -> bool:
     stamp = int(payload.get("timestamp_ms") or 0)
     if stamp < started_ms - RECENT_WINDOW_MS:
         return False
-    zen = payload.get("zen")
-    zen_state = str(zen.get("state") or "").lower() if isinstance(zen, dict) and payload.get("zen_run_id") and zen.get("run_id") == payload["zen_run_id"] else ""
-    if zen_state in ZEN_IN_PROGRESS:
-        print(f"[server-py-live-selftest] zen autofix is active ({zen_state}); waiting.", flush=True)
+    state = zen_state(payload)
+    if state in ZEN_IN_PROGRESS:
+        print(f"[server-py-live-selftest] zen autofix is active ({state}); waiting.", flush=True)
         return False
     return True
 
@@ -126,7 +147,10 @@ def is_terminal(payload: dict, started_ms: int) -> bool:
 def finish(payload: dict) -> int:
     print(json.dumps(payload, indent=2), flush=True)
     if not payload.get("ok"):
-        raise SystemExit(payload.get("raw_error") or payload.get("text_excerpt") or "Self-test failed")
+        detail = payload.get("raw_error") or payload.get("text_excerpt") or "Self-test failed"
+        if payload.get("zen_run_id"):
+            detail += f"; Zen {payload['zen_run_id']}: {zen_state(payload) or 'status unavailable'} ({(payload.get('zen') or {}).get('summary', '')})"
+        raise SystemExit(detail)
     zen = payload.get("zen") or {}
     if payload.get("zen_run_id") and (
         zen.get("run_id") != payload["zen_run_id"] or zen.get("state") not in {"verified", "verified_and_pushed"}

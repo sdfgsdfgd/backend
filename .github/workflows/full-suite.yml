@@ -118,7 +118,7 @@ jobs:
   server-py-live-selftest:
     name: all-tests / server-py-live-selftest
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 180  # trigger, bounded Zen waiting, artifact delivery
 
     steps:
       - name: Checkout
