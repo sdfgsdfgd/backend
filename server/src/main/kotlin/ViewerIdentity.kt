@@ -12,6 +12,7 @@ import java.nio.file.Paths
 import java.nio.file.attribute.FileTime
 
 private const val ownerUserId = "kaan"
+private const val ownerGithubId = 16299826L // sdfgsdfgd
 private const val ownerRole = "admin"
 private const val guestUserId = "guest"
 private const val guestRole = "guest"
@@ -30,6 +31,7 @@ internal suspend fun ApplicationCall.opsViewer(http: HttpClient): OpsViewerDto {
 
 internal fun resolveOpsViewer(client: ClientInfo, githubSession: OpsGithubSession? = null): OpsViewerDto {
     val ownerProof = ownerNetworkProof(client.clientIp)
+        ?: githubSession?.takeIf { it.id == ownerGithubId }?.let { "github_owner:${it.id}" }
     val proofs = listOfNotNull(ownerProof, githubSession?.let { "github:${it.login}" })
     val issueWrite = ownerProof != null
     val capabilities = if (issueWrite) listOf(OPS_CAPABILITY_ISSUES_WRITE, OPS_CAPABILITY_SESSIONS_RUN) else emptyList()

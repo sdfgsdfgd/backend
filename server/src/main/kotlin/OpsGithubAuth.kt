@@ -69,7 +69,7 @@ private val githubOauthJson = Json { ignoreUnknownKeys = true }
 private val secureRandom = SecureRandom()
 private val githubBearerCache = mutableMapOf<String, CachedGithubBearerSession>()
 
-internal data class OpsGithubSession(val login: String, val displayName: String, val avatarUrl: String? = null)
+internal data class OpsGithubSession(val login: String, val displayName: String, val avatarUrl: String? = null, val id: Long? = null)
 private data class CachedGithubBearerSession(val expiresAtMs: Long, val session: OpsGithubSession?)
 private data class VerifiedGithubState(val returnTo: String?, val popup: Boolean)
 
@@ -227,6 +227,7 @@ internal fun signOpsGithubSession(
     session.login,
     session.displayName,
     session.avatarUrl.orEmpty(),
+    session.id?.toString().orEmpty(),
     (nowMs + ttlMs).toString(),
 )
 
@@ -236,12 +237,13 @@ internal fun verifyOpsGithubSession(
     nowMs: Long = System.currentTimeMillis(),
 ): OpsGithubSession? {
     val parts = verifyOpsToken(value, "github-session", secret) ?: return null
-    if (parts.size != 3 && parts.size != 4) return null
+    if (parts.size !in 3..5) return null
     val expiresAt = parts.last().toLongOrNull() ?: return null
     if (expiresAt <= nowMs) return null
     val login = parts[0].trim().lowercase().takeIf { it.isNotBlank() } ?: return null
-    val avatarUrl = if (parts.size == 4) parts[2].takeIf { it.isNotBlank() } else null
-    return OpsGithubSession(login, parts[1].ifBlank { login }, avatarUrl)
+    val avatarUrl = if (parts.size >= 4) parts[2].takeIf { it.isNotBlank() } else null
+    val id = if (parts.size == 5 && parts[3].isNotEmpty()) parts[3].toLongOrNull()?.takeIf { it > 0 } ?: return null else null
+    return OpsGithubSession(login, parts[1].ifBlank { login }, avatarUrl, id)
 }
 
 private data class OpsGithubAuthConfig(
@@ -371,6 +373,7 @@ private suspend fun fetchGithubSession(http: HttpClient, token: String) = http.i
         login = login,
         displayName = user.text("name").takeUnless { it.isNullOrBlank() } ?: login,
         avatarUrl = user.text("avatar_url").takeUnless { it.isNullOrBlank() },
+        id = user.text("id")?.toLongOrNull()?.takeIf { it > 0 } ?: error("GitHub user response has no valid id"),
     )
 }
 
