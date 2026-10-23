@@ -167,9 +167,9 @@ private enum class XAgent(val label: String, val wire: OpsAgentDto) {
 
 internal enum class XArcanaModel(val label: String, val compact: String, val wire: String) {
     DEEPSEEK("DeepSeek · DeepThink", "DeepSeek", "deepseek"),
-    GPT_6_THINKING_STANDARD("GPT 6 Latest · Medium", "6 Medium", "latest-thinking-standard"),
-    GPT_6_THINKING_HEAVY("GPT 6 Latest · Extra High", "6 Extra High", "latest-thinking-heavy"),
-    GPT_6_PRO("GPT 6 Latest · Pro", "6 Pro", "latest-pro"),
+    GPT_6_THINKING_STANDARD("GPT-6 · Medium", "6 Medium", "latest-thinking-standard"),
+    GPT_6_THINKING_HEAVY("GPT-6 · Extra High", "6 Extra High", "latest-thinking-heavy"),
+    GPT_6_PRO("GPT-6 · Pro", "6 Pro", "latest-pro"),
     GPT_56_THINKING_STANDARD("GPT 5.6 · Medium", "5.6 Medium", "5.6-thinking-standard"),
     GPT_56_THINKING_HEAVY("GPT 5.6 · Extra High", "5.6 Extra High", "5.6-thinking-heavy"),
     GPT_56_PRO("GPT 5.6 Pro", "5.6 Pro", "5.6-pro");
