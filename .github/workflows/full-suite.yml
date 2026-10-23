@@ -132,6 +132,7 @@ jobs:
   # ---------------------------------------------------------------------------
   arcana-smoke:
     name: all-tests / arcana-smoke
+    needs: server-py-live-selftest
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
