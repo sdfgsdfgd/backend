@@ -1,0 +1,20 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Dashboard — Install &amp; Open" type="GradleRunConfiguration" factoryName="Gradle">
+    <ExternalSystemSettings>
+      <option name="externalProjectPath" value="$PROJECT_DIR$" />
+      <option name="externalSystemIdString" value="GRADLE" />
+      <option name="env">
+        <map>
+          <entry key="OPS_ENV" value="prod" />
+        </map>
+      </option>
+      <option name="taskNames">
+        <list>
+          <option value=":dashboard:desktop:installAndRun" />
+        </list>
+      </option>
+    </ExternalSystemSettings>
+    <ExternalSystemDebugDisabled>true</ExternalSystemDebugDisabled>
+    <method v="2" />
+  </configuration>
+</component>
