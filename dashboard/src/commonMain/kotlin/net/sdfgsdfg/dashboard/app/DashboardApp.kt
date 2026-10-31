@@ -294,9 +294,7 @@ fun DashboardApp(
         }
     }
     val windowKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
-        if (event.type != KeyEventType.KeyDown) {
-            false
-        } else if (canRunSessions && event.key == Key.X && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
+        if (event.type == KeyEventType.KeyDown && canRunSessions && event.key == Key.X && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
             selectedTab = DashboardTab.Arcana
             writeDashboardPref("ops.tab", selectedTab.name)
             freshXSignal++
@@ -305,6 +303,8 @@ fun DashboardApp(
             false
         } else if (renderedTab == DashboardTab.Arcana) {
             windowKeys?.x?.invoke(event) ?: false
+        } else if (event.type != KeyEventType.KeyDown) {
+            false
         } else if (focusedArrowKeys) {
             when (event.key) {
                 Key.DirectionLeft -> { selectedTab = visibleTab.shift(-1, availableTabs); writeDashboardPref("ops.tab", selectedTab.name); true }

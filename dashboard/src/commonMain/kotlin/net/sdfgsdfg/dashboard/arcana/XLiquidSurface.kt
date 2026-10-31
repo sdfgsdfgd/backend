@@ -35,7 +35,7 @@ internal enum class XComposerMode {
     /** Meaningful typed or pasted text: the action droplet separates for submission. */
     TEXT,
 
-    /** Explicit Ctrl-Space override: the preserved draft yields to future audio input. */
+    /** Ctrl-Space toggle or held Space: the preserved draft yields to future audio input. */
     AUDIO,
 }
 

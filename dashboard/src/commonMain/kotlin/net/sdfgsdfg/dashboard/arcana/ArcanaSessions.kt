@@ -94,6 +94,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.semantics.Role
@@ -159,6 +160,8 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 private enum class XPhase { REPOSITORIES, WORKSPACE, SESSION }
+// Reference identity keeps separate presses distinct even between composition frames.
+private class XSpacePress(val draft: TextFieldValue? = null, val audio: Boolean = false)
 private enum class XDelivery { ACKNOWLEDGED, NOT_SENT, TIMED_OUT }
 private enum class XAgent(val label: String, val wire: OpsAgentDto) {
     ARCANA("Arcana", OpsAgentDto.ARCANA),
@@ -498,6 +501,17 @@ internal fun ArcanaSessionsTab(
     var arcanaSubmitting by remember { mutableStateOf(false) }
     var startRetry by remember { mutableStateOf(0) }
     var runtimeId by remember { mutableStateOf<String?>(null) }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var spacePress by remember(windowFocused, phase, runtimeId, freshXSignal) { mutableStateOf<XSpacePress?>(null) }
+    LaunchedEffect(spacePress) {
+        val press = spacePress ?: return@LaunchedEffect
+        val draft = press.draft ?: return@LaunchedEffect
+        delay(250)
+        if (spacePress === press && query == draft.xInsertText(" ")) {
+            query = draft
+            spacePress = XSpacePress(audio = true)
+        }
+    }
     var activeSessionId by remember { mutableStateOf<String?>(null) }
     var sessionMessage by remember { mutableStateOf("Select or create a session") }
     var detached by remember { mutableStateOf(false) }
@@ -506,7 +520,7 @@ internal fun ArcanaSessionsTab(
         if (phase != XPhase.REPOSITORIES) repositories
         else repositories.filter { repo -> query.text.isBlank() || query.text.isSubsequenceOf("${repo.name} ${repo.description} ${repo.language}") }
     }
-    val composerMode = remember(query.text, audioActive) { xComposerMode(query.text, audioActive) }
+    val composerMode = xComposerMode(query.text, audioActive || spacePress?.audio == true)
     val selectedRepo = repositories.firstOrNull { it.id == selectedRepoId }
     val currentSelectedRepo by rememberUpdatedState(selectedRepo)
     val runtimeView = rememberXRuntimeView(sessionLedger, runtimeId)
@@ -642,6 +656,7 @@ internal fun ArcanaSessionsTab(
     fun clearComposer() {
         query = TextFieldValue("")
         audioActive = false
+        spacePress = null
     }
 
     fun resume(summary: OpsSessionSummaryDto) {
@@ -1084,10 +1099,18 @@ internal fun ArcanaSessionsTab(
         )
     }
     val currentXKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
-        if (event.type != KeyEventType.KeyDown) {
+        val modified = event.isCtrlPressed || event.isShiftPressed || event.isAltPressed || event.isMetaPressed
+        if (event.key == Key.Spacebar && event.type == KeyEventType.KeyUp && spacePress != null) {
+            spacePress = null
+            true
+        } else if (event.type == KeyEventType.Unknown && event.utf16CodePoint == ' '.code && spacePress != null) {
+            query != spacePress?.draft // Let the first plain Space reach the field; consume repeats and Ctrl-Space.
+        } else if (event.type != KeyEventType.KeyDown) {
             false
         } else {
-            val modified = event.isCtrlPressed || event.isShiftPressed || event.isAltPressed || event.isMetaPressed
+            if (event.key != Key.Spacebar && spacePress?.draft != null) {
+                spacePress = XSpacePress()
+            }
             when (event.key) {
                 Key.DirectionUp, Key.DirectionDown -> if (!modified && phase == XPhase.REPOSITORIES && filtered.isNotEmpty()) {
                     val current = filtered.indexOfFirst { it.id == selectedRepoId }.coerceAtLeast(0)
@@ -1108,10 +1131,19 @@ internal fun ArcanaSessionsTab(
                     resetToRepositories()
                     true
                 } else false
-                Key.Spacebar -> if (event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
-                    audioActive = !audioActive
-                    true
-                } else false
+                Key.Spacebar -> when {
+                    spacePress != null -> true
+                    !modified -> {
+                        spacePress = XSpacePress(query)
+                        false
+                    }
+                    event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed -> {
+                        audioActive = !audioActive
+                        spacePress = XSpacePress()
+                        true
+                    }
+                    else -> false
+                }
                 Key.Escape -> if (!modified && phase != XPhase.REPOSITORIES) { back(); true } else false
                 Key.Enter, Key.NumPadEnter -> if (!modified) { send(); true } else false
                 else -> false

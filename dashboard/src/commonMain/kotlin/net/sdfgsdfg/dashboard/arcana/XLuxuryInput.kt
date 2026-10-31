@@ -98,12 +98,14 @@ import kotlin.math.sqrt
 private val xPillShape = RoundedCornerShape(50)
 private val xWorkingCorona = Color(0xFF46125F)
 
-internal fun TextFieldValue.xInsertNewline(): TextFieldValue {
+internal fun TextFieldValue.xInsertNewline(): TextFieldValue = xInsertText("\n")
+
+internal fun TextFieldValue.xInsertText(inserted: String): TextFieldValue {
     val start = min(selection.start, selection.end).coerceIn(0, text.length)
     val end = max(selection.start, selection.end).coerceIn(start, text.length)
     return copy(
-        text = text.replaceRange(start, end, "\n"),
-        selection = TextRange(start + 1),
+        text = text.replaceRange(start, end, inserted),
+        selection = TextRange(start + inserted.length),
         composition = null,
     )
 }
