@@ -43,6 +43,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -75,7 +76,8 @@ private fun String.runLifecycleLabel() = when {
 
 class DashboardWindowKeyRouter {
     internal var app: (KeyEvent) -> Boolean = { false }
-    internal var x: (KeyEvent) -> Boolean = { false }
+    // null falls back to dashboard shortcuts; false lets the native input handle the event.
+    internal var x: (KeyEvent) -> Boolean? = { null }
 
     fun dispatch(event: KeyEvent): Boolean = app(event)
 }
@@ -83,8 +85,6 @@ class DashboardWindowKeyRouter {
 @Composable
 fun DashboardApp(
     windowKeys: DashboardWindowKeyRouter? = null,
-    arrowShiftSignal: Int = 0,
-    focusedArrowKeys: Boolean = true,
     textPointerIcon: PointerIcon = PointerIcon.Text,
     // CMP-10297 workaround: raw WheelEvent deltas from wasmJsMain.
     externalScrollDeltas: ReceiveChannel<Float>? = null,
@@ -103,10 +103,10 @@ fun DashboardApp(
     var issueEditorActive by remember { mutableStateOf(false) }
     var freshXSignal by remember { mutableStateOf(0) }
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
+    val keyRouter = remember(windowKeys) { windowKeys ?: DashboardWindowKeyRouter() }
     val fallbackFocusRequester = remember { FocusRequester() }
     val mounted = remember { booleanArrayOf(true) }
     var viewerRequest by remember { mutableIntStateOf(0) }
-    var handledArrowShiftSignal by remember { mutableStateOf(arrowShiftSignal) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
     val canRunSessions = viewerResolved && viewer.canRunSessions()
     val availableTabs = remember(canRunSessions) {
@@ -162,8 +162,8 @@ fun DashboardApp(
         )
     }
 
-    LaunchedEffect(windowKeys, focusedArrowKeys) {
-        if (windowKeys == null && focusedArrowKeys) runCatching { fallbackFocusRequester.requestFocus() }
+    LaunchedEffect(windowKeys, renderedTab) {
+        if (windowKeys == null && renderedTab != DashboardTab.Arcana) runCatching { fallbackFocusRequester.requestFocus() }
     }
     LaunchedEffect(viewerRequest) {
         val request = viewerRequest
@@ -232,11 +232,6 @@ fun DashboardApp(
             delay(OPS_SUMMARY_REFRESH_MS)
         }
     }
-    LaunchedEffect(arrowShiftSignal) {
-        val shift = arrowShiftSignal - handledArrowShiftSignal
-        if (shift != 0 && !issueEditorActive) selectedTab = visibleTab.shift(shift, availableTabs).also { writeDashboardPref("ops.tab", it.name) }
-        handledArrowShiftSignal = arrowShiftSignal
-    }
     LaunchedEffect(viewerResolved, canRunSessions) {
         if (viewerResolved && !canRunSessions) {
             if (selectedTab == DashboardTab.Arcana) {
@@ -298,33 +293,40 @@ fun DashboardApp(
             selectedTab = DashboardTab.Arcana
             writeDashboardPref("ops.tab", selectedTab.name)
             freshXSignal++
-            true
-        } else if (issueEditorActive) {
-            false
-        } else if (renderedTab == DashboardTab.Arcana) {
-            windowKeys?.x?.invoke(event) ?: false
-        } else if (event.type != KeyEventType.KeyDown) {
-            false
-        } else if (focusedArrowKeys) {
-            when (event.key) {
-                Key.DirectionLeft -> { selectedTab = visibleTab.shift(-1, availableTabs); writeDashboardPref("ops.tab", selectedTab.name); true }
-                Key.DirectionRight -> { selectedTab = visibleTab.shift(1, availableTabs); writeDashboardPref("ops.tab", selectedTab.name); true }
-                else -> false
+            return@rememberUpdatedState true
+        }
+        if (issueEditorActive) return@rememberUpdatedState false
+        if (renderedTab == DashboardTab.Arcana) keyRouter.x(event)?.let { return@rememberUpdatedState it }
+
+        val tabKey = event.key == Key.Tab || event.type == KeyEventType.Unknown && event.utf16CodePoint == '\t'.code
+        val shift = when {
+            tabKey && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed -> if (event.isShiftPressed) -1 else 1
+            renderedTab != DashboardTab.Arcana && event.key == Key.DirectionLeft -> -1
+            renderedTab != DashboardTab.Arcana && event.key == Key.DirectionRight -> 1
+            else -> 0
+        }
+        if (shift != 0) {
+            if (event.type == KeyEventType.KeyDown) {
+                selectedTab = selectedTab.shift(shift, availableTabs)
+                writeDashboardPref("ops.tab", selectedTab.name)
             }
+            true
         } else {
             false
         }
     }
-    DisposableEffect(windowKeys) {
-        val router = windowKeys
+    DisposableEffect(keyRouter) {
         val route: (KeyEvent) -> Boolean = { windowKeyHandler.value(it) }
-        if (router != null) router.app = route
+        keyRouter.app = route
         onDispose {
-            if (router?.app === route) router.app = { false }
+            if (keyRouter.app === route) keyRouter.app = { false }
         }
     }
-    val surfaceModifier = if (windowKeys == null && focusedArrowKeys) {
-        Modifier.fillMaxSize().focusRequester(fallbackFocusRequester).focusable()
+    val surfaceModifier = if (windowKeys == null) {
+        Modifier.fillMaxSize()
+            .onPreviewKeyEvent { windowKeyHandler.value(it) }
+            .focusRequester(fallbackFocusRequester)
+            .focusable()
     } else {
         Modifier.fillMaxSize()
     }
@@ -342,11 +344,7 @@ fun DashboardApp(
             ),
         ) {
             Surface(
-                modifier = if (windowKeys == null && focusedArrowKeys) {
-                    surfaceModifier.onPreviewKeyEvent { windowKeyHandler.value(it) }
-                } else {
-                    surfaceModifier
-                },
+                modifier = surfaceModifier,
                 color = Color.Transparent,
             ) {
                 BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -383,7 +381,7 @@ fun DashboardApp(
                     val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
                     if (renderedTab == DashboardTab.Arcana) {
                         ArcanaSessionsTab(
-                            windowKeys = windowKeys,
+                            windowKeys = keyRouter,
                             freshXSignal = freshXSignal,
                             viewer = viewer,
                             socketState = socketState,

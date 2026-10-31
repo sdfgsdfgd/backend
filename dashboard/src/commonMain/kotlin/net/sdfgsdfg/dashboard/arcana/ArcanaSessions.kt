@@ -21,7 +21,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.hoverable
@@ -92,7 +91,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -428,7 +426,7 @@ private fun rememberXRuntimeView(ledger: XSessionLedger, runtimeId: String?): XR
 
 @Composable
 internal fun ArcanaSessionsTab(
-    windowKeys: DashboardWindowKeyRouter?,
+    windowKeys: DashboardWindowKeyRouter,
     freshXSignal: Int,
     viewer: OpsViewerDto,
     socketState: OpsSocketState,
@@ -1098,9 +1096,9 @@ internal fun ArcanaSessionsTab(
             ),
         )
     }
-    val currentXKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
+    val currentXKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean?> { event ->
         val modified = event.isCtrlPressed || event.isShiftPressed || event.isAltPressed || event.isMetaPressed
-        if (event.key == Key.Spacebar && event.type == KeyEventType.KeyUp && spacePress != null) {
+        val handled = if (event.key == Key.Spacebar && event.type == KeyEventType.KeyUp && spacePress != null) {
             spacePress = null
             true
         } else if (event.type == KeyEventType.Unknown && event.utf16CodePoint == ' '.code && spacePress != null) {
@@ -1118,12 +1116,17 @@ internal fun ArcanaSessionsTab(
                     selectedRepoId = filtered[(current + shift).coerceIn(0, filtered.lastIndex)].id
                     true
                 } else false
-                Key.Tab -> if (event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && activeSessions.isNotEmpty()) {
-                    val current = activeSessions.indexOfFirst { it.runtimeId == runtimeId || it.xKey == selectedSessionKey }
-                    val shift = if (event.isShiftPressed) -1 else 1
-                    resume(activeSessions[(current.coerceAtLeast(if (shift > 0) -1 else 0) + shift + activeSessions.size) % activeSessions.size])
-                    true
-                } else false
+                Key.Tab -> when {
+                    event.isAltPressed || event.isMetaPressed -> false
+                    !event.isCtrlPressed && phase != XPhase.REPOSITORIES && !event.isShiftPressed -> return@rememberUpdatedState false
+                    event.isCtrlPressed && activeSessions.isNotEmpty() -> {
+                        val current = activeSessions.indexOfFirst { it.runtimeId == runtimeId || it.xKey == selectedSessionKey }
+                        val shift = if (event.isShiftPressed) -1 else 1
+                        resume(activeSessions[(current.coerceAtLeast(if (shift > 0) -1 else 0) + shift + activeSessions.size) % activeSessions.size])
+                        true
+                    }
+                    else -> false
+                }
                 Key.C -> if (phase == XPhase.SESSION && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && !event.isMetaPressed) {
                     control(OpsSessionActionDto.INTERRUPT)
                 } else false
@@ -1149,23 +1152,17 @@ internal fun ArcanaSessionsTab(
                 else -> false
             }
         }
+        handled.takeIf { it }
     }
     DisposableEffect(windowKeys) {
-        val router = windowKeys
-        val route: (KeyEvent) -> Boolean = { currentXKeyHandler.value(it) }
-        if (router != null) router.x = route
+        val route: (KeyEvent) -> Boolean? = { currentXKeyHandler.value(it) }
+        windowKeys.x = route
         onDispose {
-            if (router?.x === route) router.x = { false }
+            if (windowKeys.x === route) windowKeys.x = { null }
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .let { base ->
-                if (windowKeys == null) base.onPreviewKeyEvent { currentXKeyHandler.value(it) }.focusable() else base
-            },
-    ) {
+    Column(modifier = modifier.fillMaxSize()) {
         header {
             XSessionTopBar(
                 status = topStatus,
