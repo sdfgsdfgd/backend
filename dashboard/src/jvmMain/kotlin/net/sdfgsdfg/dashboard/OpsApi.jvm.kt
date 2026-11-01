@@ -115,7 +115,7 @@ internal actual fun startOpsGithubAuth(onComplete: () -> Unit) {
                 showOpsGithubAuthWindow(
                     OpsGithubAuthWindowState(
                         title = "GitHub Connected",
-                        detail = "Returning to Trio Ops Cockpit.",
+                        detail = "Returning to ARCANA.",
                         status = "Done.",
                         terminal = true,
                         success = true,

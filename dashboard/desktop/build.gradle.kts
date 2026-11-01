@@ -1,4 +1,6 @@
 import java.io.File
+import java.util.concurrent.CompletableFuture.allOf
+import java.util.concurrent.TimeUnit.SECONDS
 import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 
 plugins {
@@ -18,12 +20,13 @@ kotlin {
     }
 }
 
-val desktopAppName = "Trio Ops Cockpit"
+val desktopAppName = "ARCANA"
 
 compose.desktop {
     application {
         mainClass = "net.sdfgsdfg.dashboard.desktop.MainKt"
         nativeDistributions {
+            outputBaseDir.set(layout.buildDirectory.dir("compose/binaries.noindex"))
             modules("java.net.http") // Compose jlink workaround: OpsApi.jvm.kt needs HttpClient; the stripped runtime otherwise omits this JDK module.
             packageName = desktopAppName
             packageVersion = "1.0.0"
@@ -34,7 +37,7 @@ compose.desktop {
     }
 }
 
-val installApp by tasks.registering(Sync::class) {
+val installApp = tasks.register<Sync>("installApp") {
     group = "distribution"
     description = "Installs the packaged Mac app in ~/Applications."
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
@@ -43,10 +46,30 @@ val installApp by tasks.registering(Sync::class) {
     })
     into("${providers.systemProperty("user.home").get()}/Applications/$desktopAppName.app")
     doFirst {
-        val executableDir = destinationDir.resolve("Contents/MacOS").path + "/"
-        check(ProcessHandle.allProcesses().use { processes ->
-            processes.noneMatch { it.info().command().orElse("").startsWith(executableDir) }
-        }) { "Close ${destinationDir.nameWithoutExtension} before installing an update." }
+        fun File.runningInstances() = ProcessHandle.allProcesses().use { processes ->
+            processes.filter { it.info().command().orElse("").startsWith("$path/Contents/MacOS/") }.toList()
+        }
+        destinationDir.runningInstances().takeIf { it.isNotEmpty() }?.let { running ->
+            logger.lifecycle("Closing ${destinationDir.nameWithoutExtension} to install the update…")
+            ProcessBuilder(
+                "/usr/bin/osascript", "-l", "JavaScript", "-e",
+                """
+                ObjC.import('AppKit');
+                [${running.joinToString { it.pid().toString() }}].forEach(pid => {
+                    const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+                    if (!app.isNil()) app.terminate;
+                });
+                """.trimIndent(),
+            ).inheritIO().start().run {
+                try {
+                    allOf(onExit(), *running.map(ProcessHandle::onExit).toTypedArray()).completeOnTimeout(null, 15, SECONDS).get()
+                    check(!isAlive && exitValue() == 0) { "Could not quit ${destinationDir.nameWithoutExtension}." }
+                } finally {
+                    destroyForcibly()
+                }
+            }
+        }
+        check(destinationDir.runningInstances().isEmpty()) { "${destinationDir.nameWithoutExtension} did not quit; update was not installed." }
     }
 }
 

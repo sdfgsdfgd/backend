@@ -89,7 +89,7 @@ fun main() = try {
         Window(
             onCloseRequest = ::exitApplication,
             onPreviewKeyEvent = windowKeys::dispatch,
-            title = "Trio Ops Cockpit",
+            title = "ARCANA",
             undecorated = true,
             transparent = true,
             resizable = true,

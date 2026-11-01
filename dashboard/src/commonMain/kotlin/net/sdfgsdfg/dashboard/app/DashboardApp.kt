@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.Channel
@@ -105,6 +106,7 @@ fun DashboardApp(
     var lastAppliedSummary by remember { mutableStateOf<OpsSummaryDto?>(null) }
     val keyRouter = remember(windowKeys) { windowKeys ?: DashboardWindowKeyRouter() }
     val fallbackFocusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val mounted = remember { booleanArrayOf(true) }
     var viewerRequest by remember { mutableIntStateOf(0) }
     val issueEditorActiveState = rememberUpdatedState(issueEditorActive)
@@ -114,8 +116,7 @@ fun DashboardApp(
     }
     val visibleTab = selectedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
     val tabMotion = rememberLiquidTabMotionState(visibleTab)
-    var presentedTab by remember { mutableStateOf(visibleTab) }
-    val renderedTab = presentedTab.takeIf { it in availableTabs } ?: DashboardTab.Home
+    val listStates = remember { DashboardTab.entries.associateWith { LazyListState() } }
 
     fun refreshViewer() {
         viewerRequest++
@@ -162,8 +163,11 @@ fun DashboardApp(
         )
     }
 
-    LaunchedEffect(windowKeys, renderedTab) {
-        if (windowKeys == null && renderedTab != DashboardTab.Arcana) runCatching { fallbackFocusRequester.requestFocus() }
+    LaunchedEffect(windowKeys, visibleTab) {
+        if (visibleTab != DashboardTab.Arcana) {
+            focusManager.clearFocus()
+            if (windowKeys == null) runCatching { fallbackFocusRequester.requestFocus() }
+        }
     }
     LaunchedEffect(viewerRequest) {
         val request = viewerRequest
@@ -233,59 +237,17 @@ fun DashboardApp(
         }
     }
     LaunchedEffect(viewerResolved, canRunSessions) {
-        if (viewerResolved && !canRunSessions) {
-            if (selectedTab == DashboardTab.Arcana) {
-                selectedTab = DashboardTab.Home
-                writeDashboardPref("ops.tab", DashboardTab.Home.name)
-            }
-            if (presentedTab == DashboardTab.Arcana) presentedTab = DashboardTab.Home
+        if (viewerResolved && !canRunSessions && selectedTab == DashboardTab.Arcana) {
+            selectedTab = DashboardTab.Home
+            writeDashboardPref("ops.tab", DashboardTab.Home.name)
             tabMotion.forceSnap(DashboardTab.Home)
         }
     }
-    LaunchedEffect(visibleTab, viewerResolved, canRunSessions) {
+    LaunchedEffect(visibleTab, tabMotion.ready) {
         if (visibleTab != DashboardTab.Issues) issueEditorActive = false
-        if (viewerResolved && !canRunSessions) {
-            if (presentedTab == DashboardTab.Arcana) presentedTab = DashboardTab.Home
-            tabMotion.forceSnap(DashboardTab.Home)
-            return@LaunchedEffect
-        }
-        while (!tabMotion.ready) withFrameNanos { }
-        if (presentedTab == visibleTab) {
-            val flight = launch { tabMotion.moveTo(visibleTab) }
-            tabMotion.setXExpanded(visibleTab == DashboardTab.Arcana)
-            flight.join()
-            return@LaunchedEffect
-        }
-        when {
-            presentedTab == DashboardTab.Arcana -> {
-                val collapse = launch { tabMotion.setXExpanded(false) }
-                delay(70)
-                val flight = launch { tabMotion.moveTo(visibleTab) }
-                while (
-                    tabMotion.xExpansion.value > 0.015f ||
-                    tabMotion.distanceTo(DashboardTab.Arcana) < 18.dp
-                ) withFrameNanos { }
-                presentedTab = visibleTab
-                collapse.join()
-                flight.join()
-            }
-            visibleTab == DashboardTab.Arcana -> {
-                tabMotion.setXExpanded(false, immediate = true)
-                val flight = launch { tabMotion.moveTo(DashboardTab.Arcana) }
-                while (
-                    tabMotion.phase < 0.82f ||
-                    tabMotion.distanceTo(DashboardTab.Arcana) > 6.dp
-                ) withFrameNanos { }
-                presentedTab = DashboardTab.Arcana
-                tabMotion.setXExpanded(true)
-                flight.join()
-            }
-            else -> {
-                val flight = launch { tabMotion.moveTo(visibleTab) }
-                while (tabMotion.phase < 0.38f) withFrameNanos { }
-                presentedTab = visibleTab
-                flight.join()
-            }
+        if (tabMotion.ready) {
+            launch { tabMotion.moveTo(visibleTab) }
+            launch { tabMotion.setXExpanded(visibleTab == DashboardTab.Arcana) }
         }
     }
     val windowKeyHandler = rememberUpdatedState<(KeyEvent) -> Boolean> { event ->
@@ -296,13 +258,13 @@ fun DashboardApp(
             return@rememberUpdatedState true
         }
         if (issueEditorActive) return@rememberUpdatedState false
-        if (renderedTab == DashboardTab.Arcana) keyRouter.x(event)?.let { return@rememberUpdatedState it }
+        if (visibleTab == DashboardTab.Arcana) keyRouter.x(event)?.let { return@rememberUpdatedState it }
 
         val tabKey = event.key == Key.Tab || event.type == KeyEventType.Unknown && event.utf16CodePoint == '\t'.code
         val shift = when {
             tabKey && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed -> if (event.isShiftPressed) -1 else 1
-            renderedTab != DashboardTab.Arcana && event.key == Key.DirectionLeft -> -1
-            renderedTab != DashboardTab.Arcana && event.key == Key.DirectionRight -> 1
+            visibleTab != DashboardTab.Arcana && event.key == Key.DirectionLeft -> -1
+            visibleTab != DashboardTab.Arcana && event.key == Key.DirectionRight -> 1
             else -> 0
         }
         if (shift != 0) {
@@ -352,20 +314,20 @@ fun DashboardApp(
                     val pageWidth = maxWidth
                     val pageHeight = maxHeight
                     Crossfade(
-                        targetState = renderedTab == DashboardTab.Arcana,
+                        targetState = visibleTab == DashboardTab.Arcana,
                         animationSpec = tween(760),
                         label = "dashboard-background-crossfade",
                     ) { xSelected ->
                         if (xSelected) XBackdrop() else OpsWallpaper()
                     }
-                    val listState = rememberLazyListState()
+                    val listState = listStates.getValue(visibleTab)
                     //region CMP-10297 scroll workaround
                     // TODO(CMP-10297): remove externalScrollDeltas, scrollBy, and the
                     // wasmJsMain wheel bridge when Compose/Wasm preserves Chrome/macOS
                     // precision-trackpad fling deltas internally.
                     // https://youtrack.jetbrains.com/issue/CMP-10297
-                    LaunchedEffect(externalScrollDeltas, listState, renderedTab) {
-                        if (renderedTab == DashboardTab.Arcana) return@LaunchedEffect
+                    LaunchedEffect(externalScrollDeltas, listState, visibleTab) {
+                        if (visibleTab == DashboardTab.Arcana) return@LaunchedEffect
                         val deltas = externalScrollDeltas ?: return@LaunchedEffect
                         while (true) {
                             var pending = deltas.receiveCatching().getOrNull() ?: break
@@ -378,70 +340,70 @@ fun DashboardApp(
                     }
                     //endregion
                     val ciSummary = (loadState as? OpsLoadState.Ready)?.summary
-                    val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listState.canScrollForward)
-                    if (renderedTab == DashboardTab.Arcana) {
-                        ArcanaSessionsTab(
-                            windowKeys = keyRouter,
-                            freshXSignal = freshXSignal,
-                            viewer = viewer,
-                            socketState = socketState,
-                            workspaceEvent = workspaceEvent,
-                            sessionLedger = sessionLedger,
-                            reconnect = { socketConnection?.retry() },
-                            sendWorkspaceCommand = { command ->
-                                socketConnection?.send(
-                                    OpsSocketMessageDto("workspace_command", workspaceCommand = command),
-                                ) == true
-                            },
-                            sendSessionCommand = { command: OpsSessionCommandDto ->
-                                socketConnection?.send(
-                                    OpsSocketMessageDto("session_command", sessionCommand = command),
-                                ) == true
-                            },
-                            header = { context ->
-                                Header(
-                                    selectedTab = visibleTab,
-                                    tabs = availableTabs,
-                                    onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
-                                    socketState = socketState,
-                                    viewer = viewer,
-                                    onViewerChanged = ::refreshViewer,
-                                    tabMotion = tabMotion,
-                                    xContext = context,
-                                )
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            contentPadding = PaddingValues(bottom = pageBottomGutter),
-                        ) {
-                            item {
-                                Header(
-                                    selectedTab = visibleTab,
-                                    tabs = availableTabs,
-                                    onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
-                                    socketState = socketState,
-                                    viewer = viewer,
-                                    onViewerChanged = ::refreshViewer,
-                                    tabMotion = tabMotion,
-                                )
-                                if (loadState is OpsLoadState.Loading) {
-                                    TopLoadTrace()
+                    val ciHistoryState = rememberCiHistoryState(ciSummary, activeRunEvents, atPageBottom = !listStates.getValue(DashboardTab.Ci).canScrollForward)
+                    Crossfade(
+                        targetState = visibleTab,
+                        modifier = Modifier.fillMaxSize(),
+                        label = "dashboard-tab-crossfade",
+                    ) { tab ->
+                        if (tab == DashboardTab.Arcana) {
+                            ArcanaSessionsTab(
+                                windowKeys = keyRouter,
+                                freshXSignal = freshXSignal,
+                                viewer = viewer,
+                                socketState = socketState,
+                                workspaceEvent = workspaceEvent,
+                                sessionLedger = sessionLedger,
+                                reconnect = { socketConnection?.retry() },
+                                sendWorkspaceCommand = { command ->
+                                    socketConnection?.send(
+                                        OpsSocketMessageDto("workspace_command", workspaceCommand = command),
+                                    ) == true
+                                },
+                                sendSessionCommand = { command: OpsSessionCommandDto ->
+                                    socketConnection?.send(
+                                        OpsSocketMessageDto("session_command", sessionCommand = command),
+                                    ) == true
+                                },
+                                header = { context ->
+                                    Header(
+                                        selectedTab = visibleTab,
+                                        tabs = availableTabs,
+                                        onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
+                                        socketState = socketState,
+                                        viewer = viewer,
+                                        onViewerChanged = ::refreshViewer,
+                                        tabMotion = tabMotion,
+                                        xContext = context,
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            LazyColumn(
+                                state = listStates.getValue(tab),
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                contentPadding = PaddingValues(bottom = pageBottomGutter),
+                            ) {
+                                item {
+                                    Header(
+                                        selectedTab = visibleTab,
+                                        tabs = availableTabs,
+                                        onTabSelected = { selectedTab = it; writeDashboardPref("ops.tab", it.name) },
+                                        socketState = socketState,
+                                        viewer = viewer,
+                                        onViewerChanged = ::refreshViewer,
+                                        tabMotion = tabMotion,
+                                    )
+                                    if (loadState is OpsLoadState.Loading) {
+                                        TopLoadTrace()
+                                    }
                                 }
-                            }
-                            item(key = "tab-content-top") {
-                                Spacer(Modifier.height(14.dp))
-                            }
-                            item(key = "tab-content") {
-                                Crossfade(
-                                    targetState = renderedTab,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = "dashboard-tab-crossfade",
-                                ) { tab ->
+                                item(key = "tab-content-top") {
+                                    Spacer(Modifier.height(14.dp))
+                                }
+                                item(key = "tab-content") {
                                     when (tab) {
                                         DashboardTab.Home -> HomeTab(loadState, pageWidth)
                                         DashboardTab.Ci -> CiTab(loadState, pageWidth)
@@ -456,18 +418,18 @@ fun DashboardApp(
                                                 pageHeight = pageHeight,
                                                 canWriteIssues = viewer.issueWrite,
                                                 onIssuePatch = { applyIssuePatch(it, "issues-mutation") },
-                                                onEditorActiveChanged = { issueEditorActive = it },
+                                                onEditorActiveChanged = { issueEditorActive = it && visibleTab == DashboardTab.Issues },
                                             )
                                         }
                                         DashboardTab.Arcana -> Unit
                                     }
                                 }
-                            }
-                            if (renderedTab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
-                                ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
-                            }
-                            item(key = "tab-content-bottom") {
-                                Spacer(Modifier.height(14.dp))
+                                if (tab == DashboardTab.Ci && ciSummary != null && ciHistoryState != null) {
+                                    ciHistoryItems(ciHistoryState, ciSummary.generatedAtMs)
+                                }
+                                item(key = "tab-content-bottom") {
+                                    Spacer(Modifier.height(14.dp))
+                                }
                             }
                         }
                     }

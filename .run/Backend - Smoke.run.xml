@@ -1,10 +1,7 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Deploy Server" type="KotlinStandaloneScriptRunConfigurationType">
+  <configuration default="false" name="Backend - Smoke" type="KotlinStandaloneScriptRunConfigurationType">
     <module name="backend" />
-    <option name="PROGRAM_PARAMETERS" value="deploy" />
-    <envs>
-      <env name="OPS_GITHUB_CLIENT_ID" value="Ov23libLAx2DZVS5FeM4" />
-    </envs>
+    <option name="PROGRAM_PARAMETERS" value="arcana-smoke" />
     <shortenClasspath name="NONE" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <option name="filePath" value="$PROJECT_DIR$/0_scripts/deploy.main.kts" />
